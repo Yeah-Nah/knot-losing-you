@@ -68,58 +68,59 @@ def listen(port: str, duration: float) -> None:
         try:
             time.sleep(0.1)
 
-        # Phase 1: passive listen — see what the ESP32 broadcasts on its own.
-        logger.info("--- Phase 1: passive listen (no commands sent) ---")
-        passive_lines = 0
-        deadline = time.monotonic() + min(duration / 2, 5.0)
-        while time.monotonic() < deadline:
-            raw = ser.readline().decode("utf-8", errors="replace").strip()
-            if not raw:
-                continue
-            passive_lines += 1
-            try:
-                _print_response("[passive]", json.loads(raw))
-            except json.JSONDecodeError:
-                logger.info(f"[passive] raw: {raw!r}")
-
-        if passive_lines == 0:
-            logger.warning("No passive output — ESP32 requires polling.")
-
-        # Phase 2: send chassis init then probe alternative command numbers.
-        logger.info("--- Phase 2: chassis init + probe commands ---")
-        ser.write(json.dumps({"T": 900, "main": 2, "module": 0}, separators=(",", ":")).encode() + b"\n")
-        time.sleep(0.3)
-        ser.reset_input_buffer()
-
-        for cmd in _PROBE_COMMANDS:
-            payload = json.dumps(cmd, separators=(",", ":"))
-            ser.write(payload.encode() + b"\n")
-            logger.debug(f"Sent: {payload}")
-            time.sleep(0.3)
-            got = False
-            while ser.in_waiting:
+            # Phase 1: passive listen — see what the ESP32 broadcasts on its own.
+            logger.info("--- Phase 1: passive listen (no commands sent) ---")
+            passive_lines = 0
+            deadline = time.monotonic() + min(duration / 2, 5.0)
+            while time.monotonic() < deadline:
                 raw = ser.readline().decode("utf-8", errors="replace").strip()
                 if not raw:
                     continue
-                got = True
+                passive_lines += 1
                 try:
-                    _print_response(f"[T:{cmd['T']}]", json.loads(raw))
+                    _print_response("[passive]", json.loads(raw))
                 except json.JSONDecodeError:
-                    logger.info(f"[T:{cmd['T']}] raw: {raw!r}")
-            if not got:
-                logger.warning(f"[T:{cmd['T']}] no response")
+                    logger.info(f"[passive] raw: {raw!r}")
 
-        # Phase 3: remaining time passive listen (catches delayed or async responses).
-        logger.info("--- Phase 3: passive listen after probing ---")
-        deadline = time.monotonic() + max(duration / 2, 3.0)
-        while time.monotonic() < deadline:
-            raw = ser.readline().decode("utf-8", errors="replace").strip()
-            if not raw:
-                continue
-            try:
-                _print_response("[post-probe]", json.loads(raw))
-            except json.JSONDecodeError:
-                logger.info(f"[post-probe] raw: {raw!r}")
+            if passive_lines == 0:
+                logger.warning("No passive output — ESP32 requires polling.")
+
+            # Phase 2: send chassis init then probe alternative command numbers.
+            logger.info("--- Phase 2: chassis init + probe commands ---")
+            ser.write(json.dumps({"T": 900, "main": 2, "module": 0}, separators=(",", ":")).encode() + b"\n")
+            time.sleep(0.3)
+            ser.reset_input_buffer()
+
+            for cmd in _PROBE_COMMANDS:
+                payload = json.dumps(cmd, separators=(",", ":"))
+                ser.write(payload.encode() + b"\n")
+                logger.debug(f"Sent: {payload}")
+                time.sleep(0.3)
+                got = False
+                while ser.in_waiting:
+                    raw = ser.readline().decode("utf-8", errors="replace").strip()
+                    if not raw:
+                        continue
+                    got = True
+                    try:
+                        _print_response(f"[T:{cmd['T']}]", json.loads(raw))
+                    except json.JSONDecodeError:
+                        logger.info(f"[T:{cmd['T']}] raw: {raw!r}")
+                if not got:
+                    logger.warning(f"[T:{cmd['T']}] no response")
+
+            # Phase 3: remaining time passive listen (catches delayed or async responses).
+            logger.info("--- Phase 3: passive listen after probing ---")
+            deadline = time.monotonic() + max(duration / 2, 3.0)
+            while time.monotonic() < deadline:
+                raw = ser.readline().decode("utf-8", errors="replace").strip()
+                if not raw:
+                    continue
+                try:
+                    _print_response("[post-probe]", json.loads(raw))
+                except json.JSONDecodeError:
+                    logger.info(f"[post-probe] raw: {raw!r}")
+
         except serial.SerialException as exc:
             logger.error(
                 f"Serial read failed mid-session: {exc}\n"
