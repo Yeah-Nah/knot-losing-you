@@ -59,7 +59,7 @@ class CameraAccess:
         with dai.Device(available[0]) as device:
             features = list(device.getConnectedCameraFeatures())
         for feature in features:
-            if dai.CameraType.COLOR in feature.supportedTypes:
+            if any(t == dai.CameraSensorType.COLOR for t in feature.supportedTypes):
                 logger.debug(
                     f"Discovered colour camera: {feature.socket.name} "
                     f"({feature.sensorName})"
@@ -110,12 +110,9 @@ class CameraAccess:
             BGR frame as a numpy array, or ``None`` if no frame is ready
             or the camera has not been started.
         """
-        if self._video_queue is None:
+        if self._video_queue is None or not self._video_queue.has():
             return None
-        packet = self._video_queue.tryGet()
-        if packet is None:
-            return None
-        return packet.getCvFrame()  # type: ignore[no-any-return]
+        return self._video_queue.get().getCvFrame()  # type: ignore[no-any-return]
 
     def stop(self) -> None:
         """Close the camera connection and release resources."""
