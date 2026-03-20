@@ -6,13 +6,13 @@ build-backend = "setuptools.build_meta"
 name = "ugv-follower"
 version = "0.1.0"
 description = "Autonomous UGV that follows you around the boat park using OAK-D Lite and LiDAR"
-requires-python = ">=3.13"
+requires-python = ">=3.11"
 license = {text = "Apache License 2.0"}
 authors = [
     {name = "Alex Helsham", email = "alexandra.helsham@gmail.com"}
 ]
 classifiers = [
-    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.11",
     "License :: OSI Approved :: Apache Software License",
     "Operating System :: OS Independent",
 ]
@@ -20,14 +20,13 @@ classifiers = [
 # Core dependencies
 dependencies = [
     "pyserial>=3.5",      # for LiDAR and UGV serial comms
-    "rplidar-robotics>=0.9.0",  # only if you have an RPLidar
     "numpy>=1.24.0",
     "opencv-python>=4.8.1.78",
     "ultralytics>=8.0.0",
     "loguru>=0.7.0",
     "PyYAML>=6.0",
     "depthai>=3.2.1",
-    "ldlidar-stl @ git+https://github.com/ldrobotSensorTeam/ldlidar_stl_sdk.git#subdirectory=python"
+    "pyserial>=3.5",
 ]
 
 # Optional dependencies for different use cases
