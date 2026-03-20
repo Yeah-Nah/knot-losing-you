@@ -55,8 +55,18 @@ def _print_response(tag: str, data: dict) -> None:
 
 def listen(port: str, duration: float) -> None:
     logger.info(f"Opening {port} at 115200 baud — listening for {duration}s...")
-    with serial.Serial(port, 115200, timeout=1) as ser:
-        time.sleep(0.1)
+    try:
+        ser_conn = serial.Serial(port, 115200, timeout=1)
+    except serial.SerialException as exc:
+        logger.error(
+            f"Could not open {port}: {exc}\n"
+            "If another process holds the port (e.g. the ugv_rpi service), stop it first:\n"
+            "    sudo systemctl stop ugv_rpi"
+        )
+        return
+    with ser_conn as ser:
+        try:
+            time.sleep(0.1)
 
         # Phase 1: passive listen — see what the ESP32 broadcasts on its own.
         logger.info("--- Phase 1: passive listen (no commands sent) ---")
@@ -110,6 +120,12 @@ def listen(port: str, duration: float) -> None:
                 _print_response("[post-probe]", json.loads(raw))
             except json.JSONDecodeError:
                 logger.info(f"[post-probe] raw: {raw!r}")
+        except serial.SerialException as exc:
+            logger.error(
+                f"Serial read failed mid-session: {exc}\n"
+                "The port may have been grabbed by another process (e.g. ugv_rpi).\n"
+                "Stop it with: sudo systemctl stop ugv_rpi"
+            )
 
 
 def main() -> None:
