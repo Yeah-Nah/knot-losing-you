@@ -1,0 +1,9 @@
+# OAK-D Lite camera settings
+camera:
+  colour_resolution: [1920, 1080]  # Colour camera output resolution [width, height]
+  fps: 30                          # Target frame rate
+
+# LiDAR settings
+lidar:
+  port: "/dev/ttyUSB0"    # Serial port the LiDAR is connected to
+  baud_rate: 921600       # Serial baud rate
