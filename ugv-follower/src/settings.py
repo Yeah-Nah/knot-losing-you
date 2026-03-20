@@ -60,9 +60,19 @@ class Settings:
         return True
 
     def _validate(self) -> None:
-        if self.inference_enabled and not self.model_path.exists():
-            logger.error(f"Model file not found: {self.model_path}")
-            raise FileNotFoundError(f"Model file not found: {self.model_path}")
+        if self.inference_enabled:
+            model_name = str(self.model_config.get("model", "")).strip()
+            if not model_name:
+                logger.error(
+                    "Inference is enabled but no model filename is configured. "
+                    "Set the 'model' key in model_config.yaml to a valid model file."
+                )
+                raise ValueError(
+                    "Model filename must be set in model_config.yaml when inference_enabled is True."
+                )
+            if not self.model_path.is_file():
+                logger.error(f"Model file not found: {self.model_path}")
+                raise FileNotFoundError(f"Model file not found: {self.model_path}")
         if self.live_view_enabled and not self._has_display():
             logger.error(
                 "live_view_enabled is True but no display detected. "

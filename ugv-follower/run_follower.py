@@ -48,7 +48,7 @@ def main() -> None:
             model_config_path=args.model_config,
             sensor_config_path=args.sensor_config,
         )
-    except (FileNotFoundError, OSError) as exc:
+    except (FileNotFoundError, OSError, ValueError) as exc:
         logger.error(f"Configuration error: {exc}")
         sys.exit(1)
 
