@@ -6,4 +6,4 @@ camera:
 # LiDAR settings
 lidar:
   port: "/dev/ttyUSB0"    # Serial port the LiDAR is connected to
-  baud_rate: 115200       # Serial baud rate
+  baud_rate: 921600       # Serial baud rate

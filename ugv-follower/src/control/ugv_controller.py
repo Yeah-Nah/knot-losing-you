@@ -11,10 +11,10 @@ class UGVController:
     Parameters
     ----------
     port : str
-        Serial port the UGV controller is connected to (e.g. ``'/dev/ttyUSB0'``).
+        Serial port the UGV controller is connected to (e.g. ``'/dev/ttyAMA0'``).
     """
 
-    def __init__(self, port: str = "/dev/ttyUSB0") -> None:
+    def __init__(self, port: str = "/dev/ttyAMA0") -> None:
         self._port = port
         logger.debug("UGVController initialised (stub).")
 

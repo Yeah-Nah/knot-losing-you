@@ -19,12 +19,15 @@ classifiers = [
 
 # Core dependencies
 dependencies = [
+    "pyserial>=3.5",      # for LiDAR and UGV serial comms
+    "rplidar-robotics>=0.9.0",  # only if you have an RPLidar
     "numpy>=1.24.0",
     "opencv-python>=4.8.1.78",
     "ultralytics>=8.0.0",
     "loguru>=0.7.0",
     "PyYAML>=6.0",
     "depthai>=3.2.1",
+    "ldlidar-stl @ git+https://github.com/ldrobotSensorTeam/ldlidar_stl_sdk.git#subdirectory=python"
 ]
 
 # Optional dependencies for different use cases

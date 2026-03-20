@@ -17,7 +17,4 @@ Short description of what was done and why.
 - Bullet point 1
 - Bullet point 2
 
-**What's next**
-- Next step
-
 -->
