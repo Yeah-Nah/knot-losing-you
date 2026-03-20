@@ -1,17 +1,15 @@
-"""Read and print battery voltage from the Waveshare UGV Rover ESP32 sub-controller.
+"""Passively listen to the Waveshare UGV Rover ESP32 serial output.
 
-Sends a T:105 telemetry request over serial and prints every response received.
-Run with the rover powered on and connected to the Pi's UART.
+The ESP32 sub-controller on many firmware versions broadcasts telemetry
+continuously without needing a poll command. This script just listens and
+prints everything received, so you can see what data (including battery
+voltage) the firmware actually sends.
 
 Usage
 -----
     python check_battery.py
-
-    # Override port (Pi 4B uses /dev/serial0):
-    python check_battery.py --port /dev/serial0
-
-    # Change number of samples and interval:
-    python check_battery.py --samples 10 --interval 1.0
+    python check_battery.py --port /dev/serial0   # Pi 4B
+    python check_battery.py --duration 10          # listen for 10 seconds
 """
 
 from __future__ import annotations
@@ -23,13 +21,17 @@ import time
 import serial
 from loguru import logger
 
+_VOLTAGE_KEYS = ("v", "V", "battery", "bat", "voltage", "vol", "Vbat", "vbat")
+_WARN_LOW = 10.5
+_FULL = 12.6
 
-# Voltage keys the Waveshare ESP32 firmware may use in its JSON responses.
-_VOLTAGE_KEYS = ("v", "V", "battery", "bat", "voltage")
-
-# Healthy voltage range for a 3-cell (3S) lithium pack.
-_WARN_LOW = 10.5   # V — approaching BMS cutoff territory
-_FULL = 12.6       # V — fully charged
+# Alternative T command numbers to try if passive listening yields nothing.
+_PROBE_COMMANDS = [
+    {"T": 105},
+    {"T": 106},
+    {"T": 1003},
+    {"T": 1},
+]
 
 
 def _interpret_voltage(volts: float) -> str:
@@ -42,73 +44,80 @@ def _interpret_voltage(volts: float) -> str:
     return "CRITICAL — BMS cutoff likely imminent"
 
 
-def check_battery(port: str, samples: int, interval: float) -> None:
-    logger.info(f"Opening {port} at 115200 baud...")
-    with serial.Serial(port, 115200, timeout=2) as ser:
-        time.sleep(0.1)  # Allow ESP32 to settle after port open
+def _print_response(tag: str, data: dict) -> None:
+    voltage = next((data[k] for k in _VOLTAGE_KEYS if k in data), None)
+    if voltage is not None:
+        status = _interpret_voltage(float(voltage))
+        logger.success(f"{tag} Battery: {voltage} V — {status}  {data}")
+    else:
+        logger.info(f"{tag} {data}")
 
-        # Chassis init is required after power-on before other commands are accepted.
-        init_cmd = json.dumps({"T": 900, "main": 2, "module": 0}, separators=(",", ":"))
-        ser.write(init_cmd.encode() + b"\n")
-        logger.debug(f"Sent chassis init: {init_cmd}")
-        time.sleep(0.2)
-        ser.reset_input_buffer()  # Discard any init response / boot noise
 
-        for i in range(1, samples + 1):
-            req = json.dumps({"T": 105}, separators=(",", ":"))
-            ser.write(req.encode() + b"\n")
-            logger.debug(f"Sent telemetry request ({i}/{samples}): {req}")
-            time.sleep(0.15)
+def listen(port: str, duration: float) -> None:
+    logger.info(f"Opening {port} at 115200 baud — listening for {duration}s...")
+    with serial.Serial(port, 115200, timeout=1) as ser:
+        time.sleep(0.1)
 
-            got_response = False
+        # Phase 1: passive listen — see what the ESP32 broadcasts on its own.
+        logger.info("--- Phase 1: passive listen (no commands sent) ---")
+        passive_lines = 0
+        deadline = time.monotonic() + min(duration / 2, 5.0)
+        while time.monotonic() < deadline:
+            raw = ser.readline().decode("utf-8", errors="replace").strip()
+            if not raw:
+                continue
+            passive_lines += 1
+            try:
+                _print_response("[passive]", json.loads(raw))
+            except json.JSONDecodeError:
+                logger.info(f"[passive] raw: {raw!r}")
+
+        if passive_lines == 0:
+            logger.warning("No passive output — ESP32 requires polling.")
+
+        # Phase 2: send chassis init then probe alternative command numbers.
+        logger.info("--- Phase 2: chassis init + probe commands ---")
+        ser.write(json.dumps({"T": 900, "main": 2, "module": 0}, separators=(",", ":")).encode() + b"\n")
+        time.sleep(0.3)
+        ser.reset_input_buffer()
+
+        for cmd in _PROBE_COMMANDS:
+            payload = json.dumps(cmd, separators=(",", ":"))
+            ser.write(payload.encode() + b"\n")
+            logger.debug(f"Sent: {payload}")
+            time.sleep(0.3)
+            got = False
             while ser.in_waiting:
                 raw = ser.readline().decode("utf-8", errors="replace").strip()
                 if not raw:
                     continue
-                got_response = True
+                got = True
                 try:
-                    data = json.loads(raw)
+                    _print_response(f"[T:{cmd['T']}]", json.loads(raw))
                 except json.JSONDecodeError:
-                    logger.warning(f"Non-JSON response: {raw!r}")
-                    continue
+                    logger.info(f"[T:{cmd['T']}] raw: {raw!r}")
+            if not got:
+                logger.warning(f"[T:{cmd['T']}] no response")
 
-                voltage = next((data[k] for k in _VOLTAGE_KEYS if k in data), None)
-                if voltage is not None:
-                    status = _interpret_voltage(float(voltage))
-                    logger.success(f"[{i}/{samples}] Battery: {voltage} V — {status}  (full response: {data})")
-                else:
-                    # Print the whole response so we can see what keys the firmware uses.
-                    logger.info(f"[{i}/{samples}] Response (no voltage key detected): {data}")
-
-            if not got_response:
-                logger.warning(f"[{i}/{samples}] No response received — check port and baud rate.")
-
-            if i < samples:
-                time.sleep(interval)
+        # Phase 3: remaining time passive listen (catches delayed or async responses).
+        logger.info("--- Phase 3: passive listen after probing ---")
+        deadline = time.monotonic() + max(duration / 2, 3.0)
+        while time.monotonic() < deadline:
+            raw = ser.readline().decode("utf-8", errors="replace").strip()
+            if not raw:
+                continue
+            try:
+                _print_response("[post-probe]", json.loads(raw))
+            except json.JSONDecodeError:
+                logger.info(f"[post-probe] raw: {raw!r}")
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Check Waveshare UGV Rover battery voltage.")
-    parser.add_argument(
-        "--port",
-        default="/dev/ttyAMA0",
-        help="Serial port for the UGV sub-controller (default: /dev/ttyAMA0 for Pi 5; "
-             "use /dev/serial0 for Pi 4B)",
-    )
-    parser.add_argument(
-        "--samples",
-        type=int,
-        default=5,
-        help="Number of telemetry readings to take (default: 5)",
-    )
-    parser.add_argument(
-        "--interval",
-        type=float,
-        default=0.5,
-        help="Seconds between readings (default: 0.5)",
-    )
+    parser = argparse.ArgumentParser(description="Listen to Waveshare UGV Rover ESP32 serial output.")
+    parser.add_argument("--port", default="/dev/ttyAMA0")
+    parser.add_argument("--duration", type=float, default=8.0, help="Total listen duration in seconds (default: 8)")
     args = parser.parse_args()
-    check_battery(args.port, args.samples, args.interval)
+    listen(args.port, args.duration)
 
 
 if __name__ == "__main__":
