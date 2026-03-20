@@ -1,0 +1,59 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ugv-follower"
+version = "0.1.0"
+description = "Autonomous UGV that follows you around the boat park using OAK-D Lite and LiDAR"
+requires-python = ">=3.13"
+license = {text = "Apache License 2.0"}
+authors = [
+    {name = "Alex Helsham", email = "alexandra.helsham@gmail.com"}
+]
+classifiers = [
+    "Programming Language :: Python :: 3.13",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+]
+
+# Core dependencies
+dependencies = [
+    "numpy>=1.24.0",
+    "opencv-python>=4.8.1.78",
+    "ultralytics>=8.0.0",
+    "loguru>=0.7.0",
+    "PyYAML>=6.0",
+    "depthai>=3.2.1",
+]
+
+# Optional dependencies for different use cases
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "ruff>=0.1.0",
+    "mypy>=1.0.0",
+    "pre-commit>=3.0.0",
+    "nbqa>=1.9.1",
+    "nbstripout>=0.8.1",
+]
+notebook = [
+    "ipython",
+    "jupyter",
+]
+
+# URLs for project information
+[project.urls]
+Homepage = "https://github.com/Yeah-Nah/knot-losing-you"
+Repository = "https://github.com/Yeah-Nah/knot-losing-you"
+Issues = "https://github.com/Yeah-Nah/knot-losing-you/issues"
+
+# Setuptools configuration
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]
+exclude = ["tests*", "docs*", "*.egg-info"]
+
+[tool.setuptools]
+py-modules = ["run_follower"]

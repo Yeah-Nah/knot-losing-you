@@ -1,0 +1,54 @@
+name: Pre-commit Checks
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  linting:
+    name: Linting & Formatting
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install dependencies
+        run: |
+          pip install pre-commit
+
+      - name: Run linting checks
+        run: |
+          pre-commit run ruff-check --all-files
+          pre-commit run ruff-format --all-files
+          pre-commit run nbqa-ruff --all-files
+
+  validation:
+    name: File & Type Validation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install dependencies
+        run: |
+          pip install pre-commit
+
+      - name: Run validation checks
+        run: |
+          pre-commit run trailing-whitespace --all-files
+          pre-commit run end-of-file-fixer --all-files
+          pre-commit run check-yaml --all-files
+          pre-commit run check-merge-conflict --all-files
+          pre-commit run nbstripout --all-files
+          pre-commit run mypy --all-files
