@@ -53,7 +53,7 @@ def main() -> None:
         camera.start()
         logger.success("start ✓")
 
-        logger.info("Capturing frames — press 'q' to quit.")
+        logger.info("Capturing frames — press 'Ctrl+C' to quit.")
         frame_count = 0
 
         while True:
@@ -71,7 +71,7 @@ def main() -> None:
                     )
             else:
                 display = cv2.resize(frame, (0, 0), fx=args.scale, fy=args.scale)
-                cv2.imshow("OAK-D Colour Feed — press q to quit", display)
+                cv2.imshow("OAK-D Colour Feed — press 'Ctrl+C' to quit", display)
                 if cv2.waitKey(1) & 0xFF == ord("q"):
                     break
 
