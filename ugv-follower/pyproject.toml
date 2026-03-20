@@ -26,7 +26,6 @@ dependencies = [
     "loguru>=0.7.0",
     "PyYAML>=6.0",
     "depthai>=3.2.1",
-    "pyserial>=3.5",
 ]
 
 # Optional dependencies for different use cases
