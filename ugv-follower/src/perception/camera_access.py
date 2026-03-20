@@ -16,7 +16,9 @@ class CameraAccess:
         Output resolution as (width, height).
     """
 
-    def __init__(self, fps: int = 30, resolution: tuple[int, int] = (1920, 1080)) -> None:
+    def __init__(
+        self, fps: int = 30, resolution: tuple[int, int] = (1920, 1080)
+    ) -> None:
         self._fps = fps
         self._resolution = resolution
         logger.debug("CameraAccess initialised (stub).")
