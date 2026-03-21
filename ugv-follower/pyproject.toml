@@ -23,7 +23,7 @@ dependencies = [
     "numpy>=1.24.0",
     "opencv-python-headless>=4.8.1.78",
     "ultralytics>=8.0.0",
-    "loguru>=0.7.0",
+    "loguru>=0.7.3",
     "PyYAML>=6.0",
     "depthai>=3.2.1",
 ]
@@ -38,8 +38,8 @@ dev = [
     "pre-commit>=3.0.0",
     "nbqa>=1.9.1",
     "nbstripout>=0.8.1",
-    "loguru>=0.7.3",
 ]
+
 notebook = [
     "ipython",
     "jupyter",

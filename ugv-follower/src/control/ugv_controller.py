@@ -83,9 +83,10 @@ class UGVController:
     def disconnect(self) -> None:
         """Stop the UGV and close the serial connection."""
         logger.info("Disconnecting UGV...")
-        self.stop()
         if self._serial is not None and self._serial.is_open:
+            self.stop()
             self._serial.close()
+            self._serial = None
         logger.info("UGV disconnected.")
 
     def move(self, linear: float, angular: float) -> None:

@@ -66,15 +66,33 @@ class Pipeline:
         # -- Camera: wait for first frame --
         self._camera.start()
         frame = None
+        timeout = 5.0  # seconds
+        import time  # noqa: PLC0415
+
+        start = time.monotonic()
         while frame is None:
             frame = self._camera.get_frame()
+            if frame is None:
+                time.sleep(0.01)  # 10ms backoff
+            if (time.monotonic() - start) >= timeout:
+                raise TimeoutError(f"Camera failed to produce frame within {timeout}s")
         logger.success(f"frame received ✓  shape={frame.shape}  dtype={frame.dtype}")
 
         # -- LiDAR: wait for first packet --
         self._lidar.start()
         scan = None
+        timeout = 5.0  # seconds
+        start = time.monotonic()
         while scan is None:
             scan = self._lidar.get_scan()
+            if scan is None:
+                time.sleep(0.01)  # 10ms backoff to avoid busy-spin
+            if (time.monotonic() - start) >= timeout:
+                raise TimeoutError(
+                    "LiDAR failed to produce scan within "
+                    f"{timeout}s (port={self._settings.lidar_port}, "
+                    "check cable/power/port)."
+                )
         valid_distances = [p["distance"] for p in scan if p["distance"] > 0]
         min_d = min(valid_distances) if valid_distances else 0
         logger.success(
@@ -86,8 +104,6 @@ class Pipeline:
         logger.info("Press Ctrl+C to exit.")
 
         # Keep alive so the operator can observe the log output.
-        import time  # noqa: PLC0415
-
         while True:
             time.sleep(1)
 
