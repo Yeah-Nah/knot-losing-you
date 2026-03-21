@@ -10,6 +10,8 @@ from loguru import logger
 
 from .utils.config_utils import get_project_root, load_yaml
 
+from typing import Any
+
 
 class Settings:
     """Loads and validates pipeline, model, and sensor configuration.
@@ -32,9 +34,9 @@ class Settings:
     ) -> None:
         self._root: Path = get_project_root()
 
-        self.pipeline_config: dict[str, object] = load_yaml(pipeline_config_path)
-        self.model_config: dict[str, object] = load_yaml(model_config_path)
-        self.sensor_config: dict[str, object] = load_yaml(sensor_config_path)
+        self.pipeline_config: dict[str, Any] = load_yaml(pipeline_config_path)
+        self.model_config: dict[str, Any] = load_yaml(model_config_path)
+        self.sensor_config: dict[str, Any] = load_yaml(sensor_config_path)
 
         self.output_dir: Path = self._resolve_output_dir()
         self.model_path: Path = self._resolve_model_path()
@@ -60,9 +62,19 @@ class Settings:
         return True
 
     def _validate(self) -> None:
-        if self.inference_enabled and not self.model_path.exists():
-            logger.error(f"Model file not found: {self.model_path}")
-            raise FileNotFoundError(f"Model file not found: {self.model_path}")
+        if self.inference_enabled:
+            model_name = str(self.model_config.get("model", "")).strip()
+            if not model_name:
+                logger.error(
+                    "Inference is enabled but no model filename is configured. "
+                    "Set the 'model' key in model_config.yaml to a valid model file."
+                )
+                raise ValueError(
+                    "Model filename must be set in model_config.yaml when inference_enabled is True."
+                )
+            if not self.model_path.is_file():
+                logger.error(f"Model file not found: {self.model_path}")
+                raise FileNotFoundError(f"Model file not found: {self.model_path}")
         if self.live_view_enabled and not self._has_display():
             logger.error(
                 "live_view_enabled is True but no display detected. "
@@ -96,3 +108,65 @@ class Settings:
     def dev_or_pi(self) -> str:
         """Target runtime environment: ``'dev'`` or ``'pi'``."""
         return str(self.pipeline_config.get("dev_or_pi", "dev"))
+
+    # ------------------------------------------------------------------
+    # Sensor config properties
+    # ------------------------------------------------------------------
+
+    @property
+    def _ugv_cfg(self) -> dict[str, Any]:
+        return dict(self.sensor_config.get("ugv", {}))
+
+    @property
+    def ugv_port(self) -> str:
+        """Serial port for the UGV sub-controller."""
+        return str(self._ugv_cfg.get("port", "/dev/ttyAMA0"))
+
+    @property
+    def ugv_baud_rate(self) -> int:
+        """Baud rate for the UGV serial connection."""
+        return int(self._ugv_cfg.get("baud_rate", 115200))
+
+    @property
+    def ugv_chassis_main(self) -> int:
+        """Chassis type code sent to the UGV sub-controller on connect."""
+        return int(self._ugv_cfg.get("chassis_main", 2))
+
+    @property
+    def ugv_chassis_module(self) -> int:
+        """Module type code sent to the UGV sub-controller on connect."""
+        return int(self._ugv_cfg.get("chassis_module", 0))
+
+    @property
+    def ugv_track_width(self) -> float:
+        """Wheel centre-to-centre distance in metres."""
+        return float(self._ugv_cfg.get("track_width", 0.3))
+
+    @property
+    def _camera_cfg(self) -> dict[str, Any]:
+        return dict(self.sensor_config.get("camera", {}))
+
+    @property
+    def camera_fps(self) -> int:
+        """Target frame rate for the OAK-D colour camera."""
+        return int(self._camera_cfg.get("fps", 30))
+
+    @property
+    def camera_resolution(self) -> tuple[int, int]:
+        """OAK-D colour camera output resolution as (width, height)."""
+        res = self._camera_cfg.get("colour_resolution", [1920, 1080])
+        return (int(res[0]), int(res[1]))
+
+    @property
+    def _lidar_cfg(self) -> dict[str, Any]:
+        return dict(self.sensor_config.get("lidar", {}))
+
+    @property
+    def lidar_port(self) -> str:
+        """Serial port for the LiDAR sensor."""
+        return str(self._lidar_cfg.get("port", "/dev/ttyUSB0"))
+
+    @property
+    def lidar_baud_rate(self) -> int:
+        """Baud rate for the LiDAR serial connection."""
+        return int(self._lidar_cfg.get("baud_rate", 230400))

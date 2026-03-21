@@ -21,9 +21,9 @@ classifiers = [
 dependencies = [
     "pyserial>=3.5",      # for LiDAR and UGV serial comms
     "numpy>=1.24.0",
-    "opencv-python>=4.8.1.78",
+    "opencv-python-headless>=4.8.1.78",
     "ultralytics>=8.0.0",
-    "loguru>=0.7.0",
+    "loguru>=0.7.3",
     "PyYAML>=6.0",
     "depthai>=3.2.1",
 ]
@@ -39,6 +39,7 @@ dev = [
     "nbqa>=1.9.1",
     "nbstripout>=0.8.1",
 ]
+
 notebook = [
     "ipython",
     "jupyter",

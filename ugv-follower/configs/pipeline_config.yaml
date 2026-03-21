@@ -1,6 +1,6 @@
 # Pipeline feature toggles
-dev_or_pi: "dev"           # Target runtime environment: "dev" or "pi"
-inference_enabled: true    # Run YOLO person detection on each frame
-live_view_enabled: true    # Show camera feed in OpenCV window (disable for headless Pi)
+dev_or_pi: "pi"            # Target runtime environment: "dev" or "pi"
+inference_enabled: false   # Run YOLO person detection on each frame (requires YOLO model weights downloaded into the models/ directory)
+live_view_enabled: false   # Show camera feed in OpenCV window (disable for headless Pi)
 recording_enabled: false   # Record camera feed to disk
 output_dir: "output/"      # Output directory (relative to package root)
