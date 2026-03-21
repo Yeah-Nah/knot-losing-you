@@ -6,7 +6,7 @@ camera:
 # LiDAR settings
 lidar:
   port: "/dev/ttyUSB0"    # Serial port the LiDAR is connected to
-  baud_rate: 115200       # Serial baud rate
+  baud_rate: 230400       # D500 serial baud rate
 # UGV Rover settings
 ugv:
   port: "/dev/ttyAMA0"    # Pi 5; use /dev/serial0 for Pi 4B

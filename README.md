@@ -38,3 +38,8 @@ echo 'SUBSYSTEM=="usb", ATTRS{idVendor}=="03e7", MODE="0666"' | sudo tee /etc/ud
 sudo udevadm control --reload-rules
 sudo udevadm trigger
 ```
+
+#### For testing device connection
+```bash
+
+```
