@@ -106,3 +106,65 @@ class Settings:
     def dev_or_pi(self) -> str:
         """Target runtime environment: ``'dev'`` or ``'pi'``."""
         return str(self.pipeline_config.get("dev_or_pi", "dev"))
+
+    # ------------------------------------------------------------------
+    # Sensor config properties
+    # ------------------------------------------------------------------
+
+    @property
+    def _ugv_cfg(self) -> dict:
+        return dict(self.sensor_config.get("ugv", {}))
+
+    @property
+    def ugv_port(self) -> str:
+        """Serial port for the UGV sub-controller."""
+        return str(self._ugv_cfg.get("port", "/dev/ttyAMA0"))
+
+    @property
+    def ugv_baud_rate(self) -> int:
+        """Baud rate for the UGV serial connection."""
+        return int(self._ugv_cfg.get("baud_rate", 115200))
+
+    @property
+    def ugv_chassis_main(self) -> int:
+        """Chassis type code sent to the UGV sub-controller on connect."""
+        return int(self._ugv_cfg.get("chassis_main", 2))
+
+    @property
+    def ugv_chassis_module(self) -> int:
+        """Module type code sent to the UGV sub-controller on connect."""
+        return int(self._ugv_cfg.get("chassis_module", 0))
+
+    @property
+    def ugv_track_width(self) -> float:
+        """Wheel centre-to-centre distance in metres."""
+        return float(self._ugv_cfg.get("track_width", 0.3))
+
+    @property
+    def _camera_cfg(self) -> dict:
+        return dict(self.sensor_config.get("camera", {}))
+
+    @property
+    def camera_fps(self) -> int:
+        """Target frame rate for the OAK-D colour camera."""
+        return int(self._camera_cfg.get("fps", 30))
+
+    @property
+    def camera_resolution(self) -> tuple[int, int]:
+        """OAK-D colour camera output resolution as (width, height)."""
+        res = self._camera_cfg.get("colour_resolution", [1920, 1080])
+        return (int(res[0]), int(res[1]))
+
+    @property
+    def _lidar_cfg(self) -> dict:
+        return dict(self.sensor_config.get("lidar", {}))
+
+    @property
+    def lidar_port(self) -> str:
+        """Serial port for the LiDAR sensor."""
+        return str(self._lidar_cfg.get("port", "/dev/ttyUSB0"))
+
+    @property
+    def lidar_baud_rate(self) -> int:
+        """Baud rate for the LiDAR serial connection."""
+        return int(self._lidar_cfg.get("baud_rate", 230400))
