@@ -87,6 +87,7 @@ class Pipeline:
 
         # Keep alive so the operator can observe the log output.
         import time  # noqa: PLC0415
+
         while True:
             time.sleep(1)
 

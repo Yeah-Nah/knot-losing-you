@@ -10,6 +10,8 @@ from loguru import logger
 
 from .utils.config_utils import get_project_root, load_yaml
 
+from typing import Any
+
 
 class Settings:
     """Loads and validates pipeline, model, and sensor configuration.
@@ -32,9 +34,9 @@ class Settings:
     ) -> None:
         self._root: Path = get_project_root()
 
-        self.pipeline_config: dict[str, object] = load_yaml(pipeline_config_path)
-        self.model_config: dict[str, object] = load_yaml(model_config_path)
-        self.sensor_config: dict[str, object] = load_yaml(sensor_config_path)
+        self.pipeline_config: dict[str, Any] = load_yaml(pipeline_config_path)
+        self.model_config: dict[str, Any] = load_yaml(model_config_path)
+        self.sensor_config: dict[str, Any] = load_yaml(sensor_config_path)
 
         self.output_dir: Path = self._resolve_output_dir()
         self.model_path: Path = self._resolve_model_path()
@@ -112,7 +114,7 @@ class Settings:
     # ------------------------------------------------------------------
 
     @property
-    def _ugv_cfg(self) -> dict:
+    def _ugv_cfg(self) -> dict[str, Any]:
         return dict(self.sensor_config.get("ugv", {}))
 
     @property
@@ -141,7 +143,7 @@ class Settings:
         return float(self._ugv_cfg.get("track_width", 0.3))
 
     @property
-    def _camera_cfg(self) -> dict:
+    def _camera_cfg(self) -> dict[str, Any]:
         return dict(self.sensor_config.get("camera", {}))
 
     @property
@@ -156,7 +158,7 @@ class Settings:
         return (int(res[0]), int(res[1]))
 
     @property
-    def _lidar_cfg(self) -> dict:
+    def _lidar_cfg(self) -> dict[str, Any]:
         return dict(self.sensor_config.get("lidar", {}))
 
     @property
