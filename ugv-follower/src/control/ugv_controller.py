@@ -55,7 +55,7 @@ class UGVController:
     # Private helpers
     # ------------------------------------------------------------------
 
-    def _send(self, command: dict) -> None:
+    def _send(self, command: dict[str, object]) -> None:
         """JSON-encode *command* and write it to the serial port."""
         if self._serial is None or not self._serial.is_open:
             raise RuntimeError("Serial port is not open. Call connect() first.")
@@ -75,7 +75,9 @@ class UGVController:
         logger.info(f"Connecting to UGV on {self._port} at {self._baud_rate} baud...")
         self._serial = serial.Serial(self._port, self._baud_rate, timeout=1)
         time.sleep(0.1)  # Allow ESP32 to settle after port open
-        self._send({"T": 900, "main": self._chassis_main, "module": self._chassis_module})
+        self._send(
+            {"T": 900, "main": self._chassis_main, "module": self._chassis_module}
+        )
         logger.info("UGV connected and chassis type set.")
 
     def disconnect(self) -> None:

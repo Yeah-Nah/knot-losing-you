@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import json
 import time
+from typing import Any
 
 import serial
 from loguru import logger
@@ -44,7 +45,7 @@ def _interpret_voltage(volts: float) -> str:
     return "CRITICAL — BMS cutoff likely imminent"
 
 
-def _print_response(tag: str, data: dict) -> None:
+def _print_response(tag: str, data: dict[str, Any]) -> None:
     voltage = next((data[k] for k in _VOLTAGE_KEYS if k in data), None)
     if voltage is not None:
         status = _interpret_voltage(float(voltage))
@@ -87,7 +88,12 @@ def listen(port: str, duration: float) -> None:
 
             # Phase 2: send chassis init then probe alternative command numbers.
             logger.info("--- Phase 2: chassis init + probe commands ---")
-            ser.write(json.dumps({"T": 900, "main": 2, "module": 0}, separators=(",", ":")).encode() + b"\n")
+            ser.write(
+                json.dumps(
+                    {"T": 900, "main": 2, "module": 0}, separators=(",", ":")
+                ).encode()
+                + b"\n"
+            )
             time.sleep(0.3)
             ser.reset_input_buffer()
 
@@ -130,9 +136,16 @@ def listen(port: str, duration: float) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Listen to Waveshare UGV Rover ESP32 serial output.")
+    parser = argparse.ArgumentParser(
+        description="Listen to Waveshare UGV Rover ESP32 serial output."
+    )
     parser.add_argument("--port", default="/dev/ttyAMA0")
-    parser.add_argument("--duration", type=float, default=8.0, help="Total listen duration in seconds (default: 8)")
+    parser.add_argument(
+        "--duration",
+        type=float,
+        default=8.0,
+        help="Total listen duration in seconds (default: 8)",
+    )
     args = parser.parse_args()
     listen(args.port, args.duration)
 

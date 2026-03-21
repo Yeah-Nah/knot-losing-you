@@ -32,7 +32,7 @@ def main() -> None:
         type=float,
         default=0.5,
         help="Scale factor applied before display (default: 0.5). "
-             "Reduce for better X-forwarding performance.",
+        "Reduce for better X-forwarding performance.",
     )
     parser.add_argument(
         "--fps",

@@ -27,7 +27,7 @@ def main() -> None:
         "--port",
         default="/dev/ttyAMA0",
         help="Serial port for the UGV sub-controller (default: /dev/ttyAMA0 for Pi 5; "
-             "use /dev/serial0 for Pi 4B)",
+        "use /dev/serial0 for Pi 4B)",
     )
     parser.add_argument(
         "--speed",
