@@ -24,6 +24,28 @@ Short description of what was done and why.
 
 -->
 
+# Phase 0/1: Baseplate Setup and Hardware Integration
+
+## Entry 2: All Three Sensors Verified & End-to-End Smoke Test Passing
+*Date: March 21, 2026*
+
+Implemented and verified standalone connection scripts for the OAK-D Lite camera, LDRobot D500 LiDAR, and Waveshare UGV Rover, then wired them together into a single end-to-end smoke test via `run_follower.py`.
+
+**What was done:**
+- Each sensor tested independently via a dedicated script before integration
+- All three confirmed operational on the Pi: camera streaming at 1080p @ 30fps, LiDAR parsing packets with CRC validation, rover responding to drive commands
+- Smoke test (`run_follower.py`) connects all sensors in sequence and confirms all hardware operational in a single command; includes timeouts on sensor wait loops to fail fast with a clear message if a device is unplugged or misconfigured
+
+**Key Achievements:**
+- All three sensors independently verified on the Raspberry Pi before integration
+- Unified smoke test confirms end-to-end hardware chain: `python run_follower.py`
+- Phase 1 — Hardware Integration fully complete ✅
+
+Log from running smoke test to connect to all sensors:
+
+<img src="other/images/Screenshot 2026-03-21 204358.png" alt="Testing Camera Connection" width="500">
+
+
 ## Entry 1: Hardware Confirmed & Dev Environment Stood Up
 *Date: March 20, 2026*
 
