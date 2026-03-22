@@ -2,7 +2,7 @@
 # calibrate_waveshare_camera.py. Not loaded by the main Settings class.
 
 checkerboard:
-  inner_corners: [9, 6]  # [cols, rows] of inner corners — must match the printed board exactly
+  inner_corners: [8, 5]  # [cols, rows] of inner corners — must match the printed board exactly
   square_mm: 28.0        # Physical side length of each square in millimetres
 
 camera:
