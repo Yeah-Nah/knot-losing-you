@@ -62,6 +62,7 @@ _CORNER_CRITERIA = (
 # Shared state (written by capture thread, read by HTTP handlers)
 # ---------------------------------------------------------------------------
 
+
 class _CaptureState:
     """Thread-safe container for the latest frame and detection result."""
 
@@ -111,15 +112,14 @@ class _CaptureState:
             frame = self._annotated_frame
         if frame is None:
             return None
-        ok, buf = cv2.imencode(
-            ".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, _JPEG_QUALITY]
-        )
+        ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, _JPEG_QUALITY])
         return bytes(buf) if ok else None
 
 
 # ---------------------------------------------------------------------------
 # Capture thread
 # ---------------------------------------------------------------------------
+
 
 def _run_capture(
     cap: cv2.VideoCapture,
@@ -143,7 +143,9 @@ def _run_capture(
         )
         annotated = frame.copy()
         if found:
-            corners = cv2.cornerSubPix(gray, corners, (11, 11), (-1, -1), _CORNER_CRITERIA)
+            corners = cv2.cornerSubPix(
+                gray, corners, (11, 11), (-1, -1), _CORNER_CRITERIA
+            )
             cv2.drawChessboardCorners(annotated, board_size, corners, found)
 
         state.update_frame(frame, annotated, bool(found))
@@ -152,6 +154,7 @@ def _run_capture(
 # ---------------------------------------------------------------------------
 # HTTP server
 # ---------------------------------------------------------------------------
+
 
 def _make_handler(state: _CaptureState) -> type[BaseHTTPRequestHandler]:
     """Return a handler class closed over *state*."""
@@ -211,6 +214,7 @@ def _make_handler(state: _CaptureState) -> type[BaseHTTPRequestHandler]:
 # Entry point
 # ---------------------------------------------------------------------------
 
+
 def main() -> None:
     # -- Load config ---------------------------------------------------------
     if not _CONFIG_PATH.exists():
@@ -263,9 +267,9 @@ def main() -> None:
         f"Open http://<pi-ip>:{_STREAM_PORT}/stream in your browser."
     )
     logger.info(
-        f"Endpoints: /stream (MJPEG), "
-        f"/capture (save if corners visible), "
-        f"/status (JSON count + corners_visible)"
+        "Endpoints: /stream (MJPEG), "
+        "/capture (save if corners visible), "
+        "/status (JSON count + corners_visible)"
     )
     try:
         server.serve_forever()
@@ -276,9 +280,7 @@ def main() -> None:
         capture_thread.join(timeout=2)
         cap.release()
         server.server_close()
-        logger.info(
-            f"Done. {state.status()['count']} image(s) saved to {_IMAGES_DIR}."
-        )
+        logger.info(f"Done. {state.status()['count']} image(s) saved to {_IMAGES_DIR}.")
 
 
 if __name__ == "__main__":

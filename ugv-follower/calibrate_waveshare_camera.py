@@ -47,14 +47,15 @@ _CORNER_CRITERIA = (
 )
 
 # Acceptance thresholds
-_RMS_MAX = 1.0          # pixels
-_PP_MARGIN = 0.10       # principal point must be within 10% of frame edge from centre
-_FOCAL_RATIO_MAX = 0.05 # |fx - fy| / max(fx, fy) < 5%
+_RMS_MAX = 1.0  # pixels
+_PP_MARGIN = 0.10  # principal point must be within 10% of frame edge from centre
+_FOCAL_RATIO_MAX = 0.05  # |fx - fy| / max(fx, fy) < 5%
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _load_board_size(cal_config_path: Path) -> tuple[int, int]:
     """Return (cols, rows) of inner corners from calibration_config.yaml."""
@@ -203,6 +204,7 @@ def _write_results(
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(
