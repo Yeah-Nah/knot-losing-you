@@ -31,7 +31,7 @@ import json
 import sys
 import threading
 import time
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import cv2
@@ -261,7 +261,7 @@ def main() -> None:
     logger.info("Capture thread started.")
 
     # -- Start HTTP server ---------------------------------------------------
-    server = HTTPServer(("0.0.0.0", _STREAM_PORT), _make_handler(state))
+    server = ThreadingHTTPServer(("0.0.0.0", _STREAM_PORT), _make_handler(state))
     logger.info(
         f"HTTP server running on port {_STREAM_PORT}. "
         f"Open http://<pi-ip>:{_STREAM_PORT}/stream in your browser."
