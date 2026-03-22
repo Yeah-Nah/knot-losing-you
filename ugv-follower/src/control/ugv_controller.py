@@ -111,3 +111,16 @@ class UGVController:
         """Send a zero-velocity command to halt the UGV."""
         self._send({"T": 1, "L": 0, "R": 0})
         logger.info("UGV stopped.")
+
+    def set_pan_tilt(self, x_deg: float, y_deg: float) -> None:
+        """Command the pan-tilt module to the given angles in degrees.
+
+        Parameters
+        ----------
+        x_deg : float
+            Pan angle in degrees. 0 = centre.
+        y_deg : float
+            Tilt angle in degrees. 0 = centre.
+        """
+        self._send({"T": 133, "X": x_deg, "Y": y_deg, "SPD": 0, "ACC": 0})
+        logger.info(f"Pan-tilt set to ({x_deg}°, {y_deg}°).")

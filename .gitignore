@@ -220,3 +220,7 @@ __marimo__/
 
 # Output directory (recordings, logs)
 ugv-follower/output/
+
+# Calibration images (large binary files, not committed)
+ugv-follower/calibration/images/
+!ugv-follower/calibration/images/.gitkeep

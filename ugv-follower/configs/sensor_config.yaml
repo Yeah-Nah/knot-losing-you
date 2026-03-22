@@ -12,5 +12,13 @@ ugv:
   port: "/dev/ttyAMA0"    # Pi 5; use /dev/serial0 for Pi 4B
   baud_rate: 115200       # Sub-controller default baud rate
   chassis_main: 2         # 1=RaspRover, 2=UGV Rover 6WD, 3=UGV Beast tracked
-  chassis_module: 0       # 0=no module, 1=arm, 2=pan-tilt
+  chassis_module: 2       # 0=no module, 1=arm, 2=pan-tilt
   track_width: 0.3        # Wheel centre-to-centre distance in metres (approx; confirm from spec)
+
+# Waveshare RGB (pan-tilt) camera — intrinsic calibration results
+# Populated by calibrate_waveshare_camera.py after running the calibration workflow.
+waveshare_rgb:
+  camera_matrix: null        # 3x3 K matrix (row-major) — set after calibration
+  dist_coeffs: null          # [k1, k2, p1, p2, k3] distortion vector — set after calibration
+  resolution: null           # [width, height] at calibration time
+  rms_reprojection_error: null  # RMS error in pixels — set after calibration

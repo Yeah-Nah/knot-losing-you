@@ -1,0 +1,13 @@
+# Calibration configuration — used by capture_calibration_images.py and
+# calibrate_waveshare_camera.py. Not loaded by the main Settings class.
+
+checkerboard:
+  inner_corners: [9, 6]  # [cols, rows] of inner corners — must match the printed board exactly
+  square_mm: 28.0        # Physical side length of each square in millimetres
+
+camera:
+  device_index: 0        # cv2.VideoCapture device index for the Waveshare RGB camera
+
+ugv:
+  port: "/dev/ttyAMA0"   # Serial port for the UGV sub-controller (Pi 5: ttyAMA0, Pi 4B: serial0)
+  baud_rate: 115200
