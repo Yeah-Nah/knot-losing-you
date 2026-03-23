@@ -231,7 +231,7 @@ def main() -> None:
 
     # -- Zero pan-tilt -------------------------------------------------------
     logger.info(f"Zeroing pan-tilt via {ugv_port}...")
-    controller = UGVController(port=ugv_port, baud_rate=ugv_baud)
+    controller = UGVController(port=ugv_port, baud_rate=ugv_baud, chassis_module=2)
     controller.connect()
     controller.set_pan_tilt(0.0, 0.0)
     time.sleep(0.5)  # Allow servos to reach centre before we disconnect

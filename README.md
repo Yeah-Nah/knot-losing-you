@@ -98,6 +98,38 @@ python run_follower.py \
 
 ---
 
+## Troubleshooting
+
+### Serial port in use (`/dev/ttyAMA0`)
+
+Waveshare's `ugv_rpi/app.py` starts automatically on boot via crontab and holds the serial port. Any script that uses the UGV sub-controller (`check_battery.py`, `capture_calibration_images.py`, `run_follower.py`, etc.) will fail with a "device reports readiness to read but returned no data" error until it's stopped.
+
+**One-time fix — kill the process for this session:**
+
+```bash
+# Find out what is holdin the process
+lsof -t /dev/ttyAMA0
+
+# Then kill it
+sudo kill -9 848
+```
+
+**Permanent fix — disable it from autostarting:**
+
+```bash
+crontab -e
+```
+
+Comment out the `app.py` line by adding a `#` at the start:
+
+```
+# @reboot XDG_RUNTIME_DIR=/run/user/1000 ~/ugv_rpi/ugv-env/bin/python ~/ugv_rpi/app.py >> ~/ugv.log 2>&1
+```
+
+Save and exit. The process will no longer start on boot. The Jupyter line in crontab can be left as-is or also commented out if you don't use it.
+
+---
+
 ## Sensor & Hardware Tests
 
 All test scripts are run from `ugv-follower/` on the Pi.
