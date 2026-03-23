@@ -1,8 +1,10 @@
-"""Intrinsic calibration for the Waveshare RGB camera.
+"""Intrinsic fisheye calibration for the Waveshare RGB camera.
 
 Loads a folder of checkerboard images captured by capture_calibration_images.py,
-runs cv2.calibrateCamera, validates the results, and writes them into
-configs/sensor_config.yaml under the ``waveshare_rgb`` key.
+runs OpenCV's fisheye calibration (cv2.fisheye.calibrate), validates the
+results, and writes them into configs/sensor_config.yaml under the
+``waveshare_rgb`` key. The returned intrinsics and distortion coefficients
+use OpenCV's fisheye camera model.
 
 Can be run on the Pi or a laptop — no hardware connection required.
 
@@ -213,8 +215,10 @@ def _write_results(
 ) -> None:
     """Merge calibration results into sensor_config.yaml under the ``waveshare_rgb`` key.
 
-    Reads the existing file, replaces only the ``waveshare_rgb`` section, and
-    writes the result back — all other top-level keys are preserved.
+    Reads the existing file into a dict, updates only the ``waveshare_rgb``
+    entry in that mapping, and then re-serialises the entire configuration
+    back to disk. Other top-level keys and their values are preserved, but
+    YAML comments and original formatting are not.
 
     Parameters
     ----------

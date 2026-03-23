@@ -83,6 +83,10 @@ Physically assembled the rover with all three sensors attached. Confirmed all de
 - All three sensors physically connected and detected by the Pi before writing a single line of sensor code
 - Clean pre-commit baseline established — ruff, mypy, and file checks all green
 
+The "Nauti-Bot" in question (yes I am keeping to the nautical theme):
+
+<img src="other/images/20260323_175328.JPG" alt="Testing Camera Connection" width="500">
+
 Connecting to the rover via the Waveshare UI and testing functionality:
 
 <img src="other/images/Screenshot 2026-03-20 190359.png" alt="Testing Camera Connection" width="500">

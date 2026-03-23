@@ -18,9 +18,9 @@ Run from the ugv-follower directory::
 
     python capture_calibration_images.py
 
-The script reads calibration_config.yaml (same directory as this file) for the
-board dimensions, camera device index, and UGV serial port. It zeros the
-pan-tilt servo before opening the camera, then starts the HTTP server.
+The script reads configs/calibration_config.yaml for the board dimensions,
+camera device index, and UGV serial port. It zeros the pan-tilt servo before
+opening the camera, then starts the HTTP server.
 
 Press Ctrl-C to stop.
 """
@@ -115,12 +115,22 @@ class _CaptureState:
 
     def try_capture(self) -> dict[str, object]:
         """Save the current raw frame if corners are visible. Thread-safe."""
+        # Minimize time holding the lock: copy frame and index, then write.
         with self._lock:
             if not self._corners_visible or self._raw_frame is None:
                 return {"saved": False, "count": self._saved_count}
             idx = self._saved_count
+            frame = self._raw_frame.copy()
             path = _IMAGES_DIR / f"frame_{idx:04d}.jpg"
-            cv2.imwrite(str(path), self._raw_frame)
+
+        ok = cv2.imwrite(str(path), frame)
+        if not ok:
+            logger.error(f"Failed to save {path}")
+            # Count remains unchanged on failure.
+            with self._lock:
+                return {"saved": False, "count": self._saved_count}
+
+        with self._lock:
             self._saved_count += 1
             logger.info(f"Saved {path}  (total: {self._saved_count})")
             return {"saved": True, "count": self._saved_count}

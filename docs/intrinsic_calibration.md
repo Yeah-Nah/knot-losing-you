@@ -357,7 +357,7 @@ waveshare_rgb:
     - [fx,  0.0, cx]
     - [0.0, fy,  cy]
     - [0.0, 0.0, 1.0]
-  dist_coeffs: [k1, k2, p1, p2, k3]   # OpenCV distortion vector
+  dist_coeffs: [k1, k2, k3, k4]       # OpenCV fisheye distortion vector (cv2.fisheye.calibrate)
   resolution: [640, 480]               # Resolution these parameters were measured at
   rms_reprojection_error: null         # RMS error (px) — filled in after calibration
 ```

@@ -107,10 +107,10 @@ Waveshare's `ugv_rpi/app.py` starts automatically on boot via crontab and holds 
 **One-time fix — kill the process for this session:**
 
 ```bash
-# Find out what is holdin the process
+# Find out what is holding the process
 lsof -t /dev/ttyAMA0
 
-# Then kill it
+# Then kill it (PID 848 is a placeholder)
 sudo kill -9 848
 ```
 
