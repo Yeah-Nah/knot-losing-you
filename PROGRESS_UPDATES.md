@@ -24,6 +24,29 @@ Short description of what was done and why.
 
 -->
 
+# Phase 2: Sensor Calibration
+
+## Entry 3: Waveshare RGB Camera Intrinsic Calibration Complete
+*Date: March 23, 2026*
+
+Built and verified the full intrinsic calibration pipeline for the Waveshare RGB camera — the first step in Phase 2. The camera can now report where things actually are in the image, correcting for lens distortion and pixel geometry.
+
+**What was done:**
+- Built a headless image capture tool that streams a live annotated feed to a laptop browser — no screen needed on the Pi
+- Built a calibration tool that processes the captured images and writes the resulting camera parameters directly into the sensor config
+- Wrote reference documentation covering the underlying camera geometry
+
+**Key Achievements:**
+- Waveshare RGB camera fully characterised — focal lengths, principal point, and distortion coefficients measured and stored in `sensor_config.yaml`
+- Entire calibration workflow runs headlessly on the Pi, operated from a laptop browser
+- Intrinsic calibration step of Phase 2 complete ✅
+
+Screenshot of the intrinsic camera calibration process:
+
+<img src="other/images/Screenshot 2026-03-22 192017.png" alt="Testing Camera Connection" width="500">
+
+---
+
 # Phase 0/1: Baseplate Setup and Hardware Integration
 
 ## Entry 2: All Three Sensors Verified & End-to-End Smoke Test Passing
