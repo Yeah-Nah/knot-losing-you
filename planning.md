@@ -40,7 +40,7 @@ No sea legs required.
 > (or in addition to) the OAK-D Lite, its intrinsics must also be calibrated here.
 > Set `chassis_module: 2` in `sensor_config.yaml` before running pan-tilt calibration steps.
 
-- [ ] **Intrinsic calibration — detection camera**: OpenCV checkerboard routine
+- [x] **Intrinsic calibration — detection camera**: OpenCV checkerboard routine
   (`cv2.calibrateCamera`) → focal lengths $f_x, f_y$, principal point $c_x, c_y$, and distortion
   coefficients $D$; stored in `sensor_config.yaml`
   _Skills: camera calibration techniques · intrinsic/extrinsic calibration algorithms · OpenCV_

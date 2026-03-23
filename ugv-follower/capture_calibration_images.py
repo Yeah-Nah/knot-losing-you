@@ -81,6 +81,17 @@ class _CaptureState:
         annotated: cv2.typing.MatLike,
         corners: bool,
     ) -> None:
+        """Replace the stored frames and corner-detection result atomically.
+
+        Parameters
+        ----------
+        raw : cv2.typing.MatLike
+            Unmodified frame straight from the camera.
+        annotated : cv2.typing.MatLike
+            Copy of *raw* with checkerboard corners drawn (if detected).
+        corners : bool
+            ``True`` if corners were detected in this frame.
+        """
         with self._lock:
             self._raw_frame = raw
             self._annotated_frame = annotated
@@ -89,6 +100,13 @@ class _CaptureState:
     # -- readers / actions (called from HTTP handlers) -----------------------
 
     def status(self) -> dict[str, object]:
+        """Return a snapshot of the current capture state.
+
+        Returns
+        -------
+        dict
+            ``{"count": int, "corners_visible": bool}``
+        """
         with self._lock:
             return {
                 "count": self._saved_count,
@@ -108,6 +126,14 @@ class _CaptureState:
             return {"saved": True, "count": self._saved_count}
 
     def get_annotated_jpeg(self) -> bytes | None:
+        """JPEG-encode the latest annotated frame and return the raw bytes.
+
+        Returns
+        -------
+        bytes or None
+            JPEG bytes ready to send in an MJPEG stream, or ``None`` if no
+            frame has been captured yet.
+        """
         with self._lock:
             frame = self._annotated_frame
         if frame is None:
@@ -127,7 +153,24 @@ def _run_capture(
     board_size: tuple[int, int],
     stop_event: threading.Event,
 ) -> None:
-    """Continuously grab frames, detect corners, and update shared state."""
+    """Continuously grab frames, detect checkerboard corners, and update shared state.
+
+    Intended to run in a daemon thread. Loops until *stop_event* is set, reading
+    frames from *cap*, running ``cv2.findChessboardCorners`` on each, and calling
+    ``state.update_frame`` so the HTTP handlers always have a fresh annotated frame
+    and corner-detection result to serve.
+
+    Parameters
+    ----------
+    cap : cv2.VideoCapture
+        Opened camera to read frames from.
+    state : _CaptureState
+        Shared state object updated on every iteration.
+    board_size : tuple[int, int]
+        ``(cols, rows)`` of inner corners on the calibration checkerboard.
+    stop_event : threading.Event
+        Set this event to signal the loop to exit cleanly.
+    """
     while not stop_event.is_set():
         ok, frame = cap.read()
         if not ok:
@@ -211,6 +254,63 @@ def _make_handler(state: _CaptureState, stream_fps: int = 30) -> type[BaseHTTPRe
 
 
 # ---------------------------------------------------------------------------
+# Hardware helpers
+# ---------------------------------------------------------------------------
+
+
+def _zero_pan_tilt(port: str, baud_rate: int) -> None:
+    """Connect to the UGV sub-controller, centre the pan-tilt, then disconnect.
+
+    Parameters
+    ----------
+    port : str
+        Serial port the UGV sub-controller is connected to (e.g. ``/dev/ttyAMA0``).
+    baud_rate : int
+        Baud rate for the serial connection.
+    """
+    logger.info(f"Zeroing pan-tilt via {port}...")
+    controller = UGVController(port=port, baud_rate=baud_rate, chassis_module=2)
+    controller.connect()
+    controller.set_pan_tilt(0.0, 0.0)
+    time.sleep(0.5)  # Allow servos to reach centre before we disconnect
+    controller.disconnect()
+    logger.info("Pan-tilt zeroed. Serial connection closed.")
+
+
+def _open_camera(device_index: int, width: int, height: int) -> cv2.VideoCapture:
+    """Open a VideoCapture at the requested resolution and return it.
+
+    Parameters
+    ----------
+    device_index : int
+        ``cv2.VideoCapture`` device index for the Waveshare RGB camera.
+    width : int
+        Requested frame width in pixels.
+    height : int
+        Requested frame height in pixels.
+
+    Returns
+    -------
+    cv2.VideoCapture
+        Opened and configured capture object.
+
+    Raises
+    ------
+    SystemExit
+        If the device cannot be opened.
+    """
+    logger.info(f"Opening camera (device_index={device_index})...")
+    cap = cv2.VideoCapture(device_index)
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+    if not cap.isOpened():
+        logger.error(f"Could not open VideoCapture(index={device_index})")
+        sys.exit(1)
+    logger.info("Camera opened.")
+    return cap
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
@@ -232,23 +332,10 @@ def main() -> None:
     ugv_baud = int(cfg["ugv"]["baud_rate"])
 
     # -- Zero pan-tilt -------------------------------------------------------
-    logger.info(f"Zeroing pan-tilt via {ugv_port}...")
-    controller = UGVController(port=ugv_port, baud_rate=ugv_baud, chassis_module=2)
-    controller.connect()
-    controller.set_pan_tilt(0.0, 0.0)
-    time.sleep(0.5)  # Allow servos to reach centre before we disconnect
-    controller.disconnect()
-    logger.info("Pan-tilt zeroed. Serial connection closed.")
+    _zero_pan_tilt(ugv_port, ugv_baud)
 
     # -- Open camera ---------------------------------------------------------
-    logger.info(f"Opening camera (device_index={device_index})...")
-    cap = cv2.VideoCapture(device_index)
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, res_w)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, res_h)
-    if not cap.isOpened():
-        logger.error(f"Could not open VideoCapture(index={device_index})")
-        sys.exit(1)
-    logger.info("Camera opened.")
+    cap = _open_camera(device_index, res_w, res_h)
 
     # -- Prepare output dir --------------------------------------------------
     _IMAGES_DIR.mkdir(parents=True, exist_ok=True)

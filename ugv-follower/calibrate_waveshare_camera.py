@@ -66,6 +66,18 @@ def _load_board_size(cal_config_path: Path) -> tuple[int, int]:
 
 
 def _collect_image_paths(folder: Path) -> list[Path]:
+    """Return a sorted list of .jpg and .png image paths found in *folder*.
+
+    Parameters
+    ----------
+    folder : Path
+        Directory to search (non-recursive).
+
+    Returns
+    -------
+    list[Path]
+        All ``*.jpg`` files (sorted) followed by all ``*.png`` files (sorted).
+    """
     paths = sorted(folder.glob("*.jpg")) + sorted(folder.glob("*.png"))
     return paths
 
@@ -78,8 +90,8 @@ def _detect_corners(
 
     Returns
     -------
-    object_points : list of (N, 3) float32 arrays (Z=0 board coordinates)
-    image_points  : list of (N, 1, 2) float32 arrays (pixel coordinates)
+    object_points : list of (N, 1, 3) float64 arrays (Z=0 board coordinates)
+    image_points  : list of (N, 1, 2) float64 arrays (pixel coordinates)
     image_size    : (width, height) of the images
     """
     cols, rows = board_size
@@ -141,7 +153,25 @@ def _validate(
     camera_matrix: np.ndarray,
     image_size: tuple[int, int],
 ) -> None:
-    """Raise ValueError if calibration results fail acceptance criteria."""
+    """Raise ``ValueError`` if calibration results fail acceptance criteria.
+
+    Checks RMS re-projection error, principal point position (must sit within
+    the central 80% of the frame), and focal length symmetry.
+
+    Parameters
+    ----------
+    rms : float
+        RMS re-projection error returned by the calibration call.
+    camera_matrix : np.ndarray
+        3×3 intrinsic matrix K.
+    image_size : tuple[int, int]
+        ``(width, height)`` of the calibration images in pixels.
+
+    Raises
+    ------
+    ValueError
+        If any acceptance criterion is not met; the message lists all failures.
+    """
     errors: list[str] = []
 
     if rms >= _RMS_MAX:
@@ -181,7 +211,24 @@ def _write_results(
     image_size: tuple[int, int],
     rms: float,
 ) -> None:
-    """Merge waveshare_rgb results into sensor_config.yaml, preserving other keys."""
+    """Merge calibration results into sensor_config.yaml under the ``waveshare_rgb`` key.
+
+    Reads the existing file, replaces only the ``waveshare_rgb`` section, and
+    writes the result back — all other top-level keys are preserved.
+
+    Parameters
+    ----------
+    sensor_config_path : Path
+        Path to ``sensor_config.yaml``.
+    camera_matrix : np.ndarray
+        3×3 intrinsic matrix K.
+    dist_coeffs : np.ndarray
+        Fisheye distortion coefficients shaped ``(4, 1)``.
+    image_size : tuple[int, int]
+        ``(width, height)`` of the calibration images in pixels.
+    rms : float
+        RMS re-projection error in pixels.
+    """
     with sensor_config_path.open() as f:
         config = yaml.safe_load(f) or {}
 
@@ -204,11 +251,19 @@ def _write_results(
 
 
 # ---------------------------------------------------------------------------
-# Entry point
+# Entry point helpers
 # ---------------------------------------------------------------------------
 
 
-def main() -> None:
+def _build_arg_parser() -> argparse.ArgumentParser:
+    """Build and return the CLI argument parser for the calibration script.
+
+    Returns
+    -------
+    argparse.ArgumentParser
+        Configured parser with ``--images``, ``--square-mm``, ``--config``,
+        and ``--sensor-config`` arguments.
+    """
     parser = argparse.ArgumentParser(
         description="Run OpenCV checkerboard intrinsic calibration on saved images."
     )
@@ -236,7 +291,54 @@ def main() -> None:
         default=_DEFAULT_SENSOR_CONFIG,
         help=f"Path to sensor_config.yaml to write results into (default: {_DEFAULT_SENSOR_CONFIG}).",
     )
-    args = parser.parse_args()
+    return parser
+
+
+def _run_fisheye_calibration(
+    object_points: list[np.ndarray],
+    image_points: list[np.ndarray],
+    image_size: tuple[int, int],
+) -> tuple[float, np.ndarray, np.ndarray]:
+    """Run ``cv2.fisheye.calibrate`` and return the results.
+
+    Parameters
+    ----------
+    object_points : list of np.ndarray
+        Per-image board coordinates, each shaped ``(N, 1, 3)`` float64.
+    image_points : list of np.ndarray
+        Per-image detected corner coordinates, each shaped ``(N, 1, 2)`` float64.
+    image_size : tuple[int, int]
+        ``(width, height)`` of the calibration images in pixels.
+
+    Returns
+    -------
+    rms : float
+        RMS re-projection error in pixels.
+    camera_matrix : np.ndarray
+        3×3 intrinsic matrix K.
+    dist_coeffs : np.ndarray
+        Fisheye distortion coefficients ``[k1, k2, k3, k4]``, shaped ``(4, 1)``.
+    """
+    K = np.zeros((3, 3), dtype=np.float64)
+    D = np.zeros((4, 1), dtype=np.float64)
+    rms, K, D, _rvecs, _tvecs = cv2.fisheye.calibrate(
+        object_points,
+        image_points,
+        image_size,
+        K,
+        D,
+        flags=cv2.fisheye.CALIB_RECOMPUTE_EXTRINSIC | cv2.fisheye.CALIB_FIX_SKEW,
+    )
+    return rms, K, D
+
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
+
+def main() -> None:
+    args = _build_arg_parser().parse_args()
 
     images_dir: Path = args.images.resolve()
     square_mm: float = args.square_mm
@@ -283,17 +385,9 @@ def main() -> None:
 
     # -- Calibrate -----------------------------------------------------------
     logger.info(f"Running fisheye.calibrate on {len(object_points)} image(s)...")
-    K = np.zeros((3, 3), dtype=np.float64)
-    D = np.zeros((4, 1), dtype=np.float64)
-    rms, K, D, _rvecs, _tvecs = cv2.fisheye.calibrate(
-        scaled_object_points,
-        image_points,
-        image_size,
-        K,
-        D,
-        flags=cv2.fisheye.CALIB_RECOMPUTE_EXTRINSIC | cv2.fisheye.CALIB_FIX_SKEW,
+    rms, camera_matrix, dist_coeffs = _run_fisheye_calibration(
+        scaled_object_points, image_points, image_size
     )
-    camera_matrix, dist_coeffs = K, D
 
     fx = camera_matrix[0, 0]
     fy = camera_matrix[1, 1]
