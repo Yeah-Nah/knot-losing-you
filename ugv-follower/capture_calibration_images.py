@@ -199,7 +199,9 @@ def _run_capture(
 # ---------------------------------------------------------------------------
 
 
-def _make_handler(state: _CaptureState, stream_fps: int = 30) -> type[BaseHTTPRequestHandler]:
+def _make_handler(
+    state: _CaptureState, stream_fps: int = 30
+) -> type[BaseHTTPRequestHandler]:
     """Return a handler class closed over *state*."""
 
     class Handler(BaseHTTPRequestHandler):
@@ -342,7 +344,9 @@ def main() -> None:
     existing = [int(p.stem.split("_")[1]) for p in _IMAGES_DIR.glob("frame_????.jpg")]
     start_count = max(existing) + 1 if existing else 0
     if existing:
-        logger.info(f"Found {len(existing)} existing image(s) in {_IMAGES_DIR}, starting from frame_{start_count:04d}.")
+        logger.info(
+            f"Found {len(existing)} existing image(s) in {_IMAGES_DIR}, starting from frame_{start_count:04d}."
+        )
 
     # -- Start capture thread ------------------------------------------------
     state = _CaptureState(start_count=start_count)
@@ -356,7 +360,9 @@ def main() -> None:
     logger.info("Capture thread started.")
 
     # -- Start HTTP server ---------------------------------------------------
-    server = ThreadingHTTPServer(("0.0.0.0", _STREAM_PORT), _make_handler(state, stream_fps))
+    server = ThreadingHTTPServer(
+        ("0.0.0.0", _STREAM_PORT), _make_handler(state, stream_fps)
+    )
     logger.info(
         f"HTTP server running on port {_STREAM_PORT}. "
         f"Open http://<pi-ip>:{_STREAM_PORT}/stream in your browser."
