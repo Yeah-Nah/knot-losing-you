@@ -66,12 +66,12 @@ _CORNER_CRITERIA = (
 class _CaptureState:
     """Thread-safe container for the latest frame and detection result."""
 
-    def __init__(self) -> None:
+    def __init__(self, start_count: int = 0) -> None:
         self._lock = threading.Lock()
         self._raw_frame: cv2.typing.MatLike | None = None
         self._annotated_frame: cv2.typing.MatLike | None = None
         self._corners_visible: bool = False
-        self._saved_count: int = 0
+        self._saved_count: int = start_count
 
     # -- writers (called from capture thread) --------------------------------
 
@@ -156,7 +156,7 @@ def _run_capture(
 # ---------------------------------------------------------------------------
 
 
-def _make_handler(state: _CaptureState) -> type[BaseHTTPRequestHandler]:
+def _make_handler(state: _CaptureState, stream_fps: int = 30) -> type[BaseHTTPRequestHandler]:
     """Return a handler class closed over *state*."""
 
     class Handler(BaseHTTPRequestHandler):
@@ -203,7 +203,7 @@ def _make_handler(state: _CaptureState) -> type[BaseHTTPRequestHandler]:
                     )
                     self.wfile.write(part)
                     self.wfile.flush()
-                    time.sleep(1 / 30)
+                    time.sleep(1 / stream_fps)
             except (BrokenPipeError, ConnectionResetError):
                 pass  # client disconnected
 
@@ -227,6 +227,7 @@ def main() -> None:
     board_size = (board_cols, board_rows)
     device_index = int(cfg["camera"]["device_index"])
     res_w, res_h = cfg["camera"]["resolution"]
+    stream_fps = int(cfg["camera"].get("stream_fps", 30))
     ugv_port = str(cfg["ugv"]["port"])
     ugv_baud = int(cfg["ugv"]["baud_rate"])
 
@@ -251,9 +252,13 @@ def main() -> None:
 
     # -- Prepare output dir --------------------------------------------------
     _IMAGES_DIR.mkdir(parents=True, exist_ok=True)
+    existing = [int(p.stem.split("_")[1]) for p in _IMAGES_DIR.glob("frame_????.jpg")]
+    start_count = max(existing) + 1 if existing else 0
+    if existing:
+        logger.info(f"Found {len(existing)} existing image(s) in {_IMAGES_DIR}, starting from frame_{start_count:04d}.")
 
     # -- Start capture thread ------------------------------------------------
-    state = _CaptureState()
+    state = _CaptureState(start_count=start_count)
     stop_event = threading.Event()
     capture_thread = threading.Thread(
         target=_run_capture,
@@ -264,7 +269,7 @@ def main() -> None:
     logger.info("Capture thread started.")
 
     # -- Start HTTP server ---------------------------------------------------
-    server = ThreadingHTTPServer(("0.0.0.0", _STREAM_PORT), _make_handler(state))
+    server = ThreadingHTTPServer(("0.0.0.0", _STREAM_PORT), _make_handler(state, stream_fps))
     logger.info(
         f"HTTP server running on port {_STREAM_PORT}. "
         f"Open http://<pi-ip>:{_STREAM_PORT}/stream in your browser."
