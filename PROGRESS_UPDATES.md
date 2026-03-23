@@ -1,8 +1,5 @@
 # Progress Updates — knot-losing-you
 
-> Autonomous UGV that follows you around the boat park using OAK-D Lite and LiDAR.
-> No sea legs required.
-
 Progress is logged chronologically here — one entry per meaningful milestone.
 
 ---
