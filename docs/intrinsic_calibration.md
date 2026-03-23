@@ -502,7 +502,7 @@ source .venv/bin/activate
 ```
 
 - Confirm `configs/calibration_config.yaml` matches your hardware:
-  - `checkerboard.inner_corners` — must match the printed board (default: `[9, 6]`)
+  - `checkerboard.inner_corners` — must match the printed board (default: `[8, 5]`)
   - `checkerboard.square_mm` — physical square size in mm (default: `28.0`)
   - `camera.device_index` — Waveshare RGB camera index (default: `0`)
   - `ugv.port` — serial port for pan-tilt (default: `/dev/ttyAMA0` for Pi 5)
