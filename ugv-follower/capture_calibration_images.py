@@ -226,6 +226,7 @@ def main() -> None:
     board_cols, board_rows = cfg["checkerboard"]["inner_corners"]
     board_size = (board_cols, board_rows)
     device_index = int(cfg["camera"]["device_index"])
+    res_w, res_h = cfg["camera"]["resolution"]
     ugv_port = str(cfg["ugv"]["port"])
     ugv_baud = int(cfg["ugv"]["baud_rate"])
 
@@ -241,6 +242,8 @@ def main() -> None:
     # -- Open camera ---------------------------------------------------------
     logger.info(f"Opening camera (device_index={device_index})...")
     cap = cv2.VideoCapture(device_index)
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, res_w)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, res_h)
     if not cap.isOpened():
         logger.error(f"Could not open VideoCapture(index={device_index})")
         sys.exit(1)

@@ -47,7 +47,7 @@ _CORNER_CRITERIA = (
 )
 
 # Acceptance thresholds
-_RMS_MAX = 1.0  # pixels
+_RMS_MAX = 0.5  # pixels
 _PP_MARGIN = 0.10  # principal point must be within 10% of frame edge from centre
 _FOCAL_RATIO_MAX = 0.05  # |fx - fy| / max(fx, fy) < 5%
 
@@ -83,9 +83,10 @@ def _detect_corners(
     image_size    : (width, height) of the images
     """
     cols, rows = board_size
-    # Board coordinates: (col, row, 0) for each inner corner
-    objp = np.zeros((cols * rows, 3), dtype=np.float32)
-    objp[:, :2] = np.mgrid[0:cols, 0:rows].T.reshape(-1, 2)
+    # Board coordinates: (col, row, 0) for each inner corner.
+    # Shape (N, 1, 3) float64 required by cv2.fisheye.calibrate.
+    objp = np.zeros((cols * rows, 1, 3), dtype=np.float64)
+    objp[:, 0, :2] = np.mgrid[0:cols, 0:rows].T.reshape(-1, 2)
     # Scale is applied in calibrateCamera via the square_mm argument elsewhere;
     # here we keep units as "squares" and pass square_mm as the object point scale.
 
@@ -124,7 +125,7 @@ def _detect_corners(
 
         corners = cv2.cornerSubPix(gray, corners, (11, 11), (-1, -1), _CORNER_CRITERIA)
         object_points.append(objp)
-        image_points.append(corners)
+        image_points.append(corners.astype(np.float64))
 
     logger.info(
         f"Corner detection: {len(object_points)} accepted, {skipped} skipped "
@@ -189,6 +190,7 @@ def _write_results(
     d = dist_coeffs.flatten().tolist()
 
     config["waveshare_rgb"] = {
+        "model": "fisheye",
         "camera_matrix": k,
         "dist_coeffs": d,
         "resolution": list(image_size),
@@ -280,20 +282,24 @@ def main() -> None:
     scaled_object_points = [op * square_mm for op in object_points]
 
     # -- Calibrate -----------------------------------------------------------
-    logger.info(f"Running calibrateCamera on {len(object_points)} image(s)...")
-    rms, camera_matrix, dist_coeffs, _rvecs, _tvecs = cv2.calibrateCamera(
+    logger.info(f"Running fisheye.calibrate on {len(object_points)} image(s)...")
+    K = np.zeros((3, 3), dtype=np.float64)
+    D = np.zeros((4, 1), dtype=np.float64)
+    rms, K, D, _rvecs, _tvecs = cv2.fisheye.calibrate(
         scaled_object_points,
         image_points,
         image_size,
-        None,
-        None,
+        K,
+        D,
+        flags=cv2.fisheye.CALIB_RECOMPUTE_EXTRINSIC | cv2.fisheye.CALIB_FIX_SKEW,
     )
+    camera_matrix, dist_coeffs = K, D
 
     fx = camera_matrix[0, 0]
     fy = camera_matrix[1, 1]
     cx = camera_matrix[0, 2]
     cy = camera_matrix[1, 2]
-    d = dist_coeffs.flatten()
+    d = dist_coeffs.flatten()  # [k1, k2, k3, k4]
 
     print("\n--- Calibration results ---")
     print(f"  Images used   : {len(object_points)}")
@@ -301,7 +307,7 @@ def main() -> None:
     print(f"  RMS error     : {rms:.4f} px")
     print(f"  fx, fy        : {fx:.2f}, {fy:.2f}")
     print(f"  cx, cy        : {cx:.2f}, {cy:.2f}")
-    print(f"  dist_coeffs   : {d.tolist()}")
+    print(f"  dist_coeffs   : {d.tolist()}  # [k1, k2, k3, k4]")
     print()
 
     # -- Validate ------------------------------------------------------------
