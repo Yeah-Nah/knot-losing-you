@@ -23,3 +23,10 @@ waveshare_rgb:
   dist_coeffs: null          # [k1, k2, k3, k4] fisheye distortion vector — set after calibration
   resolution: null           # [width, height] at calibration time
   rms_reprojection_error: null  # RMS error in pixels — set after calibration
+
+  # Images used   : 59
+  # Resolution    : 1280×720 px
+  # RMS error     : 0.7737 px
+  # fx, fy        : 542.44, 544.64
+  # cx, cy        : 672.07, 379.80
+  # dist_coeffs   : [0.04838097993620094, -0.041844537572354824, 0.012958617562528365, -0.0031300600380237465]  # [k1, k2, k3, k4]

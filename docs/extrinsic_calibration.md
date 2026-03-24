@@ -43,8 +43,11 @@ Before the maths, you need to be precise about what a *coordinate frame* is and 
 are involved.
 
 A **coordinate frame** is an origin point plus three mutually perpendicular axes (X, Y, Z)
-with an agreed handedness (right-handed throughout this project). Every sensor measurement is
-expressed relative to some frame.
+with an agreed handedness. The camera frame and robot body frame in this project are
+right-handed. The D500 LiDAR is an exception — its native frame is **left-handed** (angles
+increase clockwise when viewed from above, placing positive Y to the right of the forward
+axis). This handedness difference is not a problem: $R$ in $T_C^L$ absorbs it as part of the
+frame-to-frame rotation, the same way it absorbs any other axis misalignment.
 
 ### The Three Frames in Play
 
@@ -54,15 +57,16 @@ expressed relative to some frame.
   LiDAR origin (L)           |        Camera origin (C)
        o---> X (forward)          o---> X (right in image)
        |                          |
-       v Y (right)                v Y (down in image)
+       v Y (right) [left-handed]  v Y (down in image)
                                   .
                               Z (forward, out of lens)
 ```
 
-**LiDAR frame (L):**
+**LiDAR frame (L): ⚠ left-handed**
 - Origin: the centre of the D500's rotating mirror
 - X: forward (aligned with the rover's forward direction when mounted centrally)
-- Y: left (by right-hand rule)
+- Y: **right** — angles increase clockwise when viewed from above; positive Y is to the right
+  of the forward axis. This makes the frame left-handed (X forward, Y right, Z up).
 - Z: straight up (perpendicular to the horizontal scan plane)
 - Measurements live in the XY plane ($Z = 0$ for all returns — the D500 is a planar scanner)
 
@@ -109,8 +113,21 @@ where:
 - $\mathbf{t}$ is a $3 \times 1$ **translation vector** describing the LiDAR origin's
   position in the camera frame
 
-This is a system of three scalar equations and involves 6 numbers total (3 for the rotation,
-3 for the translation) — the **6 degrees of freedom** of a rigid-body transform in 3D space.
+Although written as a single vector equation, this is a system of **three scalar equations**
+— one per spatial dimension — computed simultaneously:
+
+$$x_C = r_{11}x_L + r_{12}y_L + r_{13}z_L + t_x$$
+$$y_C = r_{21}x_L + r_{22}y_L + r_{23}z_L + t_y$$
+$$z_C = r_{31}x_L + r_{32}y_L + r_{33}z_L + t_z$$
+
+Each output coordinate is a weighted sum of *all three* input coordinates — which is why a
+pure yaw rotation (rotating around Z) changes both $x_C$ and $y_C$ together, not just one
+of them in isolation.
+
+The system involves 6 independent numbers total: $R$ is a $3 \times 3$ matrix (9 entries)
+and $\mathbf{t}$ is a 3-vector, but the constraints on a rotation matrix reduce $R$'s 9
+entries to only 3 free values (roll, pitch, yaw). Add the 3 translation components and you
+get the **6 degrees of freedom** of a rigid-body transform in 3D space.
 
 ---
 
@@ -119,8 +136,28 @@ This is a system of three scalar equations and involves 6 numbers total (3 for t
 ### Geometric Meaning
 
 $R$ is a $3 \times 3$ matrix where each column is one of the LiDAR's unit axis vectors,
-expressed in camera-frame coordinates. If the two sensors were perfectly aligned (parallel
-axes, same orientation), $R$ would be the $3 \times 3$ identity matrix $I$.
+expressed in camera-frame coordinates:
+
+$$R = \begin{bmatrix} | & | & | \\ \hat{x}_L & \hat{y}_L & \hat{z}_L \\ | & | & | \end{bmatrix}$$
+
+where $\hat{x}_L$, $\hat{y}_L$, $\hat{z}_L$ are the LiDAR's three axis directions written
+in the camera's coordinate language. Column 1 answers *"which way does LiDAR-forward
+point, in camera coordinates?"*, column 2 answers the same for LiDAR-right, column 3 for
+LiDAR-up.
+
+This column interpretation gives the cleanest geometric reading of the multiplication
+$R\,\mathbf{p}_L$: it is a weighted sum of the LiDAR's axes expressed in camera
+coordinates —
+
+$$R\,\mathbf{p}_L = x_L\underbrace{\begin{bmatrix}r_{11}\\r_{21}\\r_{31}\end{bmatrix}}_{\hat{x}_L\text{ in cam coords}} + y_L\underbrace{\begin{bmatrix}r_{12}\\r_{22}\\r_{32}\end{bmatrix}}_{\hat{y}_L\text{ in cam coords}} + z_L\underbrace{\begin{bmatrix}r_{13}\\r_{23}\\r_{33}\end{bmatrix}}_{\hat{z}_L\text{ in cam coords}}$$
+
+The point is $x_L$ steps along LiDAR-forward, plus $y_L$ steps along LiDAR-right, plus
+$z_L$ steps along LiDAR-up — but each of those "steps" is now measured using the camera's
+own axis directions.
+
+If the two sensors were perfectly aligned (parallel axes, same orientation), each LiDAR
+axis would coincide with the matching camera axis, $R$ would be the $3 \times 3$ identity
+matrix $I$, and $R\,\mathbf{p}_L = \mathbf{p}_L$ — no change.
 
 In practice the sensors will be slightly misaligned in pitch, roll, and yaw. $R$ captures
 all three angular differences simultaneously.
@@ -150,9 +187,88 @@ rotation angles. Two common parameterisations:
 **Euler angles** (roll $\phi$, pitch $\theta$, yaw $\psi$) — intuitive but suffer from
 gimbal lock and are order-dependent (ZYX, XYZ, etc. give different results).
 
-**Rodrigues vector** $\mathbf{r}$ — a single 3-vector whose direction is the rotation axis
-and whose magnitude is the rotation angle in radians. No singularities, compact, and what
-OpenCV uses internally. Convert to/from a matrix with `cv2.Rodrigues()`.
+**Rodrigues vector** $\mathbf{r}$ — yes, you really can compress $R$'s 9 entries into just
+3 numbers. Here's why that works.
+
+**Euler's Rotation Theorem** states that any orientation change in 3D — no matter how
+complex, including combined yaw + pitch + roll — is always equivalent to a *single rotation
+around a single axis by a single angle*. There is always exactly one such axis.
+
+Note the distinction: the three *coordinate* axes (X, Y, Z) are a property of the frame;
+the *rotation axis* is a different concept — it is some arbitrary direction in 3D space
+around which the entire rotation can be described as one turn. It need not align with any
+coordinate axis.
+
+The Rodrigues vector encodes both pieces of information in one 3-vector:
+
+$$\mathbf{r} = \theta\,\hat{\mathbf{u}}$$
+
+where $\hat{\mathbf{u}}$ is a plain unit vector (length = 1) that points along the rotation
+axis, and $\theta$ is the rotation angle in radians. Multiplying $\hat{\mathbf{u}}$ by the
+scalar $\theta$ stretches it to length $\theta$ without changing its direction — so the
+resulting 3-vector $\mathbf{r}$ simultaneously carries **both** pieces of information:
+
+| Property | What it encodes | How to recover it |
+|----------|-----------------|-------------------|
+| **Direction** of $\mathbf{r}$ | The line in 3D space to rotate around — need not align with X, Y, or Z | $\hat{\mathbf{u}} = \mathbf{r} / \|\mathbf{r}\|$ |
+| **Magnitude** $\|\mathbf{r}\|$ | How far to rotate around that line (radians) | $\theta = \|\mathbf{r}\|$ |
+
+The rotation axis is *not* necessarily one of the coordinate axes (X, Y, Z). Those are just
+the named axes of a particular frame. The rotation axis is an arbitrary direction in 3D space
+— the one unique line around which the entire combined misalignment can be expressed as a
+single turn. For pure misalignments it happens to coincide with a coordinate axis (pure yaw
+→ Z, pure pitch → Y, pure roll → X), but any combination of misalignments produces a
+diagonal axis that doesn't align with any of them.
+
+Note also that $\hat{\mathbf{u}}$ has **no fixed location in space** — it is a pure
+direction, like a compass bearing, not a ray anchored to the camera origin or any other
+physical point. This is precisely why $R$ and $\mathbf{t}$ are kept separate in
+$\mathbf{p}_C = R\,\mathbf{p}_L + \mathbf{t}$: $R$ captures **orientation only** (how the
+frames are rotated relative to each other, with no location involved), and $\mathbf{t}$
+captures **position only** (where the LiDAR origin physically sits in the camera frame).
+You can rotate without moving, and move without rotating — they are geometrically
+independent, and the transform reflects that separation.
+
+Finally, $\hat{\mathbf{u}}$ is **frame-independent**: it has the same numerical components
+whether you express it in LiDAR coordinates or camera coordinates. Mathematically,
+$\hat{\mathbf{u}}$ is the eigenvector of $R$ with eigenvalue 1 —
+
+$$R\hat{\mathbf{u}} = \hat{\mathbf{u}}$$
+
+— meaning it is the one direction the rotation *leaves unchanged*. A direction that is
+unchanged by a rotation looks identical from either side of that rotation, so neither frame
+has a privileged claim on it. This is what makes the Rodrigues vector a clean, neutral
+description of the rotation itself, rather than a description tied to one sensor's
+perspective.
+
+Concretely: if the LiDAR is yawed 0.1 rad (≈ 5.7°) to the right, the rotation axis is
+straight up (Z), so:
+
+$$\mathbf{r} = 0.1 \times \begin{bmatrix}0\\0\\1\end{bmatrix} = \begin{bmatrix}0\\0\\0.1\end{bmatrix}$$
+
+The vector points straight up (→ axis is Z), length is 0.1 (→ angle is 0.1 rad). If the
+yaw were 0.2 rad instead, the direction would be identical but the length would be 0.2. A
+combined yaw and pitch would produce a diagonally-pointing vector whose length gives the
+single equivalent angle.
+
+<img src="../other/images/Euler_AxisAngle.png" alt="Test" width="300">
+
+<img src="../other/images/euler_image.png" alt="Test" width="300">
+
+Concrete examples for this project:
+
+| Sensor misalignment | Rodrigues vector |
+|---------------------|------------------|
+| Pure yaw (0.1 rad right) | $(0,\ 0,\ 0.1)$ — points along Z (up), length 0.1 |
+| Pure pitch (0.05 rad forward tilt) | $(0,\ 0.05,\ 0)$ — points along Y, length 0.05 |
+| Combined yaw + pitch | $(r_x,\ r_y,\ r_z)$ — diagonal direction, length = total equivalent angle |
+
+The 9 entries of $R$ cannot all vary freely — 6 are consumed by the orthonormality
+constraints $R^\top R = I$, leaving exactly 3 free values. The Rodrigues vector captures
+precisely those 3 free values.
+
+No singularities exist (unlike Euler angles), it is compact, and it is what OpenCV uses
+internally. Convert to/from a full $3 \times 3$ matrix with `cv2.Rodrigues()`.
 
 ---
 
@@ -231,9 +347,14 @@ complete pipeline from a raw LiDAR measurement to an image pixel:
 ### Step 1 — Polar to Cartesian (LiDAR frame)
 
 The D500 reports each return as a range $r$ (mm) and bearing angle $\theta$ (degrees,
-measured from the sensor's forward axis). Convert to LiDAR-frame Cartesian coordinates:
+measured clockwise from the sensor's forward axis — consistent with the left-handed frame).
+Convert to LiDAR-frame Cartesian coordinates:
 
 $$x_L = r \cos\theta, \qquad y_L = r \sin\theta, \qquad z_L = 0$$
+
+With the left-handed convention: $\theta = 0°$ is straight ahead (+X), $\theta = 90°$ is to
+the right (+Y), and $\theta = -90°$ (or 270°) is to the left (−Y). The formula is unchanged
+from the standard polar conversion — the handedness is already encoded in the axis definitions.
 
 $z_L = 0$ always — the D500 scans a single horizontal plane. This is the Phase 3 polar→Cartesian
 conversion; the extrinsic transform operates on its output.
