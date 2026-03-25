@@ -430,7 +430,7 @@ def main() -> None:
         lidar.start()
 
         # -- Step 3: Camera guide overlay --------------------------------------
-        cap = cv2.VideoCapture(camera_index)
+        cap = cv2.VideoCapture(camera_index, cv2.CAP_V4L2)
         if not cap.isOpened():
             logger.error(
                 f"Could not open camera index {camera_index}. "
