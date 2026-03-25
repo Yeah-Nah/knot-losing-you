@@ -28,7 +28,7 @@ Hardware setup
 1. Mount the UGV on a flat surface with clear space ahead (≥ 2 m recommended).
 2. Connect the LDRobot D500 to the port listed under ``lidar.port`` in sensor_config.yaml.
 3. Connect the UGV rover sub-controller to the port listed under ``ugv.port``.
-4. Connect the Waveshare RGB camera (USB) — note its VideoCapture index.
+4. Connect the Waveshare RGB camera (USB) — note its device path.
 5. Power on the rover.
 
 Calibration procedure
@@ -36,26 +36,42 @@ Calibration procedure
 1. Run the script with the desired ``--distance`` value.
 2. The rover commands the pan-tilt to its mechanical zero (0°, 0°) and waits for the
    servo to settle.
-3. A live camera feed opens with a vertical green guide line drawn at column ``cx``
+3. A live MJPEG stream is served at ``http://<pi-ip>:8080/stream``.  Open this URL in a
+   browser to see the camera feed with a vertical green guide line at column ``cx``
    (the principal point from intrinsic calibration — not the pixel-count midpoint).
 4. Place a flat-faced cardboard box (≈ 20 cm wide) roughly ``--distance`` metres directly
    in front of the rover.  Physically slide it left or right until its face is bisected
    by the green line.
-5. Press **SPACE** (or **ENTER**) to confirm the target is aligned.
-   Press **Q** to abort without saving.
-6. The script closes the camera window and accumulates LiDAR returns for ``--duration``
-   seconds.  It keeps only returns in the forward ±30° arc at the expected distance.
+5. ``GET /confirm`` (e.g. ``curl http://<pi-ip>:8080/confirm``) to start the LiDAR scan.
+   ``GET /abort`` to cancel without saving.
+6. The script accumulates LiDAR returns for ``--duration`` seconds, keeping only returns
+   in the forward ±30° arc at the expected distance.
 7. The angular centroid of the cluster is computed as the median of the signed angles,
    avoiding wrap-around artefacts near 0°/360°.
-8. A summary is printed.  Type **y** and press ENTER to write the result to
-   sensor_config.yaml; any other input exits without saving.
+8. Poll ``GET /status`` until ``state`` is ``COMPLETE`` (or ``FAILED``).
+9. ``GET /save`` to write the result to sensor_config.yaml under ``extrinsic``.
+
+Endpoints
+---------
+GET /stream   — MJPEG stream; open in browser to see the live annotated feed.
+GET /status   — JSON: {"state": <name>, "delta_offset_deg": <float|null>,
+                       "n_lidar_points": <int|null>, "error_message": <str|null>}.
+GET /confirm  — Start LiDAR scan (only valid in WAITING_ALIGNMENT).
+               Returns {"status": "scanning"} or 409 if in wrong state.
+GET /abort    — Transition to ABORTED and shut down the server.
+               Returns {"status": "aborted"}.
+GET /save     — Write result to sensor_config.yaml (only valid in COMPLETE).
+               Returns {"saved": true, "delta_offset_deg": <float>} or 409.
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import sys
+import threading
 import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import cv2
@@ -84,8 +100,14 @@ _MIN_CLUSTER_POINTS: int = 20
 # Seconds to wait after set_pan_tilt(0, 0) for the servo to settle.
 _SERVO_SETTLE_S: float = 1.5
 
-# OpenCV window name for the guide overlay.
-_WINDOW_NAME = "Angular Offset Calibration — press SPACE to confirm, Q to quit"
+_STREAM_PORT: int = 8080
+_JPEG_QUALITY: int = 80
+
+_STATE_WAITING_ALIGNMENT = "WAITING_ALIGNMENT"
+_STATE_SCANNING          = "SCANNING"
+_STATE_COMPLETE          = "COMPLETE"
+_STATE_FAILED            = "FAILED"
+_STATE_ABORTED           = "ABORTED"
 
 
 # ---------------------------------------------------------------------------
@@ -197,45 +219,87 @@ def _accumulate_lidar(
 
 
 # ---------------------------------------------------------------------------
-# Guide overlay
+# Shared calibration state
 # ---------------------------------------------------------------------------
 
 
-def _run_guide_overlay(cap: cv2.VideoCapture, cx: float) -> bool:
-    """Display the live camera feed with a vertical guide line at column *cx*.
+class _CalibrationState:
+    """Thread-safe container for calibration progress and the latest annotated frame."""
 
-    Blocks until the user presses SPACE/ENTER (returns True) or Q (returns False).
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self.state: str = _STATE_WAITING_ALIGNMENT
+        self.delta_offset_deg: float | None = None
+        self.n_lidar_points: int | None = None
+        self.error_message: str | None = None
+        self._annotated_frame: cv2.typing.MatLike | None = None
 
-    Parameters
-    ----------
-    cap:
-        Opened ``cv2.VideoCapture`` handle.
-    cx:
-        Horizontal principal point column in pixels.
+    def update_frame(self, annotated_frame: cv2.typing.MatLike) -> None:
+        """Replace the stored annotated frame. Called from the frame thread."""
+        with self._lock:
+            self._annotated_frame = annotated_frame
 
-    Returns
-    -------
-    bool
-        ``True`` if the user confirmed target alignment; ``False`` if they quit.
-    """
+    def get_annotated_jpeg(self) -> bytes | None:
+        """JPEG-encode the latest annotated frame and return bytes, or None."""
+        with self._lock:
+            frame = self._annotated_frame
+        if frame is None:
+            return None
+        ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, _JPEG_QUALITY])
+        return bytes(buf) if ok else None
+
+    def get_status(self) -> dict:
+        """Return a snapshot dict of current state values."""
+        with self._lock:
+            return {
+                "state": self.state,
+                "delta_offset_deg": self.delta_offset_deg,
+                "n_lidar_points": self.n_lidar_points,
+                "error_message": self.error_message,
+            }
+
+    def try_start_scanning(self) -> bool:
+        """Atomically transition WAITING_ALIGNMENT -> SCANNING. Returns True on success."""
+        with self._lock:
+            if self.state != _STATE_WAITING_ALIGNMENT:
+                return False
+            self.state = _STATE_SCANNING
+            return True
+
+    def transition_to(self, new_state: str, **kwargs: object) -> None:
+        """Atomically set the state and any provided keyword fields."""
+        with self._lock:
+            self.state = new_state
+            for key, value in kwargs.items():
+                setattr(self, key, value)
+
+
+# ---------------------------------------------------------------------------
+# Frame thread
+# ---------------------------------------------------------------------------
+
+
+def _run_frame(
+    cap: cv2.VideoCapture,
+    cx: float,
+    state: _CalibrationState,
+    stop_event: threading.Event,
+) -> None:
+    """Read frames, draw the guide overlay, and push annotated frames to shared state."""
     cx_col = int(round(cx))
-    cv2.namedWindow(_WINDOW_NAME, cv2.WINDOW_NORMAL)
-
-    while True:
-        ret, frame = cap.read()
-        if not ret or frame is None:
-            logger.warning("Camera returned no frame — check --camera-index.")
+    while not stop_event.is_set():
+        ok, frame = cap.read()
+        if not ok or frame is None:
+            logger.warning("Camera returned no frame — retrying...")
             time.sleep(0.05)
             continue
 
         h = frame.shape[0]
-        # Draw full-height vertical guide line at cx
-        cv2.line(frame, (cx_col, 0), (cx_col, h - 1), (0, 255, 0), 2)
-
-        # Instruction overlays
+        annotated = frame.copy()
+        cv2.line(annotated, (cx_col, 0), (cx_col, h - 1), (0, 255, 0), 2)
         cv2.putText(
-            frame,
-            "Centre target on green line, then press SPACE",
+            annotated,
+            "Centre target on green line, then GET /confirm",
             (10, 30),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.8,
@@ -244,8 +308,8 @@ def _run_guide_overlay(cap: cv2.VideoCapture, cx: float) -> bool:
             cv2.LINE_AA,
         )
         cv2.putText(
-            frame,
-            f"cx = {cx:.1f} px   |   Q = quit",
+            annotated,
+            f"cx = {cx:.1f} px",
             (10, 65),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.6,
@@ -253,14 +317,161 @@ def _run_guide_overlay(cap: cv2.VideoCapture, cx: float) -> bool:
             1,
             cv2.LINE_AA,
         )
+        state.update_frame(annotated)
 
-        cv2.imshow(_WINDOW_NAME, frame)
-        key = cv2.waitKey(30) & 0xFF
 
-        if key in (ord(" "), 13):  # SPACE or ENTER
-            return True
-        if key in (ord("q"), ord("Q"), 27):  # Q or ESC
-            return False
+# ---------------------------------------------------------------------------
+# LiDAR scan thread
+# ---------------------------------------------------------------------------
+
+
+def _run_lidar_scan(
+    lidar: LidarAccess,
+    state: _CalibrationState,
+    duration_s: float,
+    dist_min_mm: float,
+    dist_max_mm: float,
+    target_distance_m: float,
+    distance_tol_m: float,
+) -> None:
+    """Accumulate LiDAR returns and transition state to COMPLETE or FAILED."""
+    logger.info(f"LiDAR scan started ({duration_s} s)...")
+    signed_angles = _accumulate_lidar(lidar, duration_s, dist_min_mm, dist_max_mm)
+
+    if len(signed_angles) == 0:
+        logger.error(
+            "No LiDAR returns matched the forward arc and distance filter. "
+            f"Check that the target is within {target_distance_m} ± {distance_tol_m} m."
+        )
+        state.transition_to(
+            _STATE_FAILED,
+            error_message="No LiDAR returns in forward arc within distance filter.",
+        )
+        return
+
+    n_pts = len(signed_angles)
+    if n_pts < _MIN_CLUSTER_POINTS:
+        logger.warning(
+            f"Only {n_pts} LiDAR point(s) in cluster — fewer than {_MIN_CLUSTER_POINTS}. "
+            "Result may be noisy. Consider increasing --duration or moving the target closer."
+        )
+
+    delta = float(np.median(signed_angles))
+    logger.info(f"LiDAR scan complete: delta_offset_deg={delta:+.4f}°, n={n_pts}")
+    state.transition_to(_STATE_COMPLETE, delta_offset_deg=delta, n_lidar_points=n_pts)
+
+
+# ---------------------------------------------------------------------------
+# HTTP server
+# ---------------------------------------------------------------------------
+
+
+def _make_handler(
+    state: _CalibrationState,
+    server_ref: list,
+    lidar: LidarAccess,
+    duration_s: float,
+    dist_min_mm: float,
+    dist_max_mm: float,
+    target_distance_m: float,
+    distance_tol_m: float,
+    sensor_config_path: Path,
+) -> type[BaseHTTPRequestHandler]:
+    """Return a handler class closed over the shared state and hardware references."""
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, _fmt: str, *_args: object) -> None:  # silence access log
+            pass
+
+        def do_GET(self) -> None:  # noqa: N802
+            if self.path == "/stream":
+                self._serve_stream()
+            elif self.path == "/status":
+                self._serve_json(state.get_status())
+            elif self.path == "/confirm":
+                self._handle_confirm()
+            elif self.path == "/abort":
+                self._handle_abort()
+            elif self.path == "/save":
+                self._handle_save()
+            else:
+                self.send_error(404)
+
+        def _serve_json(self, data: dict, status: int = 200) -> None:
+            body = json.dumps(data).encode()
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def _serve_stream(self) -> None:
+            self.send_response(200)
+            self.send_header(
+                "Content-Type",
+                "multipart/x-mixed-replace; boundary=frame",
+            )
+            self.end_headers()
+            try:
+                while True:
+                    jpeg = state.get_annotated_jpeg()
+                    if jpeg is None:
+                        time.sleep(0.05)
+                        continue
+                    part = (
+                        b"--frame\r\n"
+                        b"Content-Type: image/jpeg\r\n"
+                        + f"Content-Length: {len(jpeg)}\r\n\r\n".encode()
+                        + jpeg
+                        + b"\r\n"
+                    )
+                    self.wfile.write(part)
+                    self.wfile.flush()
+                    time.sleep(1 / 30)
+            except (BrokenPipeError, ConnectionResetError):
+                pass  # client disconnected
+
+        def _handle_confirm(self) -> None:
+            if not state.try_start_scanning():
+                self._serve_json({"error": "not in WAITING_ALIGNMENT state"}, 409)
+                return
+            threading.Thread(
+                target=_run_lidar_scan,
+                args=(
+                    lidar, state, duration_s,
+                    dist_min_mm, dist_max_mm,
+                    target_distance_m, distance_tol_m,
+                ),
+                daemon=True,
+            ).start()
+            self._serve_json({"status": "scanning"})
+
+        def _handle_abort(self) -> None:
+            state.transition_to(_STATE_ABORTED)
+            srv = server_ref[0]
+            if srv is not None:
+                # server.shutdown() blocks until serve_forever() returns; run it in a
+                # daemon thread so this handler can return its response first.
+                threading.Thread(target=srv.shutdown, daemon=True).start()
+            self._serve_json({"status": "aborted"})
+
+        def _handle_save(self) -> None:
+            status = state.get_status()
+            if status["state"] != _STATE_COMPLETE:
+                self._serve_json({"error": "not in COMPLETE state"}, 409)
+                return
+            _write_results(
+                sensor_config_path,
+                status["delta_offset_deg"],
+                target_distance_m,
+                status["n_lidar_points"],
+            )
+            self._serve_json({
+                "saved": True,
+                "delta_offset_deg": status["delta_offset_deg"],
+            })
+
+    return Handler
 
 
 # ---------------------------------------------------------------------------
@@ -419,9 +630,12 @@ def main() -> None:
     )
     lidar = LidarAccess(port=lidar_port, baud_rate=lidar_baud)
     cap: cv2.VideoCapture | None = None
+    frame_thread: threading.Thread | None = None
+    server: ThreadingHTTPServer | None = None
+    server_ref: list = [None]  # mutable box — populated after server is constructed
 
     try:
-        # -- Step 2: Connect hardware and zero the pan-tilt --------------------
+        # -- Connect hardware and zero the pan-tilt ----------------------------
         ugv.connect()
         ugv.set_pan_tilt(0.0, 0.0)
         logger.info(f"Pan-tilt commanded to (0°, 0°). Waiting {_SERVO_SETTLE_S} s to settle...")
@@ -429,7 +643,7 @@ def main() -> None:
 
         lidar.start()
 
-        # -- Step 3: Camera guide overlay --------------------------------------
+        # -- Open camera -------------------------------------------------------
         cap = cv2.VideoCapture(camera_device, cv2.CAP_V4L2)
         if not cap.isOpened():
             logger.error(
@@ -438,62 +652,53 @@ def main() -> None:
             )
             sys.exit(1)
 
-        logger.info("Opening camera guide overlay. Centre the target on the green line.")
-        confirmed = _run_guide_overlay(cap, cx)
-        cv2.destroyAllWindows()
-        cap.release()
-        cap = None
+        # -- Start frame thread ------------------------------------------------
+        state = _CalibrationState()
+        stop_event = threading.Event()
 
-        if not confirmed:
-            logger.info("Calibration aborted by user.")
-            return
+        frame_thread = threading.Thread(
+            target=_run_frame,
+            args=(cap, cx, state, stop_event),
+            daemon=True,
+        )
+        frame_thread.start()
+        logger.info("Frame thread started.")
 
-        # -- Step 4: LiDAR accumulation ----------------------------------------
-        logger.info(f"Accumulating LiDAR for {duration_s} s...")
-        signed_angles = _accumulate_lidar(lidar, duration_s, dist_min_mm, dist_max_mm)
+        # -- Start HTTP server -------------------------------------------------
+        server = ThreadingHTTPServer(
+            ("0.0.0.0", _STREAM_PORT),
+            _make_handler(
+                state, server_ref, lidar, duration_s,
+                dist_min_mm, dist_max_mm,
+                target_distance_m, distance_tol_m,
+                sensor_config_path,
+            ),
+        )
+        server_ref[0] = server  # bind into handler closure after construction
 
-        # -- Step 6: Centroid and validation -----------------------------------
-        n_pts = len(signed_angles)
-        if n_pts == 0:
-            logger.error(
-                "No LiDAR returns matched the forward arc and distance filter. "
-                "Check that the target is visible to the LiDAR and within "
-                f"{target_distance_m} ± {distance_tol_m} m."
-            )
-            sys.exit(1)
+        logger.info(
+            f"HTTP server running on port {_STREAM_PORT}. "
+            f"Open http://<pi-ip>:{_STREAM_PORT}/stream in your browser."
+        )
+        logger.info(
+            "Endpoints: /stream (MJPEG), /status (JSON), "
+            "/confirm (start scan), /abort, /save"
+        )
 
-        if n_pts < _MIN_CLUSTER_POINTS:
-            logger.warning(
-                f"Only {n_pts} LiDAR point(s) in cluster — fewer than {_MIN_CLUSTER_POINTS}. "
-                "Result may be noisy. Consider increasing --duration or moving the target closer."
-            )
-
-        delta_offset_deg = float(np.median(signed_angles))
-
-        # -- Step 7: Summary and confirmation ----------------------------------
-        print()
-        print("Angular offset calibration result")
-        print(f"  delta_offset      :  {delta_offset_deg:+.4f}°")
-        print(f"  Cluster points    :  {n_pts}")
-        print(f"  Target distance   :  {target_distance_m} m")
-        print(f"  Range filter      :  [{target_distance_m - distance_tol_m:.2f}, "
-              f"{target_distance_m + distance_tol_m:.2f}] m")
-        print()
-
-        answer = input("Save result to sensor_config.yaml? [y/N]: ").strip().lower()
-        if answer != "y":
-            logger.info("Result not saved.")
-            return
-
-        # -- Step 8: Write YAML ------------------------------------------------
-        _write_results(sensor_config_path, delta_offset_deg, target_distance_m, n_pts)
-        print(f"Result written to {sensor_config_path} under 'extrinsic'.")
+        try:
+            server.serve_forever()
+        except KeyboardInterrupt:
+            logger.info("Shutting down...")
 
     finally:
-        # -- Step 9: Teardown --------------------------------------------------
+        # -- Teardown ----------------------------------------------------------
+        stop_event.set()
+        if frame_thread is not None:
+            frame_thread.join(timeout=2)
         if cap is not None:
             cap.release()
-        cv2.destroyAllWindows()
+        if server is not None:
+            server.server_close()
         lidar.stop()
         ugv.disconnect()
 
