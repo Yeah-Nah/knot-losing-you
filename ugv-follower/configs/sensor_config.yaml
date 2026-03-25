@@ -18,11 +18,13 @@ ugv:
 # Waveshare RGB (pan-tilt) camera — intrinsic calibration results
 # Populated by calibrate_waveshare_camera.py after running the calibration workflow.
 waveshare_rgb:
-  model: null                # fisheye or pinhole — set after calibration
-  camera_matrix: null        # 3x3 K matrix (row-major) — set after calibration
-  dist_coeffs: null          # [k1, k2, k3, k4] fisheye distortion vector — set after calibration
-  resolution: null           # [width, height] at calibration time
-  rms_reprojection_error: null  # RMS error in pixels — set after calibration
+  model: "fisheye"                # fisheye or pinhole — set after calibration
+  camera_matrix: [[542.44, 0.0, 672.07],
+                  [0.0, 544.64, 379.80],
+                  [0.0, 0.0, 1.0]]        # 3x3 K matrix (row-major) — set after calibration
+  dist_coeffs: [0.04838097993620094, -0.041844537572354824, 0.012958617562528365, -0.0031300600380237465]          # [k1, k2, k3, k4] fisheye distortion vector — set after calibration
+  resolution: [1280, 720]   # [width, height] at calibration time
+  rms_reprojection_error: 0.7737  # RMS error in pixels — set after calibration
 
   # Images used   : 59
   # Resolution    : 1280×720 px
@@ -30,3 +32,11 @@ waveshare_rgb:
   # fx, fy        : 542.44, 544.64
   # cx, cy        : 672.07, 379.80
   # dist_coeffs   : [0.04838097993620094, -0.041844537572354824, 0.012958617562528365, -0.0031300600380237465]  # [k1, k2, k3, k4]
+
+# Extrinsic calibration — LiDAR ↔ pan-tilt angular offset
+# Populated by calibrate_angular_offset.py after running the calibration workflow.
+extrinsic:
+  lidar_to_pantilt_offset_deg: null  # signed degrees (−180, +180] — set after calibration
+  calibration_method: null           # angular_offset — set after calibration
+  target_distance_m: null            # target distance used during calibration
+  n_lidar_points: null               # LiDAR cluster points used to compute the median
