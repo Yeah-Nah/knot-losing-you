@@ -176,6 +176,7 @@ def _accumulate_lidar(
     duration_s: float,
     dist_min_mm: float,
     dist_max_mm: float,
+    mounting_offset_deg: float,
 ) -> list[float]:
     """Collect LiDAR returns from the forward arc within the distance window.
 
@@ -193,11 +194,17 @@ def _accumulate_lidar(
         Minimum accepted distance in millimetres.
     dist_max_mm:
         Maximum accepted distance in millimetres.
+    mounting_offset_deg:
+        Direction the LiDAR's own 0° axis points in the rover's reference
+        frame (rover forward = 0°).  Raw LiDAR angles are converted to the
+        rover frame via ``(lidar_angle + mounting_offset_deg) % 360`` before
+        arc filtering and centroid computation.
 
     Returns
     -------
     list[float]
-        Signed angles (degrees, (−180, +180]) of all accepted returns.
+        Signed angles (degrees, (−180, +180]) of all accepted returns,
+        expressed in the rover's reference frame.
     """
     signed_angles: list[float] = []
     deadline = time.monotonic() + duration_s
@@ -211,11 +218,12 @@ def _accumulate_lidar(
             angle = pt["angle"]
             if dist == 0:
                 continue  # sentinel: out of range
-            if not _in_forward_arc(angle):
+            rover_angle = (angle + mounting_offset_deg) % 360.0
+            if not _in_forward_arc(rover_angle):
                 continue
             if not (dist_min_mm <= dist <= dist_max_mm):
                 continue
-            signed_angles.append(_to_signed(angle))
+            signed_angles.append(_to_signed(rover_angle))
 
     return signed_angles
 
@@ -335,10 +343,11 @@ def _run_lidar_scan(
     dist_max_mm: float,
     target_distance_m: float,
     distance_tol_m: float,
+    mounting_offset_deg: float,
 ) -> None:
     """Accumulate LiDAR returns and transition state to COMPLETE or FAILED."""
     logger.info(f"LiDAR scan started ({duration_s} s)...")
-    signed_angles = _accumulate_lidar(lidar, duration_s, dist_min_mm, dist_max_mm)
+    signed_angles = _accumulate_lidar(lidar, duration_s, dist_min_mm, dist_max_mm, mounting_offset_deg)
 
     if len(signed_angles) == 0:
         logger.error(
@@ -378,6 +387,7 @@ def _make_handler(
     target_distance_m: float,
     distance_tol_m: float,
     sensor_config_path: Path,
+    mounting_offset_deg: float,
 ) -> type[BaseHTTPRequestHandler]:
     """Return a handler class closed over the shared state and hardware references."""
 
@@ -445,6 +455,7 @@ def _make_handler(
                     lidar, state, duration_s,
                     dist_min_mm, dist_max_mm,
                     target_distance_m, distance_tol_m,
+                    mounting_offset_deg,
                 ),
                 daemon=True,
             ).start()
@@ -623,6 +634,7 @@ def main() -> None:
 
     lidar_port: str = cfg["lidar"]["port"]
     lidar_baud: int = cfg["lidar"]["baud_rate"]
+    mounting_offset_deg: float = float(cfg["lidar"].get("mounting_offset_deg", 0.0))
     ugv_port: str = cfg["ugv"]["port"]
     ugv_baud: int = cfg["ugv"]["baud_rate"]
     chassis_main: int = cfg["ugv"]["chassis_main"]
@@ -636,6 +648,7 @@ def main() -> None:
         f"Target distance: {target_distance_m} m  "
         f"(range filter: [{dist_min_mm:.0f}, {dist_max_mm:.0f}] mm)"
     )
+    logger.info(f"LiDAR mounting offset: {mounting_offset_deg:+.1f}° (rover frame)")
 
     # -- Initialise hardware ---------------------------------------------------
     ugv = UGVController(
@@ -691,6 +704,7 @@ def main() -> None:
                 dist_min_mm, dist_max_mm,
                 target_distance_m, distance_tol_m,
                 sensor_config_path,
+                mounting_offset_deg,
             ),
         )
         server_ref[0] = server  # bind into handler closure after construction
