@@ -102,6 +102,11 @@ _MIN_CLUSTER_POINTS: int = 20
 # Seconds to wait after set_pan_tilt(0, 0) for the servo to settle.
 _SERVO_SETTLE_S: float = 1.5
 
+# Seconds to drain stale serial-buffer data after lidar.start() before counting
+# points.  The D500 streams continuously; data queued in the kernel USB serial
+# buffer while the port was idle is discarded here so only fresh returns are used.
+_LIDAR_WARMUP_S: float = 1.5
+
 _STREAM_PORT: int = 8080
 _JPEG_QUALITY: int = 80
 
@@ -346,8 +351,18 @@ def _run_lidar_scan(
     mounting_offset_deg: float,
 ) -> None:
     """Accumulate LiDAR returns and transition state to COMPLETE or FAILED."""
+    lidar.start()
+
+    # Drain buffered/stale data before the measurement window begins.
+    warmup_deadline = time.monotonic() + _LIDAR_WARMUP_S
+    while time.monotonic() < warmup_deadline:
+        lidar.get_scan()
+
     logger.info(f"LiDAR scan started ({duration_s} s)...")
-    signed_angles = _accumulate_lidar(lidar, duration_s, dist_min_mm, dist_max_mm, mounting_offset_deg)
+    try:
+        signed_angles = _accumulate_lidar(lidar, duration_s, dist_min_mm, dist_max_mm, mounting_offset_deg)
+    finally:
+        lidar.stop()
 
     if len(signed_angles) == 0:
         logger.error(
@@ -670,8 +685,6 @@ def main() -> None:
         ugv.set_pan_tilt(0.0, 0.0)
         logger.info(f"Pan-tilt commanded to (0°, 0°). Waiting {_SERVO_SETTLE_S} s to settle...")
         time.sleep(_SERVO_SETTLE_S)
-
-        lidar.start()
 
         # -- Open camera -------------------------------------------------------
         cap = cv2.VideoCapture(camera_device, cv2.CAP_V4L2)
