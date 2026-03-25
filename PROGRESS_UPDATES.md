@@ -43,7 +43,7 @@ Built and verified the angular offset calibration tool — the second step in Ph
 
 Extrinsic calibration of the angular offset between the LiDAR and Waveshare pan tilt camera:
 
-<img src="other/images/Screenshot 2026-03-25 193946.png" alt="Testing Camera Connection" width="500">
+<img src="other/images/Screenshot 2026-03-25 210703.png" alt="Testing Camera Connection" width="500">
 
 ---
 
