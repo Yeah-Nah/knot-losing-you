@@ -75,6 +75,7 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import Any
 
 import cv2
 import numpy as np
@@ -111,10 +112,10 @@ _STREAM_PORT: int = 8080
 _JPEG_QUALITY: int = 80
 
 _STATE_WAITING_ALIGNMENT = "WAITING_ALIGNMENT"
-_STATE_SCANNING          = "SCANNING"
-_STATE_COMPLETE          = "COMPLETE"
-_STATE_FAILED            = "FAILED"
-_STATE_ABORTED           = "ABORTED"
+_STATE_SCANNING = "SCANNING"
+_STATE_COMPLETE = "COMPLETE"
+_STATE_FAILED = "FAILED"
+_STATE_ABORTED = "ABORTED"
 
 
 # ---------------------------------------------------------------------------
@@ -122,7 +123,7 @@ _STATE_ABORTED           = "ABORTED"
 # ---------------------------------------------------------------------------
 
 
-def _extract_cx(cfg: dict) -> float:
+def _extract_cx(cfg: dict[str, Any]) -> float:
     """Return the horizontal principal point ``cx`` from ``waveshare_rgb.camera_matrix``.
 
     Parameters
@@ -263,7 +264,7 @@ class _CalibrationState:
         ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, _JPEG_QUALITY])
         return bytes(buf) if ok else None
 
-    def get_status(self) -> dict:
+    def get_status(self) -> dict[str, Any]:
         """Return a snapshot dict of current state values."""
         with self._lock:
             return {
@@ -360,7 +361,9 @@ def _run_lidar_scan(
 
     logger.info(f"LiDAR scan started ({duration_s} s)...")
     try:
-        signed_angles = _accumulate_lidar(lidar, duration_s, dist_min_mm, dist_max_mm, mounting_offset_deg)
+        signed_angles = _accumulate_lidar(
+            lidar, duration_s, dist_min_mm, dist_max_mm, mounting_offset_deg
+        )
     finally:
         lidar.stop()
 
@@ -394,7 +397,7 @@ def _run_lidar_scan(
 
 def _make_handler(
     state: _CalibrationState,
-    server_ref: list,
+    server_ref: list[ThreadingHTTPServer | None],
     lidar: LidarAccess,
     duration_s: float,
     dist_min_mm: float,
@@ -426,7 +429,7 @@ def _make_handler(
             else:
                 self.send_error(404)
 
-        def _serve_json(self, data: dict, status: int = 200) -> None:
+        def _serve_json(self, data: dict[str, Any], status: int = 200) -> None:
             body = json.dumps(data).encode()
             self.send_response(status)
             self.send_header("Content-Type", "application/json")
@@ -467,9 +470,13 @@ def _make_handler(
             threading.Thread(
                 target=_run_lidar_scan,
                 args=(
-                    lidar, state, duration_s,
-                    dist_min_mm, dist_max_mm,
-                    target_distance_m, distance_tol_m,
+                    lidar,
+                    state,
+                    duration_s,
+                    dist_min_mm,
+                    dist_max_mm,
+                    target_distance_m,
+                    distance_tol_m,
                     mounting_offset_deg,
                 ),
                 daemon=True,
@@ -507,10 +514,12 @@ def _make_handler(
                 target_distance_m,
                 status["n_lidar_points"],
             )
-            self._serve_json({
-                "saved": True,
-                "delta_offset_deg": status["delta_offset_deg"],
-            })
+            self._serve_json(
+                {
+                    "saved": True,
+                    "delta_offset_deg": status["delta_offset_deg"],
+                }
+            )
 
     return Handler
 
@@ -544,7 +553,7 @@ def _write_results(
         Number of LiDAR cluster points used to compute the median.
     """
     with sensor_config_path.open() as f:
-        config: dict = yaml.safe_load(f) or {}
+        config: dict[str, Any] = yaml.safe_load(f) or {}
 
     config["extrinsic"] = {
         "lidar_to_pantilt_offset_deg": round(float(delta_offset_deg), 4),
@@ -640,7 +649,7 @@ def main() -> None:
 
     # -- Load config -----------------------------------------------------------
     with sensor_config_path.open() as f:
-        cfg: dict = yaml.safe_load(f) or {}
+        cfg: dict[str, Any] = yaml.safe_load(f) or {}
 
     cx = _extract_cx(cfg)
     res = cfg.get("waveshare_rgb", {}).get("resolution", [1280, 720])
@@ -677,20 +686,26 @@ def main() -> None:
     cap: cv2.VideoCapture | None = None
     frame_thread: threading.Thread | None = None
     server: ThreadingHTTPServer | None = None
-    server_ref: list = [None]  # mutable box — populated after server is constructed
+    server_ref: list[ThreadingHTTPServer | None] = [
+        None
+    ]  # mutable box — populated after server is constructed
 
     try:
         # -- Connect hardware and zero the pan-tilt ----------------------------
         ugv.connect()
         ugv.set_pan_tilt(0.0, 0.0)
-        logger.info(f"Pan-tilt commanded to (0°, 0°). Waiting {_SERVO_SETTLE_S} s to settle...")
+        logger.info(
+            f"Pan-tilt commanded to (0°, 0°). Waiting {_SERVO_SETTLE_S} s to settle..."
+        )
         time.sleep(_SERVO_SETTLE_S)
 
         # -- Open camera -------------------------------------------------------
         cap = cv2.VideoCapture(camera_device, cv2.CAP_V4L2)
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, cam_width)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, cam_height)
-        cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 3)  # 3 = aperture priority (auto); clears any stale manual value
+        cap.set(
+            cv2.CAP_PROP_AUTO_EXPOSURE, 3
+        )  # 3 = aperture priority (auto); clears any stale manual value
         if not cap.isOpened():
             logger.error(
                 f"Could not open camera device {camera_device}. "
@@ -714,9 +729,14 @@ def main() -> None:
         server = ThreadingHTTPServer(
             ("0.0.0.0", _STREAM_PORT),
             _make_handler(
-                state, server_ref, lidar, duration_s,
-                dist_min_mm, dist_max_mm,
-                target_distance_m, distance_tol_m,
+                state,
+                server_ref,
+                lidar,
+                duration_s,
+                dist_min_mm,
+                dist_max_mm,
+                target_distance_m,
+                distance_tol_m,
                 sensor_config_path,
                 mounting_offset_deg,
             ),
@@ -743,7 +763,9 @@ def main() -> None:
         if frame_thread is not None:
             frame_thread.join(timeout=2)
         if cap is not None:
-            cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 3)  # restore auto-exposure before release
+            cap.set(
+                cv2.CAP_PROP_AUTO_EXPOSURE, 3
+            )  # restore auto-exposure before release
             cap.release()
         if server is not None:
             server.server_close()

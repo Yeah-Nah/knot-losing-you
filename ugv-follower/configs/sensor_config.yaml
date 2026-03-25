@@ -35,7 +35,7 @@ waveshare_rgb:
 # Extrinsic calibration — LiDAR ↔ pan-tilt angular offset
 # Populated by calibrate_angular_offset.py after running the calibration workflow.
 extrinsic:
-  lidar_to_pantilt_offset_deg: null  # signed degrees (−180, +180] — set after calibration
-  calibration_method: null           # angular_offset — set after calibration
-  target_distance_m: null            # target distance used during calibration
-  n_lidar_points: null               # LiDAR cluster points used to compute the median
+  lidar_to_pantilt_offset_deg: 2.8  # signed degrees (−180, +180] — set after calibration
+  calibration_method: angular_offset # angular_offset — set after calibration
+  target_distance_m: 2.7            # target distance used during calibration
+  n_lidar_points: 414               # LiDAR cluster points used to compute the median

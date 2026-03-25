@@ -45,7 +45,7 @@ No sea legs required.
   coefficients $D$; stored in `sensor_config.yaml`
   _Skills: camera calibration techniques · intrinsic/extrinsic calibration algorithms · OpenCV_
 
-- [ ] **Angular offset calibration — LiDAR ↔ pan-tilt**: measure the single yaw scalar
+- [x] **Angular offset calibration — LiDAR ↔ pan-tilt**: measure the single yaw scalar
   $\delta_\text{offset}$ between the LiDAR forward axis and the pan-tilt mechanical zero
   position; place a stationary target at the pan-tilt zero bearing, identify the corresponding
   return in the LiDAR scan, compute the angular difference; stored in `sensor_config.yaml`
