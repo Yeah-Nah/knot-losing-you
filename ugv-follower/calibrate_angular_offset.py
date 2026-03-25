@@ -19,7 +19,7 @@ Arguments
 --distance-tol   Half-width of the LiDAR range filter in metres (default: 0.2).
                  Only returns within [distance − tolerance, distance + tolerance] are kept.
 --duration       Seconds to accumulate LiDAR data after the target is aligned (default: 5.0).
---camera-index   OpenCV VideoCapture index for the Waveshare RGB camera (default: 0).
+--camera-device  V4L2 device path for the Waveshare RGB camera (default: /dev/video0).
 --sensor-config  Path to sensor_config.yaml to read and write (default:
                  configs/sensor_config.yaml relative to this script).
 
@@ -342,11 +342,11 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help="Seconds to accumulate LiDAR data after target alignment (default: 5.0).",
     )
     parser.add_argument(
-        "--camera-index",
-        type=int,
-        default=0,
-        metavar="INT",
-        help="OpenCV VideoCapture index for the Waveshare RGB camera (default: 0).",
+        "--camera-device",
+        type=str,
+        default="/dev/video0",
+        metavar="PATH",
+        help="V4L2 device path for the Waveshare RGB camera (default: /dev/video0).",
     )
     parser.add_argument(
         "--sensor-config",
@@ -369,7 +369,7 @@ def main() -> None:
     target_distance_m: float = args.distance
     distance_tol_m: float = args.distance_tol
     duration_s: float = args.duration
-    camera_index: int = args.camera_index
+    camera_device: str = args.camera_device
     sensor_config_path: Path = args.sensor_config.resolve()
 
     # -- Validate inputs -------------------------------------------------------
@@ -430,11 +430,11 @@ def main() -> None:
         lidar.start()
 
         # -- Step 3: Camera guide overlay --------------------------------------
-        cap = cv2.VideoCapture(camera_index, cv2.CAP_V4L2)
+        cap = cv2.VideoCapture(camera_device, cv2.CAP_V4L2)
         if not cap.isOpened():
             logger.error(
-                f"Could not open camera index {camera_index}. "
-                "Try a different --camera-index."
+                f"Could not open camera device {camera_device}. "
+                "Try a different --camera-device (e.g. /dev/video0)."
             )
             sys.exit(1)
 
