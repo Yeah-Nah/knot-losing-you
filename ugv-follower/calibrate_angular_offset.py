@@ -62,6 +62,8 @@ GET /abort    — Transition to ABORTED and shut down the server.
                Returns {"status": "aborted"}.
 GET /save     — Write result to sensor_config.yaml (only valid in COMPLETE).
                Returns {"saved": true, "delta_offset_deg": <float>} or 409.
+GET /reset    — Reset state back to WAITING_ALIGNMENT (valid from FAILED or COMPLETE).
+               Returns {"status": "reset"} or 409 if called while SCANNING.
 """
 
 from __future__ import annotations
@@ -394,6 +396,8 @@ def _make_handler(
                 self._handle_abort()
             elif self.path == "/save":
                 self._handle_save()
+            elif self.path == "/reset":
+                self._handle_reset()
             else:
                 self.send_error(404)
 
@@ -454,6 +458,17 @@ def _make_handler(
                 # daemon thread so this handler can return its response first.
                 threading.Thread(target=srv.shutdown, daemon=True).start()
             self._serve_json({"status": "aborted"})
+
+        def _handle_reset(self) -> None:
+            with state._lock:
+                if state.state == _STATE_SCANNING:
+                    self._serve_json({"error": "cannot reset while SCANNING"}, 409)
+                    return
+                state.state = _STATE_WAITING_ALIGNMENT
+                state.delta_offset_deg = None
+                state.n_lidar_points = None
+                state.error_message = None
+            self._serve_json({"status": "reset"})
 
         def _handle_save(self) -> None:
             status = state.get_status()
@@ -686,7 +701,7 @@ def main() -> None:
         )
         logger.info(
             "Endpoints: /stream (MJPEG), /status (JSON), "
-            "/confirm (start scan), /abort, /save"
+            "/confirm (start scan), /abort, /save, /reset"
         )
 
         try:
