@@ -94,7 +94,7 @@ from src.perception.lidar_access import LidarAccess, LidarPoint  # noqa: E402
 
 # Half-width of the forward arc that is searched for LiDAR returns (degrees).
 # Centred on 0°; covers [0, _FORWARD_ARC_DEG] and [360 - _FORWARD_ARC_DEG, 360).
-_FORWARD_ARC_DEG: float = 180.0
+_FORWARD_ARC_DEG: float = 30.0
 
 # Minimum cluster size below which the result is flagged as noisy.
 _MIN_CLUSTER_POINTS: int = 20
