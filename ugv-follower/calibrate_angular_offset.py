@@ -677,6 +677,7 @@ def main() -> None:
         cap = cv2.VideoCapture(camera_device, cv2.CAP_V4L2)
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, cam_width)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, cam_height)
+        cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 3)  # 3 = aperture priority (auto); clears any stale manual value
         if not cap.isOpened():
             logger.error(
                 f"Could not open camera device {camera_device}. "
@@ -729,6 +730,7 @@ def main() -> None:
         if frame_thread is not None:
             frame_thread.join(timeout=2)
         if cap is not None:
+            cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 3)  # restore auto-exposure before release
             cap.release()
         if server is not None:
             server.server_close()
