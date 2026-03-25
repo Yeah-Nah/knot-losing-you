@@ -602,6 +602,8 @@ def main() -> None:
         cfg: dict = yaml.safe_load(f) or {}
 
     cx = _extract_cx(cfg)
+    res = cfg.get("waveshare_rgb", {}).get("resolution", [1280, 720])
+    cam_width, cam_height = int(res[0]), int(res[1])
     logger.info(f"Loaded cx = {cx:.2f} px from {sensor_config_path}")
 
     lidar_port: str = cfg["lidar"]["port"]
@@ -645,6 +647,8 @@ def main() -> None:
 
         # -- Open camera -------------------------------------------------------
         cap = cv2.VideoCapture(camera_device, cv2.CAP_V4L2)
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, cam_width)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, cam_height)
         if not cap.isOpened():
             logger.error(
                 f"Could not open camera device {camera_device}. "
