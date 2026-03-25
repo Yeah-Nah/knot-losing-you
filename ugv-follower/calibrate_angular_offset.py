@@ -17,7 +17,7 @@ Arguments
 ---------
 --distance       Approximate distance to the calibration target in metres (required).
 --distance-tol   Half-width of the LiDAR range filter in metres (default: 0.2).
-                 Only returns within [distance − tol, distance + tol] are kept.
+                 Only returns within [distance − tolerance, distance + tolerance] are kept.
 --duration       Seconds to accumulate LiDAR data after the target is aligned (default: 5.0).
 --camera-index   OpenCV VideoCapture index for the Waveshare RGB camera (default: 0).
 --sensor-config  Path to sensor_config.yaml to read and write (default:
