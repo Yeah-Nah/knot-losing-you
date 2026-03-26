@@ -506,7 +506,7 @@ def compute_search_bearing(
     lidar_mounting_offset_deg: float,
 ) -> float:
     """Return LiDAR search bearing in [0, 360) degrees.
-    
+
     Converts from rover frame back to LiDAR frame by adding mounting offset.
     """
     rover_bearing = rover_offset_deg + pan_angle_deg + delta_heading_deg
