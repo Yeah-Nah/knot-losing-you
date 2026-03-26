@@ -312,7 +312,7 @@ def _open_camera(device_index: int, width: int, height: int) -> cv2.VideoCapture
         If the device cannot be opened.
     """
     logger.info(f"Opening camera (device_index={device_index})...")
-    cap = cv2.VideoCapture(device_index)
+    cap = cv2.VideoCapture(device_index, cv2.CAP_V4L2)
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
     if not cap.isOpened():

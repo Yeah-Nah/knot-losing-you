@@ -1,8 +1,5 @@
 # Progress Updates — knot-losing-you
 
-> Autonomous UGV that follows you around the boat park using OAK-D Lite and LiDAR.
-> No sea legs required.
-
 Progress is logged chronologically here — one entry per meaningful milestone.
 
 ---
@@ -25,6 +22,30 @@ Short description of what was done and why.
 -->
 
 # Phase 2: Sensor Calibration
+
+## Entry 4: LiDAR–Camera Angular Offset Calibration Complete
+*Date: March 25, 2026*
+
+Built and verified the angular offset calibration tool — the second step in Phase 2. The LiDAR and pan-tilt camera now share a common angular reference frame, so a bearing measured in the camera frame can be converted to a LiDAR bearing with a single addition.
+
+**What was done:**
+- Built `calibrate_angular_offset.py`, a headless HTTP server that streams a live annotated camera feed to a browser while simultaneously driving the LiDAR and UGV pan-tilt
+- The camera feed overlays a vertical guide line at `cx` (the optical centre from intrinsic calibration, not the pixel midpoint), so the operator aligns the calibration target to the true optical axis rather than the geometric centre of the frame
+- A state machine (WAITING_ALIGNMENT → SCANNING → COMPLETE / FAILED) controls the workflow; the operator confirms alignment via a `/confirm` endpoint, at which point the script accumulates LiDAR returns in the forward arc for a configurable dwell period and computes the angular centroid as the median signed angle to avoid wrap-around artefacts near 0°
+- Added `mounting_offset_deg: 270` to the LiDAR config to account for the physical mounting direction — on this chassis the LiDAR's 0° beam faces the left side of the rover, so all bearings must be rotated into the rover forward frame before use
+- Wrote reference documentation covering the theory: the angular offset is a restricted special case of the full 6-DOF extrinsic calibration, valid because the LiDAR scans a single horizontal plane and the follower only needs to convert bearings, not project 3D points into pixel coordinates
+
+**Key Achievements:**
+- LiDAR-to-pan-tilt angular offset measured at **2.8°** from 414 LiDAR cluster points and stored in `sensor_config.yaml` under the `extrinsic` key
+- LiDAR mounting offset correctly characterised and added to config so all downstream code works in the rover forward frame
+- Entire calibration workflow runs headlessly on the Pi over a browser, consistent with the intrinsic calibration tooling
+- Extrinsic calibration step of Phase 2 complete ✅
+
+Extrinsic calibration of the angular offset between the LiDAR and Waveshare pan tilt camera:
+
+<img src="other/images/Screenshot 2026-03-25 210703.png" alt="Testing Camera Connection" width="500">
+
+---
 
 ## Entry 3: Waveshare RGB Camera Intrinsic Calibration Complete
 *Date: March 23, 2026*

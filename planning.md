@@ -45,9 +45,10 @@ No sea legs required.
   coefficients $D$; stored in `sensor_config.yaml`
   _Skills: camera calibration techniques · intrinsic/extrinsic calibration algorithms · OpenCV_
 
-- [ ] **Extrinsic calibration — LiDAR ↔ OAK-D Lite**: measure the rigid-body 6DOF transform
-  between the two fixed-mount sensors; produce 4×4 homogeneous transform $T_\text{cam}^\text{lidar}$;
-  stored in `sensor_config.yaml`
+- [x] **Angular offset calibration — LiDAR ↔ pan-tilt**: measure the single yaw scalar
+  $\delta_\text{offset}$ between the LiDAR forward axis and the pan-tilt mechanical zero
+  position; place a stationary target at the pan-tilt zero bearing, identify the corresponding
+  return in the LiDAR scan, compute the angular difference; stored in `sensor_config.yaml`
   _Skills: intrinsic/extrinsic calibration algorithms · coordinate system conversions ·
   integrate and calibrate sensors_
 
@@ -74,13 +75,17 @@ No sea legs required.
   _Skills: spatial transformations and coordinate system conversions_
 
 - [ ] **Spatial transformation — bounding box → angular heading**: use intrinsic matrix $K$
-  (from Phase 2) to convert pixel centroid offset to angular heading error (degrees left/right
-  of frame centre)
+  (from Phase 2) to convert pixel centroid offset to angular heading error; apply tilt
+  correction $\delta_\text{heading} = \arctan(\Delta u / f_x) \cdot \cos\psi_\text{tilt}$
+  to account for image-plane rotation at non-zero tilt angles
   _Skills: spatial transformations · implement transformations for accurate geolocation of
   detected objects · OpenCV_
 
-- [ ] LiDAR distance → range-to-target: find nearest forward-arc Cartesian return; gate by
-  heading angle to reject off-axis points
+- [ ] **LiDAR distance → range-to-target**: compute search bearing
+  $\theta_\text{search} = \delta_\text{offset} + \phi_\text{pan} + \delta_\text{heading}$;
+  find nearest LiDAR return within a tolerance window around $\theta_\text{search}$; range
+  $r$ of the matched return is the distance to target
+  _Skills: spatial transformations and coordinate system conversions_
 
 - [ ] **Pan-tilt inner control loop**: angular heading error → pan servo command (proportional
   controller using servo curve from Phase 2); keeps target centred in frame
@@ -118,13 +123,6 @@ No sea legs required.
   servo controller; counteracts chassis vibration before it appears as image jitter or centroid
   noise
   _Skills: integrate and calibrate sensors (IMUs) · actuator control_
-
-- [ ] **Sensor fusion — LiDAR ↔ camera validation**: project LiDAR returns into the camera image
-  plane using $T_\text{cam}^\text{lidar}$ (from Phase 2); check that the nearest forward-arc LiDAR
-  return overlaps spatially with the bounding box; flag detections with no LiDAR support as
-  low-confidence
-  _Skills: sensor fusion algorithms combining multiple data sources · extrinsic calibration ·
-  spatial transformations and coordinate system conversions_
 
 - [ ] **Kalman filter — target state estimation**: probabilistic fusion of YOLO detections
   (noisy, intermittent) and IMU-derived chassis motion (continuous); maintain a smoothed

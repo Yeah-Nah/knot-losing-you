@@ -1,6 +1,8 @@
 # knot-losing-you
 Autonomous UGV that follows you around the boat park using OAK-D Lite and LiDAR. No sea legs required.
 
+## **Check out my progress updates here:** ([`👉 Progress Updates 👈`](PROGRESS_UPDATES.md))
+
 ### Technical Specifications for This Project
 - Raspberry Pi 5
 - Waveshare UGV Rover
