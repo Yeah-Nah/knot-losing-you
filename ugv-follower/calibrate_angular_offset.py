@@ -45,7 +45,7 @@ Calibration procedure
 5. ``GET /confirm`` (e.g. ``curl http://<pi-ip>:8080/confirm``) to start the LiDAR scan.
    ``GET /abort`` to cancel without saving.
 6. The script accumulates LiDAR returns for ``--duration`` seconds, keeping only returns
-   in the forward ±30° arc at the expected distance.
+   in the forward ±20° arc at the expected distance.
 7. The angular centroid of the cluster is computed as the median of the signed angles,
    avoiding wrap-around artefacts near 0°/360°.
 8. Poll ``GET /status`` until ``state`` is ``COMPLETE`` (or ``FAILED``).
@@ -289,6 +289,21 @@ class _CalibrationState:
             for key, value in kwargs.items():
                 setattr(self, key, value)
 
+    def try_reset(self) -> bool:
+        """Atomically reset to WAITING_ALIGNMENT, clearing previous results.
+
+        Returns True on success, or False if the current state is SCANNING
+        (a reset while scanning is not permitted).
+        """
+        with self._lock:
+            if self.state == _STATE_SCANNING:
+                return False
+            self.state = _STATE_WAITING_ALIGNMENT
+            self.delta_offset_deg = None
+            self.n_lidar_points = None
+            self.error_message = None
+            return True
+
 
 # ---------------------------------------------------------------------------
 # Frame thread
@@ -493,14 +508,9 @@ def _make_handler(
             self._serve_json({"status": "aborted"})
 
         def _handle_reset(self) -> None:
-            with state._lock:
-                if state.state == _STATE_SCANNING:
-                    self._serve_json({"error": "cannot reset while SCANNING"}, 409)
-                    return
-                state.state = _STATE_WAITING_ALIGNMENT
-                state.delta_offset_deg = None
-                state.n_lidar_points = None
-                state.error_message = None
+            if not state.try_reset():
+                self._serve_json({"error": "cannot reset while SCANNING"}, 409)
+                return
             self._serve_json({"status": "reset"})
 
         def _handle_save(self) -> None:
@@ -555,12 +565,20 @@ def _write_results(
     with sensor_config_path.open() as f:
         config: dict[str, Any] = yaml.safe_load(f) or {}
 
-    config["extrinsic"] = {
-        "lidar_to_pantilt_offset_deg": round(float(delta_offset_deg), 4),
-        "calibration_method": "angular_offset",
-        "target_distance_m": round(float(target_distance_m), 3),
-        "n_lidar_points": int(n_lidar_points),
-    }
+    # Preserve any existing extrinsic fields (e.g. a future full T_C^L transform)
+    # and update only the angular-offset calibration keys.
+    extrinsic = config.get("extrinsic")
+    if not isinstance(extrinsic, dict):
+        extrinsic = {}
+    config["extrinsic"] = extrinsic
+    extrinsic.update(
+        {
+            "lidar_to_pantilt_offset_deg": round(float(delta_offset_deg), 4),
+            "calibration_method": "angular_offset",
+            "target_distance_m": round(float(target_distance_m), 3),
+            "n_lidar_points": int(n_lidar_points),
+        }
+    )
 
     with sensor_config_path.open("w") as f:
         yaml.dump(config, f, default_flow_style=False, sort_keys=False)
@@ -689,6 +707,8 @@ def main() -> None:
     server_ref: list[ThreadingHTTPServer | None] = [
         None
     ]  # mutable box — populated after server is constructed
+    state = _CalibrationState()
+    stop_event: threading.Event | None = None
 
     try:
         # -- Connect hardware and zero the pan-tilt ----------------------------
@@ -714,7 +734,6 @@ def main() -> None:
             sys.exit(1)
 
         # -- Start frame thread ------------------------------------------------
-        state = _CalibrationState()
         stop_event = threading.Event()
 
         frame_thread = threading.Thread(
@@ -759,7 +778,8 @@ def main() -> None:
 
     finally:
         # -- Teardown ----------------------------------------------------------
-        stop_event.set()
+        if stop_event is not None:
+            stop_event.set()
         if frame_thread is not None:
             frame_thread.join(timeout=2)
         if cap is not None:

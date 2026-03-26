@@ -75,27 +75,32 @@ The pan-tilt optical frame is defined by the camera lens:
 
 ### The Offset
 
-The angle $\delta_\text{offset}$ is defined as the LiDAR bearing at which the pan-tilt
-mechanical zero points:
+The angle $\delta_\text{offset}$ is defined as the pan-tilt mechanical zero direction
+expressed in the rover's reference frame (where rover forward = 0°):
 
-$$\delta_\text{offset} = \theta_L\big|_{\phi_\text{pan}=0,\;\delta_\text{heading}=0}$$
+$$\delta_\text{offset} = \theta_\text{rover}\big|_{\phi_\text{pan}=0,\;\delta_\text{heading}=0}$$
 
 In other words: if the camera is at zero pan and a target is perfectly centred in the image,
-what angle does the LiDAR see that target at? That is $\delta_\text{offset}$.
+what angle does the rover's compass read for that target? That is $\delta_\text{offset}$
+(after subtracting the LiDAR mounting offset).
 
-If the sensors were perfectly aligned, $\delta_\text{offset} = 0°$. In practice it will be
-a small non-zero value (typically a few degrees) caused by mounting imprecision.
+If the sensors were perfectly aligned, $\delta_\text{offset} = 0°$ (relative to rover forward).
+In practice it will be a small non-zero value (typically a few degrees) caused by mounting
+imprecision.
 
 ```
-Top-down view of rover chassis:
+Top-down view of rover chassis (both angles in rover frame):
 
-         LiDAR 0° (forward axis)
+         Rover forward = 0°
               ↑
-              |  δ_offset
+              |
+              |  δ_offset (pan-tilt zero in rover frame)
               |↗
+              |— LiDAR 0° in rover frame (= mounting_offset_deg)
+              |
          Pan-tilt 0° (optical axis at zero command)
 
-  The gap between those two arrows is what you are measuring.
+  δ_offset is the angle from rover forward to the pan-tilt zero.
 ```
 
 ---
@@ -153,30 +158,38 @@ horizontal (yaw) angular difference between the two sensors' forward axes — a 
 
 In Phase 3, the pipeline needs to find the distance to the tracked target using the LiDAR.
 The target is visible in the camera image at some pixel position, and the pan-tilt has been
-commanded to some angle $\phi_\text{pan}$ to keep it roughly centred. The search bearing —
-the LiDAR angle to look for the target — is:
+commanded to some angle $\phi_\text{pan}$ to keep it roughly centred. The search bearing
+is computed in two steps:
 
-$$\boxed{\theta_\text{search} = \delta_\text{offset} + \phi_\text{pan} + \delta_\text{heading}}$$
+1. **Compute target bearing in rover frame:**
+   $$\theta_\text{rover} = \delta_\text{offset} + \phi_\text{pan} + \delta_\text{heading}$$
+   where all three terms are in rover frame (rover forward = 0°).
+
+2. **Convert to LiDAR frame:**
+   $$\boxed{\theta_\text{search} = (\theta_\text{rover} - \text{lidar.mounting\_offset\_deg}) \bmod 360°}$$
+   This final value is the LiDAR bearing (in the LiDAR's native angle convention) at which
+   to search for the target.
 
 Each term corrects for a different source of angular displacement:
 
 | Term | Meaning | Units | Source |
 |------|---------|-------|--------|
-| $\delta_\text{offset}$ | Fixed mounting offset — LiDAR 0° vs pan-tilt 0° | degrees | This calibration |
+| $\delta_\text{offset}$ | Fixed mounting offset in rover frame — pan-tilt mechanical zero relative to rover forward | degrees | This calibration (stored in rover frame) |
 | $\phi_\text{pan}$ | Current pan servo angle — how far the camera has been turned from its zero | degrees | Pan-tilt servo curve calibration |
 | $\delta_\text{heading}$ | Residual heading error — how far the target's pixel centroid is from the image centre, expressed as an angle | degrees | Computed from bounding box + intrinsic matrix $K$ |
+| $\text{lidar.mounting\_offset\_deg}$ | Direction the LiDAR's 0° axis points in rover frame | degrees | sensor_config.yaml |
 
 ### Propagation of $\delta_\text{offset}$ Error
 
 If $\delta_\text{offset}$ is measured incorrectly by $\varepsilon$ degrees, then
-$\theta_\text{search}$ is off by $\varepsilon$ degrees at every single frame, regardless
+$\theta_\text{search,lidar}$ is off by $\varepsilon$ degrees at every single frame, regardless
 of pan angle or target position. This is a **systematic bias** — it does not average out
 over time. Its effect on range accuracy depends on target distance $r$:
 
 $$\text{positional error} = r \cdot \tan\varepsilon \approx r \cdot \varepsilon \quad (\varepsilon \text{ in radians})$$
 
 At 2 m range, a 3° error in $\delta_\text{offset}$ ($\varepsilon \approx 0.052$ rad)
-causes a ~10 cm positional error in the LiDAR match. For a 1° error, the error is ~3.5 cm.
+causes a ~10 cm positional error in the LiDAR search. For a 1° error, the error is ~3.5 cm.
 Whether this matters depends on the width of the LiDAR search window used in Phase 3 —
 the search window must be wider than the calibration error or the target will be missed.
 
@@ -187,16 +200,16 @@ the search window must be wider than the calibration error or the target will be
 ### Setting Up Zero Conditions
 
 The calibration procedure creates conditions where $\phi_\text{pan} = 0$ and
-$\delta_\text{heading} = 0$. Substituting these into the Phase 3 formula:
+$\delta_\text{heading} = 0$. It then measures the LiDAR bearing of the target, converts
+that bearing to the rover frame by applying the `lidar.mounting_offset_deg`, and stores
+the result:
 
-$$\theta_\text{search} = \delta_\text{offset} + \underbrace{0}_{\phi_\text{pan}} + \underbrace{0}_{\delta_\text{heading}}$$
+$$\delta_\text{offset} = (\theta_\text{lidar} + \text{lidar.mounting\_offset\_deg}) \bmod 360°$$
 
-$$\therefore \quad \theta_\text{search} = \delta_\text{offset}$$
+where $\theta_\text{lidar}$ is the median of the target cluster in the LiDAR's native
+frame.
 
-When both conditions hold, the bearing at which the LiDAR sees the target **is**
-$\delta_\text{offset}$. The measurement consists of reading off that bearing directly
-from the scan data.
-
+When both pan and heading conditions hold, this direct calculation yields $\delta_\text{offset}$.
 No minimisation, no fitting, no iterative solver is required. The calibration is a single
 direct measurement under controlled conditions.
 
@@ -459,12 +472,13 @@ the sensor intrinsics:
 
 ```yaml
 extrinsic:
-  # Angular offset between the LiDAR forward axis (0°) and the pan-tilt mechanical zero
-  # bearing, measured in the LiDAR's native angle convention (0–360°, clockwise from above).
-  # Positive value: pan-tilt zero points clockwise (right) of LiDAR zero.
-  # Negative value: pan-tilt zero points counter-clockwise (left) of LiDAR zero.
+  # Direction the pan-tilt mechanical zero points, expressed in the rover's reference
+  # frame (rover forward = 0°). Computed by converting the LiDAR cluster bearing to
+  # rover frame via (lidar_bearing + lidar.mounting_offset_deg) % 360.
+  # Positive value: pan-tilt zero points to the right of rover forward.
+  # Negative value: pan-tilt zero points to the left of rover forward.
   # Units: degrees. Range: (-180, +180].
-  lidar_to_pantilt_yaw_offset_deg: null   # set after calibration
+  lidar_to_pantilt_offset_deg: null   # set after calibration
 ```
 
 ### Sign Convention
@@ -482,16 +496,22 @@ The signed $(-180°, +180°]$ range is preferred over the raw $[0°, 360°)$ con
 ```python
 import math
 
-lidar_offset_deg: float = cfg.extrinsic.lidar_to_pantilt_yaw_offset_deg
+lidar_offset_deg: float = cfg.extrinsic.lidar_to_pantilt_offset_deg
+lidar_mounting_offset_deg: float = cfg.lidar.mounting_offset_deg
 
 def compute_search_bearing(
-    lidar_offset_deg: float,
+    rover_offset_deg: float,
     pan_angle_deg: float,
     delta_heading_deg: float,
+    lidar_mounting_offset_deg: float,
 ) -> float:
-    """Return LiDAR search bearing in [0, 360) degrees."""
-    raw = lidar_offset_deg + pan_angle_deg + delta_heading_deg
-    return raw % 360.0
+    """Return LiDAR search bearing in [0, 360) degrees.
+    
+    Converts from rover frame back to LiDAR frame by adding mounting offset.
+    """
+    rover_bearing = rover_offset_deg + pan_angle_deg + delta_heading_deg
+    lidar_bearing = (rover_bearing + lidar_mounting_offset_deg) % 360.0
+    return lidar_bearing
 ```
 
 ---
@@ -504,8 +524,9 @@ After measuring $\delta_\text{offset}$, verify it with the following procedure:
 
 1. Keep the calibration target at the same position (it has not moved).
 2. Command the pan-tilt to several different pan angles: $-30°, -15°, 0°, +15°, +30°$.
-3. At each angle, record the LiDAR bearing of the target cluster.
-4. Compute the predicted bearing using $\theta_\text{pred} = \delta_\text{offset} + \phi_\text{pan}$.
+3. At each angle, record the **LiDAR bearing** of the target cluster (in the LiDAR's native frame).
+4. Compute the **predicted LiDAR bearing** using:
+   $$\theta_\text{pred} = (\delta_\text{offset} + \phi_\text{pan}) - \text{lidar.mounting\_offset\_deg} \pmod{360°}$$
 5. Compare predicted vs observed.
 
 A good calibration produces residuals that are:
