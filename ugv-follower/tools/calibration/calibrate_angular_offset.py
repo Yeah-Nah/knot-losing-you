@@ -907,7 +907,9 @@ def main() -> None:
         f"Target distance: {config.target_distance_m} m  "
         f"(range filter: [{config.dist_min_mm:.0f}, {config.dist_max_mm:.0f}] mm)"
     )
-    logger.info(f"LiDAR mounting offset: {config.mounting_offset_deg:+.1f}° (rover frame)")
+    logger.info(
+        f"LiDAR mounting offset: {config.mounting_offset_deg:+.1f}° (rover frame)"
+    )
 
     # -- Initialise hardware ---------------------------------------------------
     ugv = UGVController(
