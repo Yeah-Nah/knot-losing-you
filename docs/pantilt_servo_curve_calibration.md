@@ -37,7 +37,9 @@ where:
 - $\phi_{\text{actual}}$ is the true physical pan angle reached after the mechanism settles
 
 The purpose of servo curve calibration is to identify this function well enough that later control
-algorithms can reason in physical angles rather than in raw command units.
+algorithms can reason in physical angles rather than in raw command units. I.e. Then your tracking
+algorithm can ask for 10∘ physically, and the calibration layer picks the right command value to
+achieve it.
 
 ### Why This Matters
 

@@ -5,10 +5,13 @@ for person detection, and issues drive commands to the Waveshare UGV Rover.
 
 Usage
 -----
-    python run_follower.py
-    python run_follower.py --pipeline-config configs/pipeline_config.yaml
-    python run_follower.py --model-config configs/model_config.yaml
-    python run_follower.py --sensor-config configs/sensor_config.yaml
+    ugv-run
+    ugv-run --pipeline-config configs/pipeline_config.yaml
+    ugv-run --model-config configs/model_config.yaml
+    ugv-run --sensor-config configs/sensor_config.yaml
+
+    # Or via python -m:
+    python -m tools.run_follower
 """
 
 from __future__ import annotations
@@ -17,8 +20,8 @@ import argparse
 import sys
 
 from loguru import logger
-from src.pipeline import Pipeline
-from src.settings import Settings
+from ugv_follower.pipeline import Pipeline
+from ugv_follower.settings import Settings
 
 
 def main() -> None:

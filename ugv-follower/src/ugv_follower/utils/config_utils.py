@@ -9,12 +9,20 @@ from loguru import logger
 def get_project_root() -> Path:
     """Return the absolute path to the ugv-follower project root.
 
-    This file lives at ``src/utils/config_utils.py``, so the project root
-    (the directory containing ``pyproject.toml``) is three levels up.
+    This file lives at ``src/ugv_follower/utils/config_utils.py``. Walks
+    upward from this file until it finds a directory containing
+    ``pyproject.toml``.
     """
     if __file__ is None:
         raise RuntimeError("__file__ is not available in this context")
-    return Path(__file__).resolve().parent.parent.parent
+    candidate = Path(__file__).resolve().parent
+    for _ in range(10):
+        if (candidate / "pyproject.toml").exists():
+            return candidate
+        candidate = candidate.parent
+    raise RuntimeError(
+        f"Could not locate pyproject.toml above {Path(__file__).resolve()}"
+    )
 
 
 def load_yaml(path: str | Path) -> dict[str, object]:

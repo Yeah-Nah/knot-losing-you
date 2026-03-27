@@ -15,7 +15,10 @@ How to run
 ----------
 ::
 
-    python calibrate_angular_offset.py --distance 2.0
+    ugv-calibrate-angular --distance 2.0
+
+    # Or via python -m:
+    python -m tools.calibration.calibrate_angular_offset --distance 2.0
 
 Arguments
 ---------
@@ -90,11 +93,11 @@ import numpy as np
 import yaml
 from loguru import logger
 
-from src.control.ugv_controller import UGVController
-from src.perception.lidar_access import LidarAccess, LidarPoint
+from ugv_follower.control.ugv_controller import UGVController
+from ugv_follower.perception.lidar_access import LidarAccess, LidarPoint
+from ugv_follower.utils.config_utils import get_project_root
 
-_SCRIPT_DIR = Path(__file__).resolve().parent
-_DEFAULT_SENSOR_CONFIG = _SCRIPT_DIR / "configs" / "sensor_config.yaml"
+_DEFAULT_SENSOR_CONFIG = get_project_root() / "configs" / "sensor_config.yaml"
 
 # Half-width of the forward arc that is searched for LiDAR returns (degrees).
 # Centred on 0°; covers [0, _FORWARD_ARC_DEG] and [360 - _FORWARD_ARC_DEG, 360).

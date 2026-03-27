@@ -14,9 +14,12 @@ GET /status   — Returns JSON {"count": int, "corners_visible": bool}.
 
 Usage
 -----
-Run from the ugv-follower directory::
+::
 
-    python capture_calibration_images.py
+    ugv-capture-calibration
+
+    # Or via python -m:
+    python -m tools.calibration.capture_calibration_images
 
 The script reads configs/calibration_config.yaml for the board dimensions,
 camera device index, and UGV serial port. It zeros the pan-tilt servo before
@@ -38,17 +41,15 @@ import cv2
 import yaml
 from loguru import logger
 
-# Allow imports from src/ when running as a script from ugv-follower/
-sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
-from control.ugv_controller import UGVController  # noqa: E402
+from ugv_follower.control.ugv_controller import UGVController
+from ugv_follower.utils.config_utils import get_project_root
 
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 
-_SCRIPT_DIR = Path(__file__).resolve().parent
-_CONFIG_PATH = _SCRIPT_DIR / "configs" / "calibration_config.yaml"
-_IMAGES_DIR = _SCRIPT_DIR / "calibration" / "images"
+_CONFIG_PATH = get_project_root() / "configs" / "calibration_config.yaml"
+_IMAGES_DIR = get_project_root() / "calibration" / "images"
 _STREAM_PORT = 8080
 _JPEG_QUALITY = 80
 _CORNER_CRITERIA = (

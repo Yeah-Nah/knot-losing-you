@@ -5,13 +5,13 @@ on your dev machine.
 
 Usage
 -----
-    python test_camera_access.py
+    python -m tests.test_camera_access
 
     # Lower resolution for faster X-forwarding:
-    python test_camera_access.py --scale 0.25
+    python -m tests.test_camera_access --scale 0.25
 
     # Headless: print frame stats only, no window (useful if display is unavailable):
-    python test_camera_access.py --no-display
+    python -m tests.test_camera_access --no-display
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ import sys
 import cv2
 from loguru import logger
 
-from src.perception.camera_access import CameraAccess
+from ugv_follower.perception.camera_access import CameraAccess
 
 
 def main() -> None:

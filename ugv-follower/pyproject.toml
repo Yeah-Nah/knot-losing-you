@@ -52,10 +52,16 @@ Repository = "https://github.com/Yeah-Nah/knot-losing-you"
 Issues = "https://github.com/Yeah-Nah/knot-losing-you/issues"
 
 # Setuptools configuration
+[tool.setuptools.package-dir]
+"" = "src"
+
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["src*"]
-exclude = ["tests*", "docs*", "*.egg-info"]
+include = ["tools*"]
 
-[tool.setuptools]
-py-modules = ["run_follower"]
+[project.scripts]
+ugv-run = "tools.run_follower:main"
+ugv-check-battery = "tools.check_battery:main"
+ugv-calibrate-angular = "tools.calibration.calibrate_angular_offset:main"
+ugv-calibrate-camera = "tools.calibration.calibrate_waveshare_camera:main"
+ugv-capture-calibration = "tools.calibration.capture_calibration_images:main"
