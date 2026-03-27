@@ -54,10 +54,11 @@ Issues = "https://github.com/Yeah-Nah/knot-losing-you/issues"
 # Setuptools configuration
 [tool.setuptools.package-dir]
 "" = "src"
+tools = "tools"
 
 [tool.setuptools.packages.find]
-where = ["."]
-include = ["tools*"]
+where = ["src", "."]
+include = ["ugv_follower*", "tools*"]
 
 [project.scripts]
 ugv-run = "tools.run_follower:main"

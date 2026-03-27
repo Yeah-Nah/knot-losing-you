@@ -141,9 +141,11 @@ $$
 c = f^{-1}(\phi)
 $$
 
-This inverse exists only if the forward map is single-valued and monotonic over the operating
-range. If the mechanism exhibits strong hysteresis, then the same command may produce different
-angles depending on motion direction, and the actuator is better described by two conditional maps:
+This inverse exists only if the forward map is single-valued (for a given command c, there is
+exactly one output angle) and monotonic over the operating range (the curve never turns around.
+I.e. the camera doesn't pan back in the opposite direction it started). If the mechanism exhibits
+strong hysteresis, then the same command may produce different angles depending on motion
+direction, and the actuator is better described by two conditional maps:
 
 $$
 \phi = f_{+}(c) \quad \text{for motion approached from one side}
@@ -152,6 +154,11 @@ $$
 $$
 \phi = f_{-}(c) \quad \text{for motion approached from the other side}
 $$
+
+Hysteresis is when the output depends not just on the current input, but on the history —
+specifically, which direction you arrived from. If this is the case then the inverse doesn't
+exist because the singled-value condition doesn't hold. A single command c depending on the
+direction you're coming from, results in two different angles.
 
 ### Piecewise-Linear Representation
 
