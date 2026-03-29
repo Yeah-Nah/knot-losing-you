@@ -7,9 +7,12 @@ voltage) the firmware actually sends.
 
 Usage
 -----
-    python check_battery.py
-    python check_battery.py --port /dev/serial0   # Pi 4B
-    python check_battery.py --duration 10          # listen for 10 seconds
+    ugv-check-battery
+    ugv-check-battery --port /dev/serial0   # Pi 4B
+    ugv-check-battery --duration 10         # listen for 10 seconds
+
+    # Or via python -m:
+    python -m tools.check_battery
 """
 
 from __future__ import annotations

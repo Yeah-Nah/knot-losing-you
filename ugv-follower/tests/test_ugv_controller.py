@@ -4,10 +4,10 @@ Run this with the rover elevated so the wheels are clear of the ground.
 
 Usage
 -----
-    python test_ugv_controller.py
+    python -m tests.test_ugv_controller
 
     # Override the default port (Pi 4B uses /dev/serial0):
-    python test_ugv_controller.py --port /dev/serial0
+    python -m tests.test_ugv_controller --port /dev/serial0
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ import time
 
 from loguru import logger
 
-from src.control.ugv_controller import UGVController
+from ugv_follower.control.ugv_controller import UGVController
 
 
 def main() -> None:

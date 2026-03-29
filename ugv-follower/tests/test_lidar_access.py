@@ -4,8 +4,8 @@ Prints distance and angle readings to the console.  No display needed.
 
 Usage
 -----
-    python test_lidar_access.py
-    python test_lidar_access.py --port /dev/ttyUSB0 --count 10
+    python -m tests.test_lidar_access
+    python -m tests.test_lidar_access --port /dev/ttyUSB0 --count 10
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ import sys
 
 from loguru import logger
 
-from src.perception.lidar_access import LidarAccess
+from ugv_follower.perception.lidar_access import LidarAccess
 
 
 def main() -> None:

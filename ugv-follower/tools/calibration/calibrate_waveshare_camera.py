@@ -12,7 +12,10 @@ Usage
 -----
 ::
 
-    python calibrate_waveshare_camera.py \\
+    ugv-calibrate-camera --images calibration/images --square-mm 28
+
+    # Or via python -m:
+    python -m tools.calibration.calibrate_waveshare_camera \\
         --images calibration/images \\
         --square-mm 28
 
@@ -21,10 +24,10 @@ Arguments
 --images     Path to folder containing .jpg / .png calibration frames.
 --square-mm  Physical side length of one checkerboard square in millimetres.
 --config     (Optional) Path to calibration_config.yaml. Defaults to
-             configs/calibration_config.yaml relative to this script.
+             configs/calibration_config.yaml in the project root.
 --sensor-config
              (Optional) Path to sensor_config.yaml to write results into.
-             Defaults to configs/sensor_config.yaml relative to this script.
+             Defaults to configs/sensor_config.yaml in the project root.
 """
 
 from __future__ import annotations
@@ -37,10 +40,10 @@ import cv2
 import numpy as np
 import yaml
 from loguru import logger
+from ugv_follower.utils.config_utils import get_project_root
 
-_SCRIPT_DIR = Path(__file__).resolve().parent
-_DEFAULT_CAL_CONFIG = _SCRIPT_DIR / "configs" / "calibration_config.yaml"
-_DEFAULT_SENSOR_CONFIG = _SCRIPT_DIR / "configs" / "sensor_config.yaml"
+_DEFAULT_CAL_CONFIG = get_project_root() / "configs" / "calibration_config.yaml"
+_DEFAULT_SENSOR_CONFIG = get_project_root() / "configs" / "sensor_config.yaml"
 
 _CORNER_CRITERIA = (
     cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER,

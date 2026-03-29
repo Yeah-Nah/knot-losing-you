@@ -60,7 +60,7 @@ sudo fuser -k /dev/video0
 Then start the capture server:
 
 ```bash
-python capture_calibration_images.py
+ugv-capture-calibration
 ```
 
 This zeros the pan-tilt servo and starts an HTTP server on port 8080. From your laptop browser:
@@ -74,9 +74,7 @@ Collect at least 10 images with varied distances and angles. Press `Ctrl-C` on t
 ### Step 2 — Run the calibration (Pi or laptop)
 
 ```bash
-python calibrate_waveshare_camera.py \
-    --images calibration/images \
-    --square-mm 28
+ugv-calibrate-camera --images calibration/images --square-mm 28
 ```
 
 On success, the calibration results (`camera_matrix`, `dist_coeffs`, `resolution`, `rms_reprojection_error`) are written into `configs/sensor_config.yaml` under the `waveshare_rgb` key.
@@ -86,13 +84,13 @@ On success, the calibration results (`camera_matrix`, `dist_coeffs`, `resolution
 ## Running the Follower
 
 ```bash
-python run_follower.py
+ugv-run
 ```
 
 Optional config overrides:
 
 ```bash
-python run_follower.py \
+ugv-run \
     --pipeline-config configs/pipeline_config.yaml \
     --model-config configs/model_config.yaml \
     --sensor-config configs/sensor_config.yaml
@@ -104,7 +102,7 @@ python run_follower.py \
 
 ### Serial port in use (`/dev/ttyAMA0`)
 
-Waveshare's `ugv_rpi/app.py` starts automatically on boot via crontab and holds the serial port. Any script that uses the UGV sub-controller (`check_battery.py`, `capture_calibration_images.py`, `run_follower.py`, etc.) will fail with a "device reports readiness to read but returned no data" error until it's stopped.
+Waveshare's `ugv_rpi/app.py` starts automatically on boot via crontab and holds the serial port. Any script that uses the UGV sub-controller (`ugv-check-battery`, `ugv-capture-calibration`, `ugv-run`, etc.) will fail with a "device reports readiness to read but returned no data" error until it's stopped.
 
 **One-time fix — kill the process for this session:**
 
@@ -138,14 +136,14 @@ All test scripts are run from `ugv-follower/` on the Pi.
 
 ```bash
 # Check battery level
-python check_battery.py
+ugv-check-battery
 
 # Test OAK-D Lite camera — prints frame stats (use --no-display for headless)
-python test_camera_access.py
+python -m tests.test_camera_access
 
 # Test LiDAR connection — prints incoming packet breakdown
-python test_lidar_access.py
+python -m tests.test_lidar_access
 
 # Test motor control — drives forward 0.2 m over 1 s
-python test_ugv_controller.py
+python -m tests.test_ugv_controller
 ```
