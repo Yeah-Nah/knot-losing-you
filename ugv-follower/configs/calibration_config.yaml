@@ -13,3 +13,18 @@ camera:
 ugv:
   port: "/dev/ttyAMA0"   # Serial port for the UGV sub-controller (Pi 5: ttyAMA0, Pi 4B: serial0)
   baud_rate: 115200
+
+# Pan-tilt servo curve calibration — used by calibrate_pantilt_servo.py
+pan_tilt_servo:
+  sweep_min_deg: -45.0        # Start of the commanded pan sweep (degrees)
+  sweep_max_deg: 45.0         # End of the commanded pan sweep (degrees)
+  sweep_step_deg: 5.0         # Step size between commanded pan values (degrees)
+  settle_time_s: 1.5          # Seconds to wait after each pan command before collecting frames
+  frames_to_average: 10       # Number of frames to collect and median-average at each step
+  tilt_setpoint_deg: 0.0      # Tilt angle held constant throughout the sweep
+  template_half_width_px: 60  # Half-width (pixels) of the square template cropped at zero position
+  noise_floor_deg: 0.5        # Minimum phi magnitude (degrees) considered as real motion
+  sign_override: null         # Override sign multiplier applied after centroid_to_angle.
+                              # null = default (−1 baked into centroid_to_angle).
+                              # Set to -1.0 to flip the sign if hardware uses opposite convention.
+  camera_device: "/dev/video0"  # V4L2 device path for the Waveshare RGB camera

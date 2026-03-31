@@ -25,12 +25,10 @@ waveshare_rgb:
   resolution: [1280, 720]   # [width, height] at calibration time
   rms_reprojection_error: 0.7737  # RMS error in pixels — set after calibration
 
-  # Images used   : 59
-  # Resolution    : 1280×720 px
-  # RMS error     : 0.7737 px
-  # fx, fy        : 542.44, 544.64
-  # cx, cy        : 672.07, 379.80
-  # dist_coeffs   : [0.04838097993620094, -0.041844537572354824, 0.012958617562528365, -0.0031300600380237465]  # [k1, k2, k3, k4]
+# Pan-tilt servo curve calibration — command-to-angle mapping
+# Populated by calibrate_pantilt_servo.py (ugv-calibrate-pantilt) after running
+# the servo curve calibration workflow.
+pan_tilt_servo: null  # set after calibration
 
 # Extrinsic calibration — LiDAR ↔ pan-tilt angular offset
 # Populated by calibrate_angular_offset.py after running the calibration workflow.
