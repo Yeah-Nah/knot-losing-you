@@ -28,6 +28,10 @@ waveshare_rgb:
 # Pan-tilt servo curve calibration — command-to-angle mapping
 # Populated by calibrate_pantilt_servo.py (ugv-calibrate-pantilt) after running
 # the servo curve calibration workflow.
+# Key fields written after calibration:
+#   angle_measurement_model      — always "offset_corrected_forward_displacement"
+#   camera_forward_offset_m      — geometry param from calibration_config.yaml
+#   calibration_target_distance_m — geometry param from calibration_config.yaml
 pan_tilt_servo: null  # set after calibration
 
 # Extrinsic calibration — LiDAR ↔ pan-tilt angular offset

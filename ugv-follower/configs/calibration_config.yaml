@@ -28,3 +28,5 @@ pan_tilt_servo:
                               # null = default (−1 baked into centroid_to_angle).
                               # Set to -1.0 to flip the sign if hardware uses opposite convention.
   camera_device: "/dev/video0"  # V4L2 device path for the Waveshare RGB camera
+  camera_forward_offset_m: 0.04         # Forward offset of camera lens from pan-tilt rotation centre (metres)
+  calibration_target_distance_m: 2.0    # Distance from pan-tilt rotation centre to calibration target (metres)

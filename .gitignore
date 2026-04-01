@@ -224,3 +224,6 @@ ugv-follower/output/
 # Calibration images (large binary files, not committed)
 ugv-follower/calibration/images/
 !ugv-follower/calibration/images/.gitkeep
+
+# Settings for json that expose user data
+settings.json

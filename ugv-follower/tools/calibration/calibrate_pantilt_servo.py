@@ -5,6 +5,21 @@ setpoints across a configurable range, measuring the settled pan angle from the
 Waveshare RGB camera via template matching, and fitting a piecewise-linear model
 to the result.
 
+Angle measurement model
+-----------------------
+All pan-angle measurements use the **offset-corrected forward-displacement model**
+(there is no naive/pinhole fallback).  The correction accounts for the camera lens
+being displaced forward of the pan-tilt rotation centre by ``camera_forward_offset_m``
+metres::
+
+    phi_corrected = phi_cam − arcsin( d/D · sin(phi_cam) )
+
+where ``phi_cam`` is the naive arctan angle from the image centroid, ``d`` is
+``camera_forward_offset_m``, and ``D`` is ``calibration_target_distance_m``.
+Both geometry fields are **required** in ``calibration_config.yaml`` under
+``pan_tilt_servo`` before running calibration or replay.  The corrected angle is
+what is stored in ``phi_deg`` in the CSV and fitted to derive the servo curve.
+
 Must be run on the Raspberry Pi with the UGV rover and Waveshare RGB camera
 connected. Intrinsic calibration (``calibrate_waveshare_camera.py``) must have
 been completed first.
@@ -204,6 +219,8 @@ class PanTiltCalConfig:
     camera_device: str
     sensor_config_path: Path
     sweep_steps: tuple[float, ...]
+    camera_forward_offset_m: float
+    calibration_target_distance_m: float
 
 
 # ---------------------------------------------------------------------------
@@ -346,6 +363,56 @@ def centroid_to_angle(u_px: float, cx: float, fx: float) -> float:
     return -math.degrees(math.atan2(u_px - cx, fx))
 
 
+def correct_for_forward_offset(phi_cam_deg: float, d_m: float, D_m: float) -> float:
+    """Apply forward camera displacement correction to naive camera-frame pan angle.
+
+    Accounts for the camera lens being displaced forward from the pan-tilt rotation
+    centre by distance ``d_m``.  Without correction, a forward-displaced camera
+    makes the target appear to subtend a slightly larger angle than the true servo
+    angle, introducing a systematic slope error in the fitted curve.
+
+    Derivation (2-D horizontal plane):
+    Camera at ``(d·sin θ, d·cos θ)``, target at ``(0, D)``::
+
+        phi_corrected = phi_cam − arcsin( d/D · sin(phi_cam) )
+
+    When ``d=0`` the formula reduces to the identity (naive model).
+
+    Parameters
+    ----------
+    phi_cam_deg : float
+        Naive camera-frame pan angle in degrees, as returned by
+        ``centroid_to_angle``.
+    d_m : float
+        Forward offset of the camera lens from the pan-tilt rotation centre
+        (metres).  Must be ``>= 0`` and ``< D_m``.
+    D_m : float
+        Distance from the pan-tilt rotation centre to the calibration target
+        (metres).  Must be ``> 0``.
+
+    Returns
+    -------
+    float
+        Offset-corrected pan angle in degrees.
+
+    Raises
+    ------
+    ValueError
+        If the arcsin domain constraint ``|d/D · sin(phi_cam)| < 1`` is
+        violated (only possible when ``d >= D``, which ``_validate_geometry``
+        prevents during config loading).
+    """
+    phi_rad = math.radians(phi_cam_deg)
+    ratio = (d_m / D_m) * math.sin(phi_rad)
+    if abs(ratio) >= 1.0:
+        raise ValueError(
+            f"Trig domain violation in correct_for_forward_offset: "
+            f"d/D*sin(phi_cam) = {ratio:.4f} must be in (-1, 1). "
+            f"d={d_m}, D={D_m}, phi_cam={phi_cam_deg:.2f}°"
+        )
+    return phi_cam_deg - math.degrees(math.asin(ratio))
+
+
 def quality_flag(
     match_score: float,
     u_px: float,
@@ -454,7 +521,12 @@ def fit_linear(
     """
     if len(cmds) < 2:
         logger.warning("fit_linear: fewer than 2 samples — returning zero fit.")
-        return {"slope": 0.0, "intercept": 0.0, "mae_deg": 0.0, "max_abs_error_deg": 0.0}
+        return {
+            "slope": 0.0,
+            "intercept": 0.0,
+            "mae_deg": 0.0,
+            "max_abs_error_deg": 0.0,
+        }
     cmds_arr = np.array(cmds, dtype=float)
     phis_arr = np.array(phis, dtype=float)
     slope, intercept = np.polyfit(cmds_arr, phis_arr, 1)
@@ -565,13 +637,17 @@ def compute_hysteresis(
         Mean absolute hysteresis in degrees (0.0 if no matching commands).
     """
     rev_map = {c: p for c, p in zip(rev_cmds, rev_phis)}
-    diffs = [abs(p_fwd - rev_map[c]) for c, p_fwd in zip(fwd_cmds, fwd_phis) if c in rev_map]
+    diffs = [
+        abs(p_fwd - rev_map[c]) for c, p_fwd in zip(fwd_cmds, fwd_phis) if c in rev_map
+    ]
     return float(np.mean(diffs)) if diffs else 0.0
 
 
 def analyse_sweep(
     rows: list[dict[str, Any]],
     noise_floor_deg: float,
+    camera_forward_offset_m: float,
+    calibration_target_distance_m: float,
 ) -> dict[str, Any]:
     """Compute all model outputs from raw sweep rows.
 
@@ -581,6 +657,8 @@ def analyse_sweep(
 
     This is the single function called by both the live ``/save`` handler and
     ``--replay`` mode, so all offline analysis exactly mirrors the live path.
+    ``phi_deg`` values in ``rows`` are assumed to be already offset-corrected
+    (as written by ``_run_sweep``).
 
     Parameters
     ----------
@@ -589,6 +667,12 @@ def analyse_sweep(
         ``_load_csv``).
     noise_floor_deg : float
         Passed through to ``estimate_dead_band``.
+    camera_forward_offset_m : float
+        Forward offset of camera lens from rotation centre (metres).
+        Recorded as metadata in the output dict.
+    calibration_target_distance_m : float
+        Distance from rotation centre to calibration target (metres).
+        Recorded as metadata in the output dict.
 
     Returns
     -------
@@ -602,7 +686,11 @@ def analyse_sweep(
 
     if n_good == 0:
         logger.error("No good-quality samples (quality_flag==0) found in sweep data.")
-        return {"n_good_samples": 0, "n_total_samples": n_total, "error": "no_good_samples"}
+        return {
+            "n_good_samples": 0,
+            "n_total_samples": n_total,
+            "error": "no_good_samples",
+        }
 
     fwd_good = [r for r in good if r["sweep_direction"] == "forward"]
     rev_good = [r for r in good if r["sweep_direction"] == "reverse"]
@@ -614,7 +702,9 @@ def analyse_sweep(
     rev_cmds = [float(r["commanded_pan_deg"]) for r in rev_good]
     rev_phis = [float(r["phi_deg"]) for r in rev_good]
 
-    dead_band_pos, dead_band_neg = estimate_dead_band(all_cmds, all_phis, noise_floor_deg)
+    dead_band_pos, dead_band_neg = estimate_dead_band(
+        all_cmds, all_phis, noise_floor_deg
+    )
     linear = fit_linear(all_cmds, all_phis)
     pw_fwd = fit_piecewise_linear(fwd_cmds, fwd_phis)
     pw_rev = fit_piecewise_linear(rev_cmds, rev_phis)
@@ -630,11 +720,18 @@ def analyse_sweep(
 
     return {
         "calibration_method": "servo_curve_sweep",
+        "angle_measurement_model": "offset_corrected_forward_displacement",
+        "camera_forward_offset_m": camera_forward_offset_m,
+        "calibration_target_distance_m": calibration_target_distance_m,
         "tilt_setpoint_deg": tilt_sp,
         "sweep_min_deg": sweep_min,
         "sweep_max_deg": sweep_max,
-        "dead_band_pos_deg": round(dead_band_pos, 4) if dead_band_pos is not None else None,
-        "dead_band_neg_deg": round(dead_band_neg, 4) if dead_band_neg is not None else None,
+        "dead_band_pos_deg": round(dead_band_pos, 4)
+        if dead_band_pos is not None
+        else None,
+        "dead_band_neg_deg": round(dead_band_neg, 4)
+        if dead_band_neg is not None
+        else None,
         "cmd_min": sweep_min,
         "cmd_max": sweep_max,
         "phi_min_deg": round(phi_min, 4),
@@ -670,6 +767,34 @@ def analyse_sweep(
 # ---------------------------------------------------------------------------
 # Config parsing
 # ---------------------------------------------------------------------------
+
+
+def _validate_geometry(
+    camera_forward_offset_m: float,
+    calibration_target_distance_m: float,
+) -> None:
+    """Validate pan-tilt geometry parameters required for offset-corrected calibration.
+
+    Raises
+    ------
+    ValueError
+        If any constraint is violated.
+    """
+    if calibration_target_distance_m <= 0:
+        raise ValueError(
+            f"calibration_target_distance_m must be positive, "
+            f"got {calibration_target_distance_m}"
+        )
+    if camera_forward_offset_m < 0:
+        raise ValueError(
+            f"camera_forward_offset_m must be non-negative, "
+            f"got {camera_forward_offset_m}"
+        )
+    if camera_forward_offset_m >= calibration_target_distance_m:
+        raise ValueError(
+            f"camera_forward_offset_m ({camera_forward_offset_m}) must be less than "
+            f"calibration_target_distance_m ({calibration_target_distance_m})"
+        )
 
 
 def _extract_intrinsics(cfg: dict[str, Any]) -> tuple[float, float, float]:
@@ -724,21 +849,46 @@ def _load_config(
     noise_floor = float(pt_cfg.get("noise_floor_deg", 0.5))
 
     sign_override_raw = pt_cfg.get("sign_override")
-    sign_override: float | None = None if sign_override_raw is None else float(sign_override_raw)
+    sign_override: float | None = (
+        None if sign_override_raw is None else float(sign_override_raw)
+    )
 
     # CLI --camera-device overrides config; config overrides default.
-    camera_device = args.camera_device or str(pt_cfg.get("camera_device", "/dev/video0"))
+    camera_device = args.camera_device or str(
+        pt_cfg.get("camera_device", "/dev/video0")
+    )
 
     # CLI --noise-floor overrides config.
     if args.noise_floor is not None:
         noise_floor = float(args.noise_floor)
+
+    # Required geometry fields for offset-corrected angle estimation.
+    _fwd_raw = pt_cfg.get("camera_forward_offset_m")
+    if _fwd_raw is None:
+        raise ValueError(
+            "pan_tilt_servo.camera_forward_offset_m is missing from calibration_config.yaml. "
+            "Add it before running calibration."
+        )
+    camera_fwd_offset = float(_fwd_raw)
+
+    _dist_raw = pt_cfg.get("calibration_target_distance_m")
+    if _dist_raw is None:
+        raise ValueError(
+            "pan_tilt_servo.calibration_target_distance_m is missing from calibration_config.yaml. "
+            "Add it before running calibration."
+        )
+    cal_target_dist = float(_dist_raw)
+
+    _validate_geometry(camera_fwd_offset, cal_target_dist)
 
     sensor_config_path: Path = args.sensor_config.resolve()
 
     if sweep_step <= 0:
         raise ValueError("pan_tilt_servo.sweep_step_deg must be positive.")
     if sweep_min >= sweep_max:
-        raise ValueError("pan_tilt_servo.sweep_min_deg must be less than sweep_max_deg.")
+        raise ValueError(
+            "pan_tilt_servo.sweep_min_deg must be less than sweep_max_deg."
+        )
 
     raw_steps = np.arange(sweep_min, sweep_max + sweep_step / 2.0, sweep_step)
     sweep_steps = tuple(float(v) for v in raw_steps)
@@ -766,6 +916,8 @@ def _load_config(
         camera_device=camera_device,
         sensor_config_path=sensor_config_path,
         sweep_steps=sweep_steps,
+        camera_forward_offset_m=camera_fwd_offset,
+        calibration_target_distance_m=cal_target_dist,
     )
 
 
@@ -949,7 +1101,9 @@ def _run_sweep(
                 for _ in range(config.frames_to_average):
                     ok, frame = cap.read()
                     if not ok or frame is None:
-                        logger.warning("cap.read() failed during sweep — skipping frame.")
+                        logger.warning(
+                            "cap.read() failed during sweep — skipping frame."
+                        )
                         continue
                     u, score = _match_template(frame, template)
                     u_list.append(u)
@@ -968,7 +1122,12 @@ def _run_sweep(
             qflag = quality_flag(score_med, u_median, config.cam_width)
 
             image_angle_deg = math.degrees(math.atan2(u_median - config.cx, config.fx))
-            phi = centroid_to_angle(u_median, config.cx, config.fx) * sign_mult
+            phi_cam = centroid_to_angle(u_median, config.cx, config.fx) * sign_mult
+            phi = correct_for_forward_offset(
+                phi_cam,
+                config.camera_forward_offset_m,
+                config.calibration_target_distance_m,
+            )
 
             rows.append(
                 {
@@ -1173,7 +1332,12 @@ class CalibrationOrchestrator:
         assert self._csv_path is not None
         _write_csv(self._csv_path, rows)
 
-        model = analyse_sweep(rows, self._config.noise_floor_deg)
+        model = analyse_sweep(
+            rows,
+            self._config.noise_floor_deg,
+            self._config.camera_forward_offset_m,
+            self._config.calibration_target_distance_m,
+        )
         model["calibrated_at"] = datetime.now().isoformat(timespec="seconds")
         try:
             model["raw_csv"] = str(self._csv_path.relative_to(get_project_root()))
@@ -1410,16 +1574,20 @@ def _run_replay(
     csv_path: Path,
     sensor_config_path: Path,
     noise_floor_deg: float,
+    camera_forward_offset_m: float,
+    calibration_target_distance_m: float,
     save: bool,
 ) -> None:
     """Load an existing CSV, refit all models, print a summary, optionally save.
 
     Parameters
     ----------
-    csv_path           : Path   Path to the raw CSV file.
-    sensor_config_path : Path   Destination for sensor_config.yaml if ``save=True``.
-    noise_floor_deg    : float  Passed to ``analyse_sweep``.
-    save               : bool   If True, write results to sensor_config.yaml.
+    csv_path                    : Path   Path to the raw CSV file.
+    sensor_config_path          : Path   Destination for sensor_config.yaml if ``save=True``.
+    noise_floor_deg             : float  Passed to ``analyse_sweep``.
+    camera_forward_offset_m     : float  Geometry metadata recorded in output.
+    calibration_target_distance_m : float  Geometry metadata recorded in output.
+    save                        : bool   If True, write results to sensor_config.yaml.
     """
     if not csv_path.exists():
         logger.error(f"CSV not found: {csv_path}")
@@ -1428,7 +1596,9 @@ def _run_replay(
     rows = _load_csv(csv_path)
     logger.info(f"Loaded {len(rows)} rows from {csv_path}")
 
-    model = analyse_sweep(rows, noise_floor_deg)
+    model = analyse_sweep(
+        rows, noise_floor_deg, camera_forward_offset_m, calibration_target_distance_m
+    )
 
     print("\n=== Pan-Tilt Servo Curve Calibration — Replay Summary ===")
     print(f"Total samples   : {model.get('n_total_samples')}")
@@ -1542,19 +1712,42 @@ def main() -> None:
     # ------------------------------------------------------------------
     if args.replay is not None:
         cal_config_path: Path = args.cal_config.resolve()
-        noise_floor: float = 0.5
-        if args.noise_floor is not None:
-            noise_floor = float(args.noise_floor)
-        elif cal_config_path.exists():
-            with cal_config_path.open() as f:
-                cal_cfg_replay: dict[str, Any] = yaml.safe_load(f) or {}
-            noise_floor = float(
-                cal_cfg_replay.get("pan_tilt_servo", {}).get("noise_floor_deg", 0.5)
+        if not cal_config_path.exists():
+            logger.error(f"Calibration config not found: {cal_config_path}")
+            sys.exit(1)
+        with cal_config_path.open() as f:
+            cal_cfg_replay: dict[str, Any] = yaml.safe_load(f) or {}
+        pt_cfg_replay: dict[str, Any] = cal_cfg_replay.get("pan_tilt_servo", {})
+        noise_floor: float = (
+            float(args.noise_floor)
+            if args.noise_floor is not None
+            else float(pt_cfg_replay.get("noise_floor_deg", 0.5))
+        )
+        _fwd_replay = pt_cfg_replay.get("camera_forward_offset_m")
+        if _fwd_replay is None:
+            logger.error(
+                "pan_tilt_servo.camera_forward_offset_m is missing from "
+                f"{cal_config_path}. Add it before running replay."
             )
+            sys.exit(1)
+        _dist_replay = pt_cfg_replay.get("calibration_target_distance_m")
+        if _dist_replay is None:
+            logger.error(
+                "pan_tilt_servo.calibration_target_distance_m is missing from "
+                f"{cal_config_path}. Add it before running replay."
+            )
+            sys.exit(1)
+        try:
+            _validate_geometry(float(_fwd_replay), float(_dist_replay))
+        except ValueError as exc:
+            logger.error(str(exc))
+            sys.exit(1)
         _run_replay(
             csv_path=args.replay.resolve(),
             sensor_config_path=sensor_config_path,
             noise_floor_deg=noise_floor,
+            camera_forward_offset_m=float(_fwd_replay),
+            calibration_target_distance_m=float(_dist_replay),
             save=args.save,
         )
         return
