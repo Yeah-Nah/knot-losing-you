@@ -515,7 +515,9 @@ def test_analyse_sweep_hysteresis_approx() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _make_minimal_sensor_cfg() -> dict:
+def _make_minimal_sensor_cfg() -> dict[
+    str, dict[str, RowValue | list[list[float | int] | float | int]]
+]:
     return {
         "waveshare_rgb": {
             "camera_matrix": [[544.64, 0, 640.0], [0, 544.64, 360.0], [0, 0, 1]],
@@ -534,8 +536,8 @@ def _make_minimal_sensor_cfg() -> dict:
 def _make_minimal_cal_cfg(
     precondition_cycles: int | None = None,
     precondition_settle_time_s: float | None = None,
-) -> dict:
-    pt: dict = {
+) -> dict[str, dict[str, RowValue]]:
+    pt: dict[str, RowValue] = {
         "camera_forward_offset_m": 0.0665,
         "calibration_target_distance_m": 2.7,
     }
@@ -558,7 +560,9 @@ def _make_args(tmp_path: Path) -> argparse.Namespace:
 
 def test_load_config_precondition_default_zero(tmp_path: Path) -> None:
     """Missing precondition_cycles defaults to 0."""
-    cfg = _load_config(_make_minimal_sensor_cfg(), _make_minimal_cal_cfg(), _make_args(tmp_path))
+    cfg = _load_config(
+        _make_minimal_sensor_cfg(), _make_minimal_cal_cfg(), _make_args(tmp_path)
+    )
     assert cfg.precondition_cycles == 0
 
 
@@ -759,7 +763,9 @@ def test_run_sweep_precondition_uses_precondition_settle_time(
     warmup_calls = sleep_args[:6]
     measure_calls = sleep_args[6:]
     assert all(v == pytest.approx(sentinel_warmup) for v in warmup_calls), warmup_calls
-    assert all(v == pytest.approx(sentinel_measure) for v in measure_calls), measure_calls
+    assert all(v == pytest.approx(sentinel_measure) for v in measure_calls), (
+        measure_calls
+    )
 
 
 @patch(

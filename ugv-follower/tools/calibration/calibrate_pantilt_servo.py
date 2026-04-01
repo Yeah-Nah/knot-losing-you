@@ -859,7 +859,9 @@ def _load_config(
         pt_cfg.get("precondition_settle_time_s", settle_time)
     )
     if precondition_settle_time < 0:
-        raise ValueError("pan_tilt_servo.precondition_settle_time_s must be non-negative.")
+        raise ValueError(
+            "pan_tilt_servo.precondition_settle_time_s must be non-negative."
+        )
 
     sign_override_raw = pt_cfg.get("sign_override")
     sign_override: float | None = (
