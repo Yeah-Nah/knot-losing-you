@@ -630,7 +630,7 @@ def _make_sweep_config(
     "tools.calibration.calibrate_pantilt_servo._match_template",
     return_value=(640.0, 0.95),
 )
-def test_run_sweep_zero_precondition_rows(mock_match) -> None:  # noqa: ANN001
+def test_run_sweep_zero_precondition_rows(mock_match: MagicMock) -> None:
     """precondition_cycles=0 → 6 rows (3 fwd + 3 rev), no extra pan commands."""
     config = _make_sweep_config(precondition_cycles=0)
     state = CalibrationStateContainer()
@@ -651,6 +651,7 @@ def test_run_sweep_zero_precondition_rows(mock_match) -> None:  # noqa: ANN001
     )
 
     rows = state.get_sweep_rows()
+    assert rows is not None
     assert len(rows) == 6
     assert ugv_mock.set_pan_tilt.call_count == 6
 
@@ -659,7 +660,7 @@ def test_run_sweep_zero_precondition_rows(mock_match) -> None:  # noqa: ANN001
     "tools.calibration.calibrate_pantilt_servo._match_template",
     return_value=(640.0, 0.95),
 )
-def test_run_sweep_one_precondition_cycle(mock_match) -> None:  # noqa: ANN001
+def test_run_sweep_one_precondition_cycle(mock_match: MagicMock) -> None:
     """precondition_cycles=1 → still 6 measurement rows; 12 total set_pan_tilt calls."""
     config = _make_sweep_config(precondition_cycles=1)
     state = CalibrationStateContainer()
@@ -680,6 +681,7 @@ def test_run_sweep_one_precondition_cycle(mock_match) -> None:  # noqa: ANN001
     )
 
     rows = state.get_sweep_rows()
+    assert rows is not None
     assert len(rows) == 6  # only measurement rows, not warmup
     assert ugv_mock.set_pan_tilt.call_count == 12  # 6 warmup + 6 measurement
 
@@ -730,8 +732,8 @@ def test_load_config_precondition_settle_time_negative_raises(tmp_path: Path) ->
 )
 @patch("tools.calibration.calibrate_pantilt_servo.time.sleep")
 def test_run_sweep_precondition_uses_precondition_settle_time(
-    mock_sleep,  # noqa: ANN001
-    mock_match,  # noqa: ANN001
+    mock_sleep: MagicMock,
+    mock_match: MagicMock,
 ) -> None:
     """Warmup steps use precondition_settle_time_s; measurement steps use settle_time_s."""
     sentinel_warmup = 0.123
@@ -774,8 +776,8 @@ def test_run_sweep_precondition_uses_precondition_settle_time(
 )
 @patch("tools.calibration.calibrate_pantilt_servo.time.sleep")
 def test_run_sweep_measurement_unaffected_by_precondition_settle(
-    mock_sleep,  # noqa: ANN001
-    mock_match,  # noqa: ANN001
+    mock_sleep: MagicMock,
+    mock_match: MagicMock,
 ) -> None:
     """precondition_cycles=0 → all sleep calls use settle_time_s (no warmup)."""
     sentinel_measure = 0.789
