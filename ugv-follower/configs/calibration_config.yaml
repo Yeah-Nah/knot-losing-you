@@ -19,8 +19,8 @@ pan_tilt_servo:
   sweep_min_deg: -45.0        # Start of the commanded pan sweep (degrees)
   sweep_max_deg: 45.0         # End of the commanded pan sweep (degrees)
   sweep_step_deg: 5.0         # Step size between commanded pan values (degrees)
-  settle_time_s: 1.5          # Seconds to wait after each pan command before collecting frames
-  frames_to_average: 10       # Number of frames to collect and median-average at each step
+  settle_time_s: 2          # Seconds to wait after each pan command before collecting frames
+  frames_to_average: 13       # Number of frames to collect and median-average at each step
   tilt_setpoint_deg: 0.0      # Tilt angle held constant throughout the sweep
   template_half_width_px: 60  # Half-width (pixels) of the square template cropped at zero position
   noise_floor_deg: 0.5        # Minimum phi magnitude (degrees) considered as real motion
