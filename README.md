@@ -85,7 +85,9 @@ Measures the command-to-angle mapping of the pan axis so Phase 3 control loops c
 work in physical degrees rather than raw command units.
 
 Before running, check `configs/calibration_config.yaml` section `pan_tilt_servo` and
-confirm the sweep range and timing values suit your setup.
+confirm the sweep range and timing values suit your setup. Set `precondition_cycles`
+to the number of full forward+reverse passes to run before measurements are recorded
+(default `1`) — set to `0` to skip warmup entirely.
 
 Start the calibration server:
 

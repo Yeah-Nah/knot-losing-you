@@ -6,15 +6,24 @@ CSV/YAML helpers directly from the calibration script.
 
 from __future__ import annotations
 
+import argparse
 import math
+import threading
+import time
 from pathlib import Path
 from typing import TypeAlias
+from unittest.mock import MagicMock, patch
 
+import numpy as np
 import pytest
 import yaml
 
 from tools.calibration.calibrate_pantilt_servo import (
+    CalibrationStateContainer,
+    PanTiltCalConfig,
+    _load_config,
     _load_csv,
+    _run_sweep,
     _validate_geometry,
     _write_csv,
     _write_results_atomic,
@@ -499,3 +508,163 @@ def test_analyse_sweep_hysteresis_approx() -> None:
         calibration_target_distance_m=2.0,
     )
     assert result["hysteresis_mean_deg"] == pytest.approx(0.5, abs=0.05)
+
+
+# ---------------------------------------------------------------------------
+# precondition_cycles — _load_config
+# ---------------------------------------------------------------------------
+
+
+def _make_minimal_sensor_cfg() -> dict:
+    return {
+        "waveshare_rgb": {
+            "camera_matrix": [[544.64, 0, 640.0], [0, 544.64, 360.0], [0, 0, 1]],
+            "resolution": [1280, 720],
+        },
+        "ugv": {
+            "port": "/dev/ttyAMA0",
+            "baud_rate": 115200,
+            "chassis_main": 1,
+            "chassis_module": 1,
+            "track_width": 0.2,
+        },
+    }
+
+
+def _make_minimal_cal_cfg(precondition_cycles: int | None = None) -> dict:
+    pt: dict = {
+        "camera_forward_offset_m": 0.0665,
+        "calibration_target_distance_m": 2.7,
+    }
+    if precondition_cycles is not None:
+        pt["precondition_cycles"] = precondition_cycles
+    return {"pan_tilt_servo": pt}
+
+
+def _make_args(tmp_path: Path) -> argparse.Namespace:
+    ns = argparse.Namespace()
+    ns.camera_device = "/dev/video0"
+    ns.noise_floor = None
+    sensor_path = tmp_path / "sensor.yaml"
+    sensor_path.write_text("{}")
+    ns.sensor_config = sensor_path
+    return ns
+
+
+def test_load_config_precondition_default_zero(tmp_path: Path) -> None:
+    """Missing precondition_cycles defaults to 0."""
+    cfg = _load_config(_make_minimal_sensor_cfg(), _make_minimal_cal_cfg(), _make_args(tmp_path))
+    assert cfg.precondition_cycles == 0
+
+
+def test_load_config_precondition_explicit(tmp_path: Path) -> None:
+    """Explicit precondition_cycles is loaded correctly."""
+    cfg = _load_config(
+        _make_minimal_sensor_cfg(),
+        _make_minimal_cal_cfg(precondition_cycles=3),
+        _make_args(tmp_path),
+    )
+    assert cfg.precondition_cycles == 3
+
+
+def test_load_config_precondition_negative_raises(tmp_path: Path) -> None:
+    """Negative precondition_cycles raises ValueError."""
+    with pytest.raises(ValueError, match="precondition_cycles"):
+        _load_config(
+            _make_minimal_sensor_cfg(),
+            _make_minimal_cal_cfg(precondition_cycles=-1),
+            _make_args(tmp_path),
+        )
+
+
+# ---------------------------------------------------------------------------
+# precondition_cycles — _run_sweep
+# ---------------------------------------------------------------------------
+
+
+def _make_sweep_config(precondition_cycles: int = 0) -> PanTiltCalConfig:
+    return PanTiltCalConfig(
+        cx=640.0,
+        cy=360.0,
+        fx=544.64,
+        cam_width=1280,
+        cam_height=720,
+        ugv_port="/dev/null",
+        ugv_baud=115200,
+        chassis_main=1,
+        chassis_module=1,
+        track_width=0.2,
+        sweep_min_deg=-10.0,
+        sweep_max_deg=10.0,
+        sweep_step_deg=10.0,
+        settle_time_s=0.0,
+        frames_to_average=1,
+        tilt_setpoint_deg=0.0,
+        template_half_width_px=30,
+        noise_floor_deg=0.5,
+        sign_override=None,
+        camera_device="/dev/video0",
+        sensor_config_path=Path("/tmp/sensor.yaml"),
+        sweep_steps=(-10.0, 0.0, 10.0),  # 3 steps → 6 full_steps (fwd + rev)
+        camera_forward_offset_m=0.0,
+        calibration_target_distance_m=2.0,
+        precondition_cycles=precondition_cycles,
+    )
+
+
+@patch(
+    "tools.calibration.calibrate_pantilt_servo._match_template",
+    return_value=(640.0, 0.95),
+)
+def test_run_sweep_zero_precondition_rows(mock_match) -> None:  # noqa: ANN001
+    """precondition_cycles=0 → 6 rows (3 fwd + 3 rev), no extra pan commands."""
+    config = _make_sweep_config(precondition_cycles=0)
+    state = CalibrationStateContainer()
+    state.try_start_sweep()
+    ugv_mock = MagicMock()
+    cap_mock = MagicMock()
+    cap_mock.read.return_value = (True, np.zeros((720, 1280, 3), dtype=np.uint8))
+
+    _run_sweep(
+        cap_mock,
+        ugv_mock,
+        config,
+        np.zeros((60, 60, 3), dtype=np.uint8),
+        state,
+        threading.Lock(),
+        threading.Event(),
+        time.monotonic(),
+    )
+
+    rows = state.get_sweep_rows()
+    assert len(rows) == 6
+    assert ugv_mock.set_pan_tilt.call_count == 6
+
+
+@patch(
+    "tools.calibration.calibrate_pantilt_servo._match_template",
+    return_value=(640.0, 0.95),
+)
+def test_run_sweep_one_precondition_cycle(mock_match) -> None:  # noqa: ANN001
+    """precondition_cycles=1 → still 6 measurement rows; 12 total set_pan_tilt calls."""
+    config = _make_sweep_config(precondition_cycles=1)
+    state = CalibrationStateContainer()
+    state.try_start_sweep()
+    ugv_mock = MagicMock()
+    cap_mock = MagicMock()
+    cap_mock.read.return_value = (True, np.zeros((720, 1280, 3), dtype=np.uint8))
+
+    _run_sweep(
+        cap_mock,
+        ugv_mock,
+        config,
+        np.zeros((60, 60, 3), dtype=np.uint8),
+        state,
+        threading.Lock(),
+        threading.Event(),
+        time.monotonic(),
+    )
+
+    rows = state.get_sweep_rows()
+    assert len(rows) == 6  # only measurement rows, not warmup
+    assert ugv_mock.set_pan_tilt.call_count == 12  # 6 warmup + 6 measurement

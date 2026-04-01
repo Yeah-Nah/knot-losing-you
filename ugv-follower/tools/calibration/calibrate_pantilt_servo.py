@@ -221,6 +221,7 @@ class PanTiltCalConfig:
     sweep_steps: tuple[float, ...]
     camera_forward_offset_m: float
     calibration_target_distance_m: float
+    precondition_cycles: int
 
 
 # ---------------------------------------------------------------------------
@@ -848,6 +849,12 @@ def _load_config(
     tmpl_half_w = int(pt_cfg.get("template_half_width_px", 60))
     noise_floor = float(pt_cfg.get("noise_floor_deg", 0.5))
 
+    precondition_cycles_raw = int(pt_cfg.get("precondition_cycles", 0))
+    if precondition_cycles_raw < 0:
+        raise ValueError(
+            "pan_tilt_servo.precondition_cycles must be >= 0."
+        )
+
     sign_override_raw = pt_cfg.get("sign_override")
     sign_override: float | None = (
         None if sign_override_raw is None else float(sign_override_raw)
@@ -918,6 +925,7 @@ def _load_config(
         sweep_steps=sweep_steps,
         camera_forward_offset_m=camera_fwd_offset,
         calibration_target_distance_m=cal_target_dist,
+        precondition_cycles=precondition_cycles_raw,
     )
 
 
@@ -1080,6 +1088,41 @@ def _run_sweep(
 
     sign_mult = config.sign_override if config.sign_override is not None else 1.0
     rows: list[dict[str, Any]] = []
+
+    if config.precondition_cycles > 0:
+        logger.info(
+            "Preconditioning: %d warmup cycle(s) over %d steps.",
+            config.precondition_cycles,
+            len(full_steps),
+        )
+        try:
+            for cycle in range(config.precondition_cycles):
+                logger.info(
+                    "Warmup cycle %d/%d — start.",
+                    cycle + 1,
+                    config.precondition_cycles,
+                )
+                for cmd_deg, _direction in full_steps:
+                    if cancel_event.is_set():
+                        logger.info("Sweep cancelled during preconditioning.")
+                        return
+                    ugv.set_pan_tilt(cmd_deg, config.tilt_setpoint_deg)
+                    time.sleep(config.settle_time_s)
+                    if cancel_event.is_set():
+                        logger.info("Sweep cancelled during preconditioning settle.")
+                        return
+                logger.info(
+                    "Warmup cycle %d/%d — complete.",
+                    cycle + 1,
+                    config.precondition_cycles,
+                )
+        except Exception as exc:
+            logger.exception("Preconditioning raised an exception: %s", exc)
+            state.transition_to(
+                SweepStatus(state=CalibrationState.FAILED, error_message=str(exc))
+            )
+            return
+        logger.info("Preconditioning complete. Starting measurement sweep.")
 
     try:
         for i, (cmd_deg, direction) in enumerate(full_steps):
