@@ -851,9 +851,7 @@ def _load_config(
 
     precondition_cycles_raw = int(pt_cfg.get("precondition_cycles", 0))
     if precondition_cycles_raw < 0:
-        raise ValueError(
-            "pan_tilt_servo.precondition_cycles must be >= 0."
-        )
+        raise ValueError("pan_tilt_servo.precondition_cycles must be >= 0.")
 
     sign_override_raw = pt_cfg.get("sign_override")
     sign_override: float | None = (
@@ -1049,6 +1047,172 @@ def _load_csv(path: Path) -> list[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 
+def _run_precondition_cycles(
+    full_steps: list[tuple[float, str]],
+    config: PanTiltCalConfig,
+    ugv: UGVController,
+    cancel_event: threading.Event,
+) -> bool:
+    """Run warmup cycles to condition the servo before the measurement sweep.
+
+    Commands the pan-tilt through ``config.precondition_cycles`` full
+    forward+reverse passes without recording any data.  Raises on hardware
+    failure so the caller's outer exception handler can transition to FAILED.
+
+    Parameters
+    ----------
+    full_steps : list[tuple[float, str]]
+        Ordered list of ``(cmd_deg, direction)`` pairs covering the full sweep
+        range in both directions.
+    config : PanTiltCalConfig
+        Calibration configuration (used for tilt setpoint and settle time).
+    ugv : UGVController
+        Connected UGV hardware interface.
+    cancel_event : threading.Event
+        Set by the ``/abort`` handler to request early termination.
+
+    Returns
+    -------
+    bool
+        ``True`` if all cycles completed normally; ``False`` if cancelled.
+    """
+    logger.info(
+        "Preconditioning: %d warmup cycle(s) over %d steps.",
+        config.precondition_cycles,
+        len(full_steps),
+    )
+    for cycle in range(config.precondition_cycles):
+        logger.info(
+            "Warmup cycle %d/%d — start.",
+            cycle + 1,
+            config.precondition_cycles,
+        )
+        for cmd_deg, _direction in full_steps:
+            if cancel_event.is_set():
+                logger.info("Sweep cancelled during preconditioning.")
+                return False
+            ugv.set_pan_tilt(cmd_deg, config.tilt_setpoint_deg)
+            time.sleep(config.settle_time_s)
+            if cancel_event.is_set():
+                logger.info("Sweep cancelled during preconditioning settle.")
+                return False
+        logger.info(
+            "Warmup cycle %d/%d — complete.",
+            cycle + 1,
+            config.precondition_cycles,
+        )
+    logger.info("Preconditioning complete. Starting measurement sweep.")
+    return True
+
+
+def _capture_frames(
+    cap: cv2.VideoCapture,
+    template: cv2.typing.MatLike,
+    config: PanTiltCalConfig,
+    cap_lock: threading.Lock,
+) -> tuple[list[float], list[float]]:
+    """Capture ``frames_to_average`` frames under the camera lock and return measurements.
+
+    Acquires ``cap_lock`` exclusively (blocking the frame-display thread) for
+    the duration of frame collection.  Failed reads are skipped with a warning
+    rather than raising, so callers should check whether the returned lists are
+    non-empty.
+
+    Parameters
+    ----------
+    cap : cv2.VideoCapture
+        Open camera capture device.
+    template : cv2.typing.MatLike
+        Template image used by ``_match_template``.
+    config : PanTiltCalConfig
+        Provides ``frames_to_average``.
+    cap_lock : threading.Lock
+        Shared lock that serialises camera access between this thread and the
+        frame-display thread.
+
+    Returns
+    -------
+    u_list : list[float]
+        Horizontal centroid pixel coordinates, one per successfully read frame.
+    score_list : list[float]
+        Template-match scores corresponding to each entry in ``u_list``.
+    """
+    u_list: list[float] = []
+    score_list: list[float] = []
+    with cap_lock:
+        for _ in range(config.frames_to_average):
+            ok, frame = cap.read()
+            if not ok or frame is None:
+                logger.warning("cap.read() failed during sweep — skipping frame.")
+                continue
+            u, score = _match_template(frame, template)
+            u_list.append(u)
+            score_list.append(score)
+    return u_list, score_list
+
+
+def _build_sweep_row(
+    cmd_deg: float,
+    direction: str,
+    u_median: float,
+    score_med: float,
+    qflag: int,
+    phi: float,
+    image_angle_deg: float,
+    config: PanTiltCalConfig,
+    t0: float,
+    frames_captured: int,
+) -> dict[str, Any]:
+    """Construct a single sweep measurement row dict.
+
+    All floating-point values are rounded to match the CSV precision used by
+    ``_write_csv`` / ``_load_csv``.
+
+    Parameters
+    ----------
+    cmd_deg : float
+        Commanded pan angle in degrees.
+    direction : str
+        Sweep direction label (``"forward"`` or ``"reverse"``).
+    u_median : float
+        Median horizontal centroid in pixels.
+    score_med : float
+        Median template-match score.
+    qflag : int
+        Quality flag from ``quality_flag()``.
+    phi : float
+        Offset-corrected pan angle in degrees.
+    image_angle_deg : float
+        Naive image-plane angle in degrees (arctan of pixel offset).
+    config : PanTiltCalConfig
+        Provides ``fx``, ``cx``, ``tilt_setpoint_deg``, and ``settle_time_s``.
+    t0 : float
+        ``time.monotonic()`` reference at sweep start.
+    frames_captured : int
+        Number of frames that were successfully read and averaged.
+
+    Returns
+    -------
+    dict[str, Any]
+        Row dict ready to be appended to the sweep rows list.
+    """
+    return {
+        "timestamp_s": round(time.monotonic() - t0, 4),
+        "commanded_pan_deg": round(cmd_deg, 4),
+        "tilt_setpoint_deg": round(config.tilt_setpoint_deg, 4),
+        "sweep_direction": direction,
+        "u_px": round(u_median, 3),
+        "fx_px": round(config.fx, 4),
+        "cx_px": round(config.cx, 4),
+        "image_angle_deg": round(image_angle_deg, 6),
+        "phi_deg": round(phi, 6),
+        "settle_time_s": round(config.settle_time_s, 4),
+        "frames_averaged": frames_captured,
+        "match_score": round(score_med, 6),
+        "quality_flag": qflag,
+    }
+
+
 def _run_sweep(
     cap: cv2.VideoCapture,
     ugv: UGVController,
@@ -1090,39 +1254,8 @@ def _run_sweep(
     rows: list[dict[str, Any]] = []
 
     if config.precondition_cycles > 0:
-        logger.info(
-            "Preconditioning: %d warmup cycle(s) over %d steps.",
-            config.precondition_cycles,
-            len(full_steps),
-        )
-        try:
-            for cycle in range(config.precondition_cycles):
-                logger.info(
-                    "Warmup cycle %d/%d — start.",
-                    cycle + 1,
-                    config.precondition_cycles,
-                )
-                for cmd_deg, _direction in full_steps:
-                    if cancel_event.is_set():
-                        logger.info("Sweep cancelled during preconditioning.")
-                        return
-                    ugv.set_pan_tilt(cmd_deg, config.tilt_setpoint_deg)
-                    time.sleep(config.settle_time_s)
-                    if cancel_event.is_set():
-                        logger.info("Sweep cancelled during preconditioning settle.")
-                        return
-                logger.info(
-                    "Warmup cycle %d/%d — complete.",
-                    cycle + 1,
-                    config.precondition_cycles,
-                )
-        except Exception as exc:
-            logger.exception("Preconditioning raised an exception: %s", exc)
-            state.transition_to(
-                SweepStatus(state=CalibrationState.FAILED, error_message=str(exc))
-            )
-            return
-        logger.info("Preconditioning complete. Starting measurement sweep.")
+        if not _run_precondition_cycles(full_steps, config, ugv, cancel_event):
+            return  # cancelled
 
     try:
         for i, (cmd_deg, direction) in enumerate(full_steps):
@@ -1137,20 +1270,7 @@ def _run_sweep(
                 logger.info("Sweep cancelled during settle.")
                 return
 
-            # Collect frames under the camera lock (blocks frame thread).
-            u_list: list[float] = []
-            score_list: list[float] = []
-            with cap_lock:
-                for _ in range(config.frames_to_average):
-                    ok, frame = cap.read()
-                    if not ok or frame is None:
-                        logger.warning(
-                            "cap.read() failed during sweep — skipping frame."
-                        )
-                        continue
-                    u, score = _match_template(frame, template)
-                    u_list.append(u)
-                    score_list.append(score)
+            u_list, score_list = _capture_frames(cap, template, config, cap_lock)
 
             if not u_list:
                 err = f"No frames captured at cmd={cmd_deg}°."
@@ -1173,21 +1293,18 @@ def _run_sweep(
             )
 
             rows.append(
-                {
-                    "timestamp_s": round(time.monotonic() - t0, 4),
-                    "commanded_pan_deg": round(cmd_deg, 4),
-                    "tilt_setpoint_deg": round(config.tilt_setpoint_deg, 4),
-                    "sweep_direction": direction,
-                    "u_px": round(u_median, 3),
-                    "fx_px": round(config.fx, 4),
-                    "cx_px": round(config.cx, 4),
-                    "image_angle_deg": round(image_angle_deg, 6),
-                    "phi_deg": round(phi, 6),
-                    "settle_time_s": round(config.settle_time_s, 4),
-                    "frames_averaged": len(u_list),
-                    "match_score": round(score_med, 6),
-                    "quality_flag": qflag,
-                }
+                _build_sweep_row(
+                    cmd_deg=cmd_deg,
+                    direction=direction,
+                    u_median=u_median,
+                    score_med=score_med,
+                    qflag=qflag,
+                    phi=phi,
+                    image_angle_deg=image_angle_deg,
+                    config=config,
+                    t0=t0,
+                    frames_captured=len(u_list),
+                )
             )
 
             state.update_sweep_progress(i + 1, total_steps)
@@ -1511,6 +1628,44 @@ def _make_handler(
 # ---------------------------------------------------------------------------
 
 
+def _get_status_text(
+    current_state: str,
+    status: dict[str, Any],
+) -> tuple[str, tuple[int, int, int], float] | None:
+    """Return the overlay text, BGR colour, and font scale for the given calibration state.
+
+    Returns ``None`` for states that require no status overlay (e.g. IDLE or
+    any unrecognised state value).
+
+    Parameters
+    ----------
+    current_state : str
+        The ``CalibrationState.value`` string for the current state.
+    status : dict[str, Any]
+        Full status dict from ``CalibrationStateContainer.get_status()``;
+        used to extract progress fields for the SWEEPING state.
+
+    Returns
+    -------
+    tuple[str, tuple[int, int, int], float] or None
+        ``(text, bgr_colour, font_scale)`` if an overlay should be drawn,
+        ``None`` otherwise.
+    """
+    if current_state == CalibrationState.WAITING_ZERO.value:
+        return "Align target to green line, then GET /confirm", (0, 255, 0), 0.8
+    if current_state == CalibrationState.SWEEPING.value:
+        step = status["current_step"]
+        total = status["total_steps"]
+        pct = status["progress_pct"]
+        return f"Sweeping: {step}/{total}  ({pct:.0f}%)", (0, 200, 255), 0.8
+    if current_state == CalibrationState.COMPLETE.value:
+        return "COMPLETE — GET /save to persist results", (0, 255, 128), 0.8
+    if current_state == CalibrationState.FAILED.value:
+        err = status.get("error_message") or "FAILED"
+        return f"FAILED: {err[:60]}", (0, 0, 255), 0.7
+    return None
+
+
 def _run_frame(
     cap: cv2.VideoCapture,
     cx: float,
@@ -1544,53 +1699,16 @@ def _run_frame(
         cv2.line(annotated, (cx_col, 0), (cx_col, h - 1), (0, 255, 0), 2)
 
         status = state.get_status()
-        current_state = status["state"]
-
-        if current_state == CalibrationState.WAITING_ZERO.value:
+        overlay = _get_status_text(status["state"], status)
+        if overlay is not None:
+            text, color, scale = overlay
             cv2.putText(
                 annotated,
-                "Align target to green line, then GET /confirm",
+                text,
                 (10, 30),
                 cv2.FONT_HERSHEY_SIMPLEX,
-                0.8,
-                (0, 255, 0),
-                2,
-                cv2.LINE_AA,
-            )
-        elif current_state == CalibrationState.SWEEPING.value:
-            step = status["current_step"]
-            total = status["total_steps"]
-            pct = status["progress_pct"]
-            cv2.putText(
-                annotated,
-                f"Sweeping: {step}/{total}  ({pct:.0f}%)",
-                (10, 30),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.8,
-                (0, 200, 255),
-                2,
-                cv2.LINE_AA,
-            )
-        elif current_state == CalibrationState.COMPLETE.value:
-            cv2.putText(
-                annotated,
-                "COMPLETE — GET /save to persist results",
-                (10, 30),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.8,
-                (0, 255, 128),
-                2,
-                cv2.LINE_AA,
-            )
-        elif current_state == CalibrationState.FAILED.value:
-            err = status.get("error_message") or "FAILED"
-            cv2.putText(
-                annotated,
-                f"FAILED: {err[:60]}",
-                (10, 30),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.7,
-                (0, 0, 255),
+                scale,
+                color,
                 2,
                 cv2.LINE_AA,
             )
@@ -1742,6 +1860,62 @@ def _build_arg_parser() -> argparse.ArgumentParser:
 # ---------------------------------------------------------------------------
 
 
+def _run_replay_mode(args: argparse.Namespace, sensor_config_path: Path) -> None:
+    """Load calibration config and run offline replay analysis.
+
+    Validates the required geometry fields from ``calibration_config.yaml``,
+    then delegates to ``_run_replay``.  Exits the process on any configuration
+    error so that ``main`` stays free of inline config parsing.
+
+    Parameters
+    ----------
+    args : argparse.Namespace
+        Parsed CLI arguments; uses ``args.cal_config``, ``args.noise_floor``,
+        ``args.replay``, and ``args.save``.
+    sensor_config_path : Path
+        Resolved path to ``sensor_config.yaml``, already verified to exist.
+    """
+    cal_config_path: Path = args.cal_config.resolve()
+    if not cal_config_path.exists():
+        logger.error(f"Calibration config not found: {cal_config_path}")
+        sys.exit(1)
+    with cal_config_path.open() as f:
+        cal_cfg_replay: dict[str, Any] = yaml.safe_load(f) or {}
+    pt_cfg_replay: dict[str, Any] = cal_cfg_replay.get("pan_tilt_servo", {})
+    noise_floor: float = (
+        float(args.noise_floor)
+        if args.noise_floor is not None
+        else float(pt_cfg_replay.get("noise_floor_deg", 0.5))
+    )
+    _fwd_replay = pt_cfg_replay.get("camera_forward_offset_m")
+    if _fwd_replay is None:
+        logger.error(
+            "pan_tilt_servo.camera_forward_offset_m is missing from "
+            f"{cal_config_path}. Add it before running replay."
+        )
+        sys.exit(1)
+    _dist_replay = pt_cfg_replay.get("calibration_target_distance_m")
+    if _dist_replay is None:
+        logger.error(
+            "pan_tilt_servo.calibration_target_distance_m is missing from "
+            f"{cal_config_path}. Add it before running replay."
+        )
+        sys.exit(1)
+    try:
+        _validate_geometry(float(_fwd_replay), float(_dist_replay))
+    except ValueError as exc:
+        logger.error(str(exc))
+        sys.exit(1)
+    _run_replay(
+        csv_path=args.replay.resolve(),
+        sensor_config_path=sensor_config_path,
+        noise_floor_deg=noise_floor,
+        camera_forward_offset_m=float(_fwd_replay),
+        calibration_target_distance_m=float(_dist_replay),
+        save=args.save,
+    )
+
+
 def main() -> None:
     args = _build_arg_parser().parse_args()
 
@@ -1754,45 +1928,7 @@ def main() -> None:
     # Replay (offline) mode — no hardware required
     # ------------------------------------------------------------------
     if args.replay is not None:
-        cal_config_path: Path = args.cal_config.resolve()
-        if not cal_config_path.exists():
-            logger.error(f"Calibration config not found: {cal_config_path}")
-            sys.exit(1)
-        with cal_config_path.open() as f:
-            cal_cfg_replay: dict[str, Any] = yaml.safe_load(f) or {}
-        pt_cfg_replay: dict[str, Any] = cal_cfg_replay.get("pan_tilt_servo", {})
-        noise_floor: float = (
-            float(args.noise_floor)
-            if args.noise_floor is not None
-            else float(pt_cfg_replay.get("noise_floor_deg", 0.5))
-        )
-        _fwd_replay = pt_cfg_replay.get("camera_forward_offset_m")
-        if _fwd_replay is None:
-            logger.error(
-                "pan_tilt_servo.camera_forward_offset_m is missing from "
-                f"{cal_config_path}. Add it before running replay."
-            )
-            sys.exit(1)
-        _dist_replay = pt_cfg_replay.get("calibration_target_distance_m")
-        if _dist_replay is None:
-            logger.error(
-                "pan_tilt_servo.calibration_target_distance_m is missing from "
-                f"{cal_config_path}. Add it before running replay."
-            )
-            sys.exit(1)
-        try:
-            _validate_geometry(float(_fwd_replay), float(_dist_replay))
-        except ValueError as exc:
-            logger.error(str(exc))
-            sys.exit(1)
-        _run_replay(
-            csv_path=args.replay.resolve(),
-            sensor_config_path=sensor_config_path,
-            noise_floor_deg=noise_floor,
-            camera_forward_offset_m=float(_fwd_replay),
-            calibration_target_distance_m=float(_dist_replay),
-            save=args.save,
-        )
+        _run_replay_mode(args, sensor_config_path)
         return
 
     # ------------------------------------------------------------------
