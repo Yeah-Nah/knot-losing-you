@@ -531,13 +531,18 @@ def _make_minimal_sensor_cfg() -> dict:
     }
 
 
-def _make_minimal_cal_cfg(precondition_cycles: int | None = None) -> dict:
+def _make_minimal_cal_cfg(
+    precondition_cycles: int | None = None,
+    precondition_settle_time_s: float | None = None,
+) -> dict:
     pt: dict = {
         "camera_forward_offset_m": 0.0665,
         "calibration_target_distance_m": 2.7,
     }
     if precondition_cycles is not None:
         pt["precondition_cycles"] = precondition_cycles
+    if precondition_settle_time_s is not None:
+        pt["precondition_settle_time_s"] = precondition_settle_time_s
     return {"pan_tilt_servo": pt}
 
 
@@ -582,7 +587,11 @@ def test_load_config_precondition_negative_raises(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _make_sweep_config(precondition_cycles: int = 0) -> PanTiltCalConfig:
+def _make_sweep_config(
+    precondition_cycles: int = 0,
+    settle_time_s: float = 0.0,
+    precondition_settle_time_s: float = 0.0,
+) -> PanTiltCalConfig:
     return PanTiltCalConfig(
         cx=640.0,
         cy=360.0,
@@ -597,7 +606,7 @@ def _make_sweep_config(precondition_cycles: int = 0) -> PanTiltCalConfig:
         sweep_min_deg=-10.0,
         sweep_max_deg=10.0,
         sweep_step_deg=10.0,
-        settle_time_s=0.0,
+        settle_time_s=settle_time_s,
         frames_to_average=1,
         tilt_setpoint_deg=0.0,
         template_half_width_px=30,
@@ -609,6 +618,7 @@ def _make_sweep_config(precondition_cycles: int = 0) -> PanTiltCalConfig:
         camera_forward_offset_m=0.0,
         calibration_target_distance_m=2.0,
         precondition_cycles=precondition_cycles,
+        precondition_settle_time_s=precondition_settle_time_s,
     )
 
 
@@ -668,3 +678,122 @@ def test_run_sweep_one_precondition_cycle(mock_match) -> None:  # noqa: ANN001
     rows = state.get_sweep_rows()
     assert len(rows) == 6  # only measurement rows, not warmup
     assert ugv_mock.set_pan_tilt.call_count == 12  # 6 warmup + 6 measurement
+
+
+# ---------------------------------------------------------------------------
+# precondition_settle_time_s — _load_config
+# ---------------------------------------------------------------------------
+
+
+def test_load_config_precondition_settle_time_default(tmp_path: Path) -> None:
+    """Missing precondition_settle_time_s defaults to settle_time_s."""
+    cfg = _load_config(
+        _make_minimal_sensor_cfg(),
+        _make_minimal_cal_cfg(),
+        _make_args(tmp_path),
+    )
+    assert cfg.precondition_settle_time_s == pytest.approx(cfg.settle_time_s)
+
+
+def test_load_config_precondition_settle_time_explicit(tmp_path: Path) -> None:
+    """Explicit precondition_settle_time_s is loaded correctly."""
+    cfg = _load_config(
+        _make_minimal_sensor_cfg(),
+        _make_minimal_cal_cfg(precondition_settle_time_s=0.3),
+        _make_args(tmp_path),
+    )
+    assert cfg.precondition_settle_time_s == pytest.approx(0.3)
+
+
+def test_load_config_precondition_settle_time_negative_raises(tmp_path: Path) -> None:
+    """Negative precondition_settle_time_s raises ValueError."""
+    with pytest.raises(ValueError, match="precondition_settle_time_s"):
+        _load_config(
+            _make_minimal_sensor_cfg(),
+            _make_minimal_cal_cfg(precondition_settle_time_s=-0.1),
+            _make_args(tmp_path),
+        )
+
+
+# ---------------------------------------------------------------------------
+# precondition_settle_time_s — _run_sweep settle time routing
+# ---------------------------------------------------------------------------
+
+
+@patch(
+    "tools.calibration.calibrate_pantilt_servo._match_template",
+    return_value=(640.0, 0.95),
+)
+@patch("tools.calibration.calibrate_pantilt_servo.time.sleep")
+def test_run_sweep_precondition_uses_precondition_settle_time(
+    mock_sleep,  # noqa: ANN001
+    mock_match,  # noqa: ANN001
+) -> None:
+    """Warmup steps use precondition_settle_time_s; measurement steps use settle_time_s."""
+    sentinel_warmup = 0.123
+    sentinel_measure = 0.456
+    config = _make_sweep_config(
+        precondition_cycles=1,
+        settle_time_s=sentinel_measure,
+        precondition_settle_time_s=sentinel_warmup,
+    )
+    state = CalibrationStateContainer()
+    state.try_start_sweep()
+    ugv_mock = MagicMock()
+    cap_mock = MagicMock()
+    cap_mock.read.return_value = (True, np.zeros((720, 1280, 3), dtype=np.uint8))
+
+    _run_sweep(
+        cap_mock,
+        ugv_mock,
+        config,
+        np.zeros((60, 60, 3), dtype=np.uint8),
+        state,
+        threading.Lock(),
+        threading.Event(),
+        time.monotonic(),
+    )
+
+    sleep_args = [call.args[0] for call in mock_sleep.call_args_list]
+    # 6 warmup sleeps must all equal sentinel_warmup
+    warmup_calls = sleep_args[:6]
+    measure_calls = sleep_args[6:]
+    assert all(v == pytest.approx(sentinel_warmup) for v in warmup_calls), warmup_calls
+    assert all(v == pytest.approx(sentinel_measure) for v in measure_calls), measure_calls
+
+
+@patch(
+    "tools.calibration.calibrate_pantilt_servo._match_template",
+    return_value=(640.0, 0.95),
+)
+@patch("tools.calibration.calibrate_pantilt_servo.time.sleep")
+def test_run_sweep_measurement_unaffected_by_precondition_settle(
+    mock_sleep,  # noqa: ANN001
+    mock_match,  # noqa: ANN001
+) -> None:
+    """precondition_cycles=0 → all sleep calls use settle_time_s (no warmup)."""
+    sentinel_measure = 0.789
+    config = _make_sweep_config(
+        precondition_cycles=0,
+        settle_time_s=sentinel_measure,
+        precondition_settle_time_s=0.001,  # would be wrong if used for measurement
+    )
+    state = CalibrationStateContainer()
+    state.try_start_sweep()
+    ugv_mock = MagicMock()
+    cap_mock = MagicMock()
+    cap_mock.read.return_value = (True, np.zeros((720, 1280, 3), dtype=np.uint8))
+
+    _run_sweep(
+        cap_mock,
+        ugv_mock,
+        config,
+        np.zeros((60, 60, 3), dtype=np.uint8),
+        state,
+        threading.Lock(),
+        threading.Event(),
+        time.monotonic(),
+    )
+
+    sleep_args = [call.args[0] for call in mock_sleep.call_args_list]
+    assert all(v == pytest.approx(sentinel_measure) for v in sleep_args), sleep_args

@@ -222,6 +222,7 @@ class PanTiltCalConfig:
     camera_forward_offset_m: float
     calibration_target_distance_m: float
     precondition_cycles: int
+    precondition_settle_time_s: float  # dwell time used only during warmup passes
 
 
 # ---------------------------------------------------------------------------
@@ -853,6 +854,13 @@ def _load_config(
     if precondition_cycles_raw < 0:
         raise ValueError("pan_tilt_servo.precondition_cycles must be >= 0.")
 
+    # Falls back to settle_time so existing configs behave identically.
+    precondition_settle_time = float(
+        pt_cfg.get("precondition_settle_time_s", settle_time)
+    )
+    if precondition_settle_time < 0:
+        raise ValueError("pan_tilt_servo.precondition_settle_time_s must be non-negative.")
+
     sign_override_raw = pt_cfg.get("sign_override")
     sign_override: float | None = (
         None if sign_override_raw is None else float(sign_override_raw)
@@ -924,6 +932,7 @@ def _load_config(
         camera_forward_offset_m=camera_fwd_offset,
         calibration_target_distance_m=cal_target_dist,
         precondition_cycles=precondition_cycles_raw,
+        precondition_settle_time_s=precondition_settle_time,
     )
 
 
@@ -1065,7 +1074,8 @@ def _run_precondition_cycles(
         Ordered list of ``(cmd_deg, direction)`` pairs covering the full sweep
         range in both directions.
     config : PanTiltCalConfig
-        Calibration configuration (used for tilt setpoint and settle time).
+        Calibration configuration (used for tilt setpoint and
+        ``precondition_settle_time_s`` dwell time).
     ugv : UGVController
         Connected UGV hardware interface.
     cancel_event : threading.Event
@@ -1092,7 +1102,7 @@ def _run_precondition_cycles(
                 logger.info("Sweep cancelled during preconditioning.")
                 return False
             ugv.set_pan_tilt(cmd_deg, config.tilt_setpoint_deg)
-            time.sleep(config.settle_time_s)
+            time.sleep(config.precondition_settle_time_s)
             if cancel_event.is_set():
                 logger.info("Sweep cancelled during preconditioning settle.")
                 return False
