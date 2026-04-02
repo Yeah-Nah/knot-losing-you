@@ -7,18 +7,18 @@ to the result.
 
 Angle measurement model
 -----------------------
-All pan-angle measurements use the **offset-corrected forward-displacement model**
-(there is no naive/pinhole fallback).  The correction accounts for the camera lens
-being displaced forward of the pan-tilt rotation centre by ``camera_forward_offset_m``
-metres::
-
+All pan-angle measurements use the **offset-corrected forward-displacement model**.
+The correction accounts for the camera lens being displaced forward of the
+pan-tilt rotation centre by ``camera_forward_offset_m`` metres::
     phi_corrected = phi_cam − arcsin( d/D · sin(phi_cam) )
-
 where ``phi_cam`` is the naive arctan angle from the image centroid, ``d`` is
 ``camera_forward_offset_m``, and ``D`` is ``calibration_target_distance_m``.
 Both geometry fields are **required** in ``calibration_config.yaml`` under
-``pan_tilt_servo`` before running calibration or replay.  The corrected angle is
-what is stored in ``phi_deg`` in the CSV and fitted to derive the servo curve.
+``pan_tilt_servo`` before running calibration or replay.  Setting
+``camera_forward_offset_m`` to ``0.0`` is allowed and makes the correction
+reduce to the identity, which is equivalent to the naive/pinhole model.  The
+corrected angle is what is stored in ``phi_deg`` in the CSV and fitted to
+derive the servo curve.
 
 Must be run on the Raspberry Pi with the UGV rover and Waveshare RGB camera
 connected. Intrinsic calibration (``calibrate_waveshare_camera.py``) must have
@@ -710,7 +710,17 @@ def analyse_sweep(
     linear = fit_linear(all_cmds, all_phis)
     pw_fwd = fit_piecewise_linear(fwd_cmds, fwd_phis)
     pw_rev = fit_piecewise_linear(rev_cmds, rev_phis)
-    pw_combined = fit_piecewise_linear(all_cmds, all_phis)
+
+    # For the combined piecewise fit, deduplicate command values by averaging
+    # the measured angles across forward and reverse sweeps. This yields a
+    # single-valued cmd→phi mapping suitable for interpolation.
+    cmd_to_phis: dict[float, list[float]] = {}
+    for cmd, phi in zip(all_cmds, all_phis):
+        cmd_to_phis.setdefault(cmd, []).append(phi)
+
+    combined_cmds = sorted(cmd_to_phis)
+    combined_phis = [float(np.median(cmd_to_phis[cmd])) for cmd in combined_cmds]
+    pw_combined = fit_piecewise_linear(combined_cmds, combined_phis)
     hysteresis = compute_hysteresis(fwd_cmds, fwd_phis, rev_cmds, rev_phis)
 
     phi_min = float(min(all_phis))
@@ -1776,6 +1786,19 @@ def _run_replay(
     print("\n=== Pan-Tilt Servo Curve Calibration — Replay Summary ===")
     print(f"Total samples   : {model.get('n_total_samples')}")
     print(f"Good samples    : {model.get('n_good_samples')}")
+
+    has_error = bool(model.get("error"))
+    has_no_good = int(model.get("n_good_samples", 0) or 0) == 0
+    if has_error or has_no_good:
+        print("Analysis failed : no good-quality samples (quality_flag==0).")
+        print("=" * 54)
+        if save:
+            logger.error(
+                "Replay analysis failed; refusing to save invalid calibration results."
+            )
+            sys.exit(1)
+        return
+
     print(f"Dead-band pos   : {model.get('dead_band_pos_deg')}")
     print(f"Dead-band neg   : {model.get('dead_band_neg_deg')}")
     print(
