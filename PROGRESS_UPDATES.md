@@ -23,6 +23,30 @@ Short description of what was done and why.
 
 # Phase 2: Sensor Calibration
 
+## Entry 5: Pan-Tilt Servo Curve Calibration Complete
+*Date: April 1, 2026*
+
+Built and hardened the pan-tilt servo curve calibration workflow so pan commands can now be converted into real physical angles using measured data, not assumptions. This closes the actuator-modeling gap needed for reliable angle-based tracking in Phase 3.
+
+**What was done:**
+- Built `calibrate_pantilt_servo.py` as a full headless HTTP calibration workflow (stream, confirm, status, abort, save, reset) with sweep execution and state-managed progress reporting
+- Implemented offset-corrected angle measurement using camera intrinsics plus forward-offset geometry, so measured pan response accounts for the camera lens being physically forward of the pan axis
+- Added config-driven sweep and acquisition controls in `calibration_config.yaml` (sweep bounds, settle timing, averaging, noise floor, geometry terms), including `precondition_cycles` and `precondition_settle_time_s` to warm the mechanism before recording
+- Added offline replay/refit support from saved CSV runs, plus expanded validation around sweep data quality, monotonic model generation, and save-time schema consistency
+- Landed a large test expansion for the servo calibration path and refactored calibration/test layout into dedicated module folders for cleaner maintenance
+
+**Key Achievements:**
+- Servo calibration now writes a full pan response model to `sensor_config.yaml`, including dead-band (`+5.0` / `-5.0` deg), hysteresis (`2.4364` deg mean), linear fit metrics (MAE `1.525` deg, max abs error `2.9681` deg), and piecewise forward/reverse curves
+- Verified usable measured pan range captured from approximately `-36.43` deg to `+38.10` deg across the commanded `-45` to `+45` sweep
+- Warmup/preconditioning behavior was parameterized and optimized, reducing time-to-calibration while preserving measurement-phase settle timing
+- Phase 2 pan-tilt actuator calibration step complete, with runtime-ready model artifacts stored in config for downstream control work
+
+The super high tech set up for the pan tilt calibration. Aka a broom taped to my balcony to align to the cameras optical axis.
+
+<img src="other/images/Screenshot 2026-04-01 220152.png" alt="Testing Camera Connection" width="500">
+
+---
+
 ## Entry 4: LiDAR–Camera Angular Offset Calibration Complete
 *Date: March 25, 2026*
 

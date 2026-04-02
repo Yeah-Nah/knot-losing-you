@@ -79,6 +79,51 @@ ugv-calibrate-camera --images calibration/images --square-mm 28
 
 On success, the calibration results (`camera_matrix`, `dist_coeffs`, `resolution`, `rms_reprojection_error`) are written into `configs/sensor_config.yaml` under the `waveshare_rgb` key.
 
+### Step 3 — Pan-tilt servo curve calibration (on the Pi)
+
+Measures the command-to-angle mapping of the pan axis so Phase 3 control loops can
+work in physical degrees rather than raw command units.
+
+Before running, check `configs/calibration_config.yaml` section `pan_tilt_servo` and
+confirm the sweep range and timing values suit your setup. Set `precondition_cycles`
+to the number of full forward+reverse passes to run before measurements are recorded
+(default `1`) — set to `0` to skip warmup entirely.
+
+Start the calibration server:
+
+```bash
+ugv-calibrate-pantilt
+```
+
+This zeros the pan-tilt and starts an HTTP server on port 8080. From your laptop browser:
+
+- `http://<pi-ip>:8080/stream` — live MJPEG feed with a green guide line at `cx`
+
+Place a distinct stationary target (e.g. coloured tape on a flat wall) roughly 1–2 m ahead
+of the rover. Physically rotate the rover until the target is bisected by the green line.
+
+Then interact via HTTP (e.g. `curl http://<pi-ip>:8080/<endpoint>`):
+
+- `http://<pi-ip>:8080/confirm` — start the commanded sweep (forward then reverse)
+- `http://<pi-ip>:8080/status` — JSON progress: `{state, progress_pct, current_step, total_steps}`
+- `http://<pi-ip>:8080/abort` — cancel without saving
+- `http://<pi-ip>:8080/save` — write results to `configs/sensor_config.yaml`
+- `http://<pi-ip>:8080/reset` — reset to WAITING_ZERO from FAILED or COMPLETE
+
+The tool sweeps pan commands from `sweep_min_deg` to `sweep_max_deg` and back, collecting
+`frames_to_average` settled frames at each step. Press `Ctrl-C` to stop.
+
+On success, `configs/sensor_config.yaml` gains a `pan_tilt_servo` section with the
+piecewise-linear model, linear fit, dead-band, hysteresis, and fit metrics. Raw samples
+are saved to `calibration/pantilt_servo/<timestamp>.csv`.
+
+**Offline refit from an existing CSV** (no hardware required):
+
+```bash
+ugv-calibrate-pantilt --replay calibration/pantilt_servo/<timestamp>.csv
+ugv-calibrate-pantilt --replay calibration/pantilt_servo/<timestamp>.csv --save
+```
+
 ---
 
 ## Running the Follower

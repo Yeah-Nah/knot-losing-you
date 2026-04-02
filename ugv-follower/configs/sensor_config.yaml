@@ -25,12 +25,201 @@ waveshare_rgb:
   resolution: [1280, 720]   # [width, height] at calibration time
   rms_reprojection_error: 0.7737  # RMS error in pixels — set after calibration
 
-  # Images used   : 59
-  # Resolution    : 1280×720 px
-  # RMS error     : 0.7737 px
-  # fx, fy        : 542.44, 544.64
-  # cx, cy        : 672.07, 379.80
-  # dist_coeffs   : [0.04838097993620094, -0.041844537572354824, 0.012958617562528365, -0.0031300600380237465]  # [k1, k2, k3, k4]
+# Pan-tilt servo curve calibration — command-to-angle mapping
+# Populated by calibrate_pantilt_servo.py (ugv-calibrate-pantilt) after running
+# the servo curve calibration workflow.
+# Key fields written after calibration:
+#   angle_measurement_model      — always "offset_corrected_forward_displacement"
+#   camera_forward_offset_m      — geometry param from calibration_config.yaml
+#   calibration_target_distance_m — geometry param from calibration_config.yaml
+pan_tilt_servo:
+  calibration_method: servo_curve_sweep
+  angle_measurement_model: offset_corrected_forward_displacement
+  camera_forward_offset_m: 0.0665
+  calibration_target_distance_m: 2.71
+  tilt_setpoint_deg: 0.0
+  sweep_min_deg: -45.0
+  sweep_max_deg: 45.0
+  dead_band_pos_deg: 5.0
+  dead_band_neg_deg: -5.0
+  cmd_min: -45.0
+  cmd_max: 45.0
+  phi_min_deg: -36.4284
+  phi_max_deg: 38.1033
+  hysteresis_mean_deg: 2.4364
+  linear_fit:
+    slope: 0.887922
+    intercept: 0.98013
+    mae_deg: 1.525
+    max_abs_error_deg: 2.9681
+  piecewise_linear:
+    forward:
+      command_samples:
+      - -45.0
+      - -40.0
+      - -35.0
+      - -30.0
+      - -25.0
+      - -20.0
+      - -15.0
+      - -10.0
+      - -5.0
+      - 0.0
+      - 5.0
+      - 10.0
+      - 15.0
+      - 20.0
+      - 25.0
+      - 30.0
+      - 35.0
+      - 40.0
+      - 45.0
+      angle_samples:
+      - -36.3628
+      - -35.4318
+      - -31.9177
+      - -27.9415
+      - -23.8935
+      - -19.7464
+      - -15.172
+      - -10.0837
+      - -5.1302
+      - -0.4049
+      - 4.2237
+      - 9.3979
+      - 14.4169
+      - 19.029
+      - 23.2175
+      - 27.1502
+      - 31.1891
+      - 34.8991
+      - 38.1033
+    reverse:
+      command_samples:
+      - -45.0
+      - -40.0
+      - -35.0
+      - -30.0
+      - -25.0
+      - -20.0
+      - -15.0
+      - -10.0
+      - -5.0
+      - 0.0
+      - 5.0
+      - 10.0
+      - 15.0
+      - 20.0
+      - 25.0
+      - 30.0
+      - 35.0
+      - 40.0
+      - 45.0
+      angle_samples:
+      - -36.4284
+      - -33.0748
+      - -29.741
+      - -25.5806
+      - -21.1861
+      - -16.4085
+      - -11.8684
+      - -7.3688
+      - -2.3612
+      - 2.8896
+      - 7.7877
+      - 12.4719
+      - 16.8931
+      - 21.4653
+      - 26.0065
+      - 29.9051
+      - 33.3692
+      - 36.8288
+      - 38.1033
+    combined:
+      command_samples:
+      - -45.0
+      - -45.0
+      - -40.0
+      - -40.0
+      - -35.0
+      - -35.0
+      - -30.0
+      - -30.0
+      - -25.0
+      - -25.0
+      - -20.0
+      - -20.0
+      - -15.0
+      - -15.0
+      - -10.0
+      - -10.0
+      - -5.0
+      - -5.0
+      - 0.0
+      - 0.0
+      - 5.0
+      - 5.0
+      - 10.0
+      - 10.0
+      - 15.0
+      - 15.0
+      - 20.0
+      - 20.0
+      - 25.0
+      - 25.0
+      - 30.0
+      - 30.0
+      - 35.0
+      - 35.0
+      - 40.0
+      - 40.0
+      - 45.0
+      - 45.0
+      angle_samples:
+      - -36.3628
+      - -36.4284
+      - -35.4318
+      - -33.0748
+      - -31.9177
+      - -29.741
+      - -27.9415
+      - -25.5806
+      - -23.8935
+      - -21.1861
+      - -19.7464
+      - -16.4085
+      - -15.172
+      - -11.8684
+      - -10.0837
+      - -7.3688
+      - -5.1302
+      - -2.3612
+      - -0.4049
+      - 2.8896
+      - 4.2237
+      - 7.7877
+      - 9.3979
+      - 12.4719
+      - 14.4169
+      - 16.8931
+      - 19.029
+      - 21.4653
+      - 23.2175
+      - 26.0065
+      - 27.1502
+      - 29.9051
+      - 31.1891
+      - 33.3692
+      - 34.8991
+      - 36.8288
+      - 38.1033
+      - 38.1033
+    mae_deg: 2.4364
+    max_abs_error_deg: 3.564
+  n_good_samples: 38
+  n_total_samples: 38
+  calibrated_at: '2026-04-01T07:47:43'
+  raw_csv: calibration/pantilt_servo/20260401T074410.csv
 
 # Extrinsic calibration — LiDAR ↔ pan-tilt angular offset
 # Populated by calibrate_angular_offset.py after running the calibration workflow.

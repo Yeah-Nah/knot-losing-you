@@ -245,7 +245,11 @@ Place a stationary target in front of the pan-tilt unit. If the target is fixed 
 then changing the pan angle causes the target to shift horizontally in the image. That shift can
 be converted into a viewing angle using the intrinsic parameters.
 
-This turns the camera into an instrument for measuring pan angle.
+This turns the camera into an instrument for measuring pan angle. In other words, we use the camera
+to estimate the pan angle. The intrinsic calibration performed earlier tells us, for a point that
+appears at a given pixel, where that point lies in the real world relative to the camera, accounting
+for lens distortion. With this calibration, we can measure changes in the apparent angle of a static
+target and thereby infer the pan angle changes produced by different commands sent to the servo.
 
 ### The Pinhole Relation
 

@@ -8,35 +8,52 @@ Target camera: **Waveshare RGB (pan-tilt module)**.
 
 ## 1. Why Intrinsic Calibration
 
-### The Downstream Computations That Require It
+### What Intrinsic Calibration Solves
 
-Every geometric computation in Phase 3 and beyond that touches the camera image depends on one
-thing being true: you can reliably convert between pixel coordinates and physical angles in the
-real world. Without calibration you cannot do this — you only have raw pixel counts with no
-knowledge of what they represent geometrically.
+The fundamental problem is this: **a camera lens is not a perfect optical instrument**. The
+Waveshare camera uses a wide-angle fisheye lens that distorts the image — straight lines in the
+real world appear curved in the photo. More importantly, the relationship between a pixel's
+position on the sensor and the actual direction that ray came from is **unknown without calibration**.
 
-Two specific Phase 3 operations collapse entirely without it:
+Intrinsic calibration is the process of measuring and modelling these optical imperfections.
+Its goal is to answer the question: "Given a pixel location $(u, v)$ in the image, what direction
+in 3D space does that pixel correspond to?" The answer requires two pieces of information:
 
-**Angular heading error.** The follower steers by computing how far off-centre the target
-bounding box is in the image. If you know the focal length $f_x$ (in pixels), an off-centre
-pixel offset $\Delta u$ translates directly to an angle:
+1. **The focal lengths and principal point** ($K$): how the optical axis and zoom level map the
+   world onto the sensor
+2. **The lens distortion coefficients** ($D$): how the real lens deviates from the ideal pinhole
+   model, distorting what should-be-straight lines into curves
+
+Without these measurements, every pixel is just a number with no geometric meaning. You cannot
+reliably determine where an object is in the real world relative to the camera.
+
+### How It Enables Downstream Computation
+
+Once calibration is complete, you can trace rays from pixels back into the world. This underpins
+every downstream phase:
+
+**Phase 3 steering.** The follower tracks a target in the image and must steer toward it. It
+computes how far off-centre the target bounding box is in pixels, then converts that pixel offset
+to a physical angle using the focal length $f_x$:
 
 $$\alpha = \arctan\!\left(\frac{\Delta u}{f_x}\right)$$
 
-Without calibration, $f_x$ is unknown. You cannot turn a pixel offset into degrees.
+Without calibration, $f_x$ is unknown and the pixel offset is meaningless — you cannot steer.
 
-**Coordinate undistortion.** The Waveshare camera has a wide-angle fisheye lens. A straight
-line in the real world appears as a curve in the raw image. Every pixel coordinate fed to a
-geometric algorithm must first be *undistorted* — mapped back to where it would appear if the
-lens were a perfect pinhole. That mapping requires the distortion coefficients $D$, which can
-only come from calibration.
+**Phase 3 geometric computations.** The Waveshare's fisheye lens distorts the image. Before any
+geometric algorithm can use pixel coordinates (e.g. to detect where a target is), those coordinates
+must first be *undistorted* — mapped back to where they would appear in an ideal pinhole camera.
+The distortion coefficients $D$ are the only way to compute this correction.
 
-**Extrinsic calibration.** The next Phase 2 step — measuring the LiDAR ↔ camera transform — uses
-the intrinsic matrix $K$ inside its solver. An uncalibrated $K$ propagates its error into every
-LiDAR-to-image projection for the rest of the project.
+**Extrinsic calibration (Phase 2).** The next step measures how the LiDAR and camera are oriented
+relative to each other. This solver needs the intrinsic matrix $K$ to project 3D points onto image
+pixels correctly. An incorrect $K$ directly corrupts the computed transform.
 
-Intrinsic calibration is therefore the foundational measurement on which everything else is built.
-The output is two objects stored in `sensor_config.yaml`:
+**Phase 4 sensor fusion.** Any algorithm that needs to project LiDAR points onto camera images or
+vice versa relies entirely on having an accurate, calibrated $K$ and $D$ from this step.
+
+Intrinsic calibration is therefore the foundational measurement on which everything downstream is
+built. The output is two objects stored in `sensor_config.yaml`:
 
 - $K$ — a $3 \times 3$ matrix encoding the focal lengths and principal point
 - $D$ — a vector of four distortion coefficients specific to the fisheye lens model

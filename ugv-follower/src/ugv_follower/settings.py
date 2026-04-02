@@ -170,3 +170,29 @@ class Settings:
     def lidar_baud_rate(self) -> int:
         """Baud rate for the LiDAR serial connection."""
         return int(self._lidar_cfg.get("baud_rate", 230400))
+
+    # ------------------------------------------------------------------
+    # Pan-tilt servo calibration properties
+    # ------------------------------------------------------------------
+
+    @property
+    def _pan_tilt_servo_cfg(self) -> dict[str, Any]:
+        return dict(self.sensor_config.get("pan_tilt_servo") or {})
+
+    @property
+    def pan_tilt_servo_angle_model(self) -> str | None:
+        """Angle measurement model recorded during calibration, or None if uncalibrated."""
+        v = self._pan_tilt_servo_cfg.get("angle_measurement_model")
+        return str(v) if v is not None else None
+
+    @property
+    def pan_tilt_servo_camera_forward_offset_m(self) -> float | None:
+        """Forward offset of camera from pan-tilt rotation centre (metres), or None."""
+        v = self._pan_tilt_servo_cfg.get("camera_forward_offset_m")
+        return float(v) if v is not None else None
+
+    @property
+    def pan_tilt_servo_calibration_target_distance_m(self) -> float | None:
+        """Distance from pan-tilt rotation centre to calibration target (metres), or None."""
+        v = self._pan_tilt_servo_cfg.get("calibration_target_distance_m")
+        return float(v) if v is not None else None
