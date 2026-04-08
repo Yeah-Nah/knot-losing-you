@@ -1,0 +1,167 @@
+"""Fisheye camera geometry utilities for the Waveshare RGB camera.
+
+Provides pixel-to-bearing conversion using OpenCV's fisheye model and the
+intrinsic calibration stored in ``sensor_config.yaml``.
+
+These pure functions are used by:
+
+- ``calibrate_ugv_drive.py``  (Phase 2): rover rotation angle measurement
+- Future Phase 3 runtime: bounding-box pixel centroid → angular heading error
+
+All functions are pure — no side effects, no I/O.
+"""
+
+from __future__ import annotations
+
+import math
+from typing import Any
+
+import cv2
+import numpy as np
+
+
+def load_fisheye_intrinsics(
+    sensor_cfg: dict[str, Any],
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return (K, D) from the ``waveshare_rgb`` block of sensor_config.
+
+    Parameters
+    ----------
+    sensor_cfg : dict[str, Any]
+        Parsed contents of ``sensor_config.yaml``.
+
+    Returns
+    -------
+    K : np.ndarray
+        3×3 camera matrix (float64), row-major as stored in YAML.
+    D : np.ndarray
+        Fisheye distortion coefficients shaped ``(4, 1)`` (float64).
+
+    Raises
+    ------
+    ValueError
+        If the ``waveshare_rgb`` section, ``camera_matrix``, or
+        ``dist_coeffs`` is absent or null.
+
+    Examples
+    --------
+    >>> cfg = {
+    ...     "waveshare_rgb": {
+    ...         "camera_matrix": [[500, 0, 320], [0, 500, 240], [0, 0, 1]],
+    ...         "dist_coeffs": [0, 0, 0, 0],
+    ...     }
+    ... }
+    >>> K, D = load_fisheye_intrinsics(cfg)
+    >>> K.shape
+    (3, 3)
+    >>> D.shape
+    (4, 1)
+    """
+    ws: dict[str, Any] = dict(sensor_cfg.get("waveshare_rgb") or {})
+    matrix = ws.get("camera_matrix")
+    if matrix is None:
+        raise ValueError(
+            "waveshare_rgb.camera_matrix is null in sensor_config.yaml. "
+            "Run calibrate_waveshare_camera.py first."
+        )
+    dist = ws.get("dist_coeffs")
+    if dist is None:
+        raise ValueError(
+            "waveshare_rgb.dist_coeffs is null in sensor_config.yaml. "
+            "Run calibrate_waveshare_camera.py first."
+        )
+    K = np.array(matrix, dtype=np.float64)
+    D = np.array(dist, dtype=np.float64).flatten().reshape((4, 1))
+    return K, D
+
+
+def pixel_to_normalised(
+    u: float,
+    v: float,
+    K: np.ndarray,
+    D: np.ndarray,
+) -> tuple[float, float]:
+    """Undistort a pixel to normalised camera coordinates using the fisheye model.
+
+    Applies ``cv2.fisheye.undistortPoints`` with no additional rectification
+    (``R=None``, ``P=None``).  The returned normalised coordinates correspond
+    to the unit image plane (z = 1).
+
+    Parameters
+    ----------
+    u : float
+        Horizontal pixel coordinate (column).
+    v : float
+        Vertical pixel coordinate (row).
+    K : np.ndarray
+        3×3 fisheye camera matrix.
+    D : np.ndarray
+        Fisheye distortion coefficients shaped ``(4, 1)`` — [k1, k2, k3, k4].
+
+    Returns
+    -------
+    (x_n, y_n) : tuple[float, float]
+        Undistorted normalised camera coordinates.  Positive ``x_n`` means the
+        point is to the right of the optical axis.
+
+    Examples
+    --------
+    >>> K = np.array([[500., 0., 320.], [0., 500., 240.], [0., 0., 1.]])
+    >>> D = np.zeros((4, 1))
+    >>> x_n, y_n = pixel_to_normalised(320., 240., K, D)
+    >>> abs(x_n) < 1e-9 and abs(y_n) < 1e-9
+    True
+    """
+    pts = np.array([[[u, v]]], dtype=np.float64)
+    normalised = cv2.fisheye.undistortPoints(pts, K, D)
+    x_n = float(normalised[0, 0, 0])
+    y_n = float(normalised[0, 0, 1])
+    return x_n, y_n
+
+
+def pixel_to_bearing_deg(
+    u: float,
+    v: float,
+    K: np.ndarray,
+    D: np.ndarray,
+) -> float:
+    """Return the horizontal bearing to pixel (u, v) in degrees.
+
+    Converts the distorted pixel to normalised camera coordinates via the
+    fisheye model, then computes the horizontal bearing as
+    ``degrees(atan(x_n))``.
+
+    Sign convention: **positive bearing = target to the RIGHT of the optical
+    axis**.  For rover drive calibration, a counter-clockwise (CCW) rover
+    rotation causes the stationary target to drift rightward in the image, so
+    the bearing increases and ``Δθ = θ_after − θ_before > 0`` for a positive
+    (CCW) angular velocity command.
+
+    Parameters
+    ----------
+    u : float
+        Horizontal pixel coordinate (column).
+    v : float
+        Vertical pixel coordinate (row).  Required for accurate fisheye
+        undistortion — the radially-symmetric distortion model couples (u, v).
+    K : np.ndarray
+        3×3 fisheye camera matrix.
+    D : np.ndarray
+        Fisheye distortion coefficients shaped ``(4, 1)``.
+
+    Returns
+    -------
+    float
+        Horizontal bearing in degrees.
+
+    Examples
+    --------
+    >>> K = np.array([[500., 0., 320.], [0., 500., 240.], [0., 0., 1.]])
+    >>> D = np.zeros((4, 1))
+    >>> pixel_to_bearing_deg(320., 240., K, D)   # centre → 0°
+    0.0
+    >>> pixel_to_bearing_deg(820., 240., K, D)   # 500 px right → atan(1) = 45°
+    45.0
+    """
+    x_n, _y_n = pixel_to_normalised(u, v, K, D)
+    return math.degrees(math.atan(x_n))

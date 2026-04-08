@@ -196,3 +196,43 @@ class Settings:
         """Distance from pan-tilt rotation centre to calibration target (metres), or None."""
         v = self._pan_tilt_servo_cfg.get("calibration_target_distance_m")
         return float(v) if v is not None else None
+
+    # ------------------------------------------------------------------
+    # Rover drive calibration properties
+    # ------------------------------------------------------------------
+
+    @property
+    def _ugv_drive_cfg(self) -> dict[str, Any]:
+        return dict(self.sensor_config.get("ugv_drive") or {})
+
+    @property
+    def ugv_drive_effective_track_width_m(self) -> float | None:
+        """Calibrated effective track width in metres, or None if uncalibrated.
+
+        Used by the Phase 3 outer control loop to correct the differential-drive
+        kinematic model at its root.  When present, Phase 3 should pass this
+        value instead of ``ugv_track_width`` to ``UGVController``.
+        """
+        v = self._ugv_drive_cfg.get("effective_track_width_m")
+        return float(v) if v is not None else None
+
+    @property
+    def ugv_drive_turn_rate_gain(self) -> float | None:
+        """Turn rate gain k = ω_actual / ω_commanded (dimensionless), or None.
+
+        Equivalent to ``ugv_track_width / ugv_drive_effective_track_width_m``.
+        Stored explicitly so the relationship to the nominal track width is
+        preserved if the config value is ever changed.
+        """
+        v = self._ugv_drive_cfg.get("turn_rate_gain")
+        return float(v) if v is not None else None
+
+    @property
+    def ugv_drive_angular_dead_band_rad_s(self) -> float | None:
+        """Minimum |ω| that overcomes static friction (rad/s), or None if uncalibrated.
+
+        The Phase 3 outer control loop should not issue commands below this
+        threshold unless the intent is a full stop.
+        """
+        v = self._ugv_drive_cfg.get("angular_dead_band_rad_s")
+        return float(v) if v is not None else None

@@ -56,7 +56,7 @@ No sea legs required.
   angles; characterise the command-to-degrees mapping and dead-band; stored in `sensor_config.yaml`
   _Skills: actuator calibration · integrate and calibrate sensors_
 
-- [ ] **Rover drive calibration**: measure actual turn rate per unit angular velocity command;
+- [x] **Rover drive calibration**: measure actual turn rate per unit angular velocity command;
   identify dead-band (minimum differential wheel speed that overcomes static friction);
   stored in `sensor_config.yaml`
   _Skills: motor/actuator calibration · real-time robotic platform integration_

@@ -34,3 +34,27 @@ pan_tilt_servo:
   precondition_settle_time_s: 0.3      # Dwell time (seconds) used only during warmup/precondition passes.
                                         # Defaults to settle_time_s when absent. Set lower than settle_time_s
                                         # to speed up the warmup sweep without affecting measurement timing.
+
+# Rover drive calibration — used by calibrate_ugv_drive.py
+ugv_drive:
+  # Angular velocity commands for the turn-rate gain sweep (rad/s).
+  # Interleaved CCW (+) and CW (−) runs keep the rover facing the target.
+  omega_commands_rad_s: [0.4, 0.7, 1.0, 1.3]
+  command_duration_s: 2.0              # Duration of each rotation run (seconds)
+  settle_time_s: 2.0                   # Wait after stop before measuring (seconds)
+
+  # Dead-band probe — commands applied in decreasing order until stall is detected.
+  dead_band_omega_steps_rad_s: [0.30, 0.25, 0.20, 0.15, 0.10, 0.05]
+  dead_band_duration_s: 1.5            # Duration per dead-band probe run (seconds)
+  dead_band_settle_s: 1.5              # Wait after stop before measuring (seconds)
+
+  # Measurement
+  frames_to_average: 5                 # Frames to median-average at each bearing measurement
+  noise_floor_deg: 1.5                 # Min bearing change (°) considered real rotation
+  camera_offset_m: 0.15                # Forward offset of camera lens from rover rotation centre (m)
+  target_distance_m: 2.0               # Approximate distance from rover rotation centre to target (m)
+  template_half_width_px: 80           # Half-width of the square template crop (pixels)
+  min_match_score: 0.65                # Minimum TM_CCOEFF_NORMED score for a usable measurement
+
+  camera_device: "/dev/video0"         # V4L2 device path for the Waveshare RGB camera
+  calibration_surface: "smooth concrete"  # Human-readable description of the calibration surface
