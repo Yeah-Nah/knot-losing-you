@@ -39,7 +39,7 @@ pan_tilt_servo:
 ugv_drive:
   # Angular velocity commands for the turn-rate gain sweep (rad/s).
   # Interleaved CCW (+) and CW (−) runs keep the rover facing the target.
-  omega_commands_rad_s: [0.30, 0.45, 0.60, 0.75]
+  omega_commands_rad_s: [0.4, 0.6, 0.8, 1.0]
   command_duration_s: 1.2              # Duration of each rotation run (seconds)
   settle_time_s: 1.2                   # Wait after stop before measuring (seconds)
 
