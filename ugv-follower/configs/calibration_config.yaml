@@ -39,22 +39,22 @@ pan_tilt_servo:
 ugv_drive:
   # Angular velocity commands for the turn-rate gain sweep (rad/s).
   # Interleaved CCW (+) and CW (−) runs keep the rover facing the target.
-  omega_commands_rad_s: [0.18, 0.28, 0.38, 0.48]
-  command_duration_s: 2.0              # Duration of each rotation run (seconds)
-  settle_time_s: 2.0                   # Wait after stop before measuring (seconds)
+  omega_commands_rad_s: [0.30, 0.45, 0.60, 0.75]
+  command_duration_s: 1.2              # Duration of each rotation run (seconds)
+  settle_time_s: 1.2                   # Wait after stop before measuring (seconds)
 
   # Dead-band probe — commands applied in decreasing order until stall is detected.
-  dead_band_omega_steps_rad_s: [0.20, 0.16, 0.12, 0.09, 0.06, 0.04]
-  dead_band_duration_s: 1.5            # Duration per dead-band probe run (seconds)
-  dead_band_settle_s: 1.5              # Wait after stop before measuring (seconds)
+  dead_band_omega_steps_rad_s: [0.30, 0.24, 0.20, 0.16, 0.13, 0.10]
+  dead_band_duration_s: 1.0            # Duration per dead-band probe run (seconds)
+  dead_band_settle_s: 1.2              # Wait after stop before measuring (seconds)
 
   # Measurement
-  frames_to_average: 5                 # Frames to median-average at each bearing measurement
-  noise_floor_deg: 1.5                 # Min bearing change (°) considered real rotation
+  frames_to_average: 3                 # Frames to median-average at each bearing measurement
+  noise_floor_deg: 2.0                 # Min bearing change (°) considered real rotation
   camera_offset_m: 0.085                # Forward offset of camera lens from rover rotation centre (m)
   target_distance_m: 2.7               # Approximate distance from rover rotation centre to target (m)
   template_half_width_px: 60           # Half-width of the square template crop (pixels)
-  min_match_score: 0.65                # Minimum TM_CCOEFF_NORMED score for a usable measurement
+  min_match_score: 0.70                # Minimum TM_CCOEFF_NORMED score for a usable measurement
 
   camera_device: "/dev/video0"         # V4L2 device path for the Waveshare RGB camera
   calibration_surface: "smooth concrete"  # Human-readable description of the calibration surface
