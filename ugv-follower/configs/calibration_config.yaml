@@ -52,7 +52,7 @@ ugv_drive:
   frames_to_average: 5                 # Frames to median-average at each bearing measurement
   noise_floor_deg: 1.5                 # Min bearing change (°) considered real rotation
   camera_offset_m: 0.085                # Forward offset of camera lens from rover rotation centre (m)
-  target_distance_m: 2.0               # Approximate distance from rover rotation centre to target (m)
+  target_distance_m: 2.7               # Approximate distance from rover rotation centre to target (m)
   template_half_width_px: 60           # Half-width of the square template crop (pixels)
   min_match_score: 0.65                # Minimum TM_CCOEFF_NORMED score for a usable measurement
 
