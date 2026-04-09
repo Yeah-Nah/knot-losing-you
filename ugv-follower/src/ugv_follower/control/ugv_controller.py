@@ -8,6 +8,8 @@ import time
 import serial
 from loguru import logger
 
+from .command_shaper import CommandShaper
+
 
 class UGVController:
     """Sends drive commands to the Waveshare UGV Rover via serial.
@@ -30,6 +32,24 @@ class UGVController:
     track_width : float
         Distance between left and right wheel centres in metres.
         Used to convert angular velocity to differential wheel speeds.
+    shaping_enabled : bool
+        When ``True``, wheel commands are shaped by a background
+        :class:`~ugv_follower.control.command_shaper.CommandShaper` thread
+        before reaching hardware.  Defaults to ``False`` so calibration
+        scripts that manage their own timing are unaffected.
+    update_rate_hz : float
+        Shaper loop frequency in Hz.  Ignored when *shaping_enabled* is
+        ``False``.
+    ramp_rate_per_s : float
+        Maximum wheel speed change per second (m/s per s).  Ignored when
+        *shaping_enabled* is ``False``.
+    reversal_dwell_s : float
+        Seconds to hold a wheel at zero after a sign crossing before
+        accelerating in the opposite direction.  Ignored when
+        *shaping_enabled* is ``False``.
+    zero_crossing_epsilon : float
+        Wheel speeds with ``|v| <= epsilon`` are treated as zero for
+        reversal detection.  Ignored when *shaping_enabled* is ``False``.
     """
 
     def __init__(
@@ -39,6 +59,11 @@ class UGVController:
         chassis_main: int = 2,
         chassis_module: int = 0,
         track_width: float = 0.3,
+        shaping_enabled: bool = False,
+        update_rate_hz: float = 50.0,
+        ramp_rate_per_s: float = 2.0,
+        reversal_dwell_s: float = 0.05,
+        zero_crossing_epsilon: float = 0.01,
     ) -> None:
         self._port = port
         self._baud_rate = baud_rate
@@ -46,9 +71,21 @@ class UGVController:
         self._chassis_module = chassis_module
         self._track_width = track_width
         self._serial: serial.Serial | None = None
+        self._shaper: CommandShaper | None = (
+            CommandShaper(
+                send_fn=self._send_wheel_speeds,
+                update_rate_hz=update_rate_hz,
+                ramp_rate_per_s=ramp_rate_per_s,
+                reversal_dwell_s=reversal_dwell_s,
+                zero_crossing_epsilon=zero_crossing_epsilon,
+            )
+            if shaping_enabled
+            else None
+        )
         logger.debug(
             f"UGVController initialised (port={port}, baud={baud_rate}, "
-            f"chassis_main={chassis_main}, track_width={track_width} m)."
+            f"chassis_main={chassis_main}, track_width={track_width} m, "
+            f"shaping={'on' if shaping_enabled else 'off'})."
         )
 
     # ------------------------------------------------------------------
@@ -63,6 +100,18 @@ class UGVController:
         self._serial.write(payload.encode("utf-8"))
         logger.debug(f"Sent: {payload.strip()}")
 
+    def _send_wheel_speeds(self, left: float, right: float) -> None:
+        """Send pre-computed wheel speeds directly to hardware.
+
+        Parameters
+        ----------
+        left : float
+            Left wheel speed in m/s.
+        right : float
+            Right wheel speed in m/s.
+        """
+        self._send({"T": 1, "L": round(left, 4), "R": round(right, 4)})
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -71,6 +120,7 @@ class UGVController:
         """Open the serial connection and configure the chassis type.
 
         Must be called once after each power-on before issuing motion commands.
+        Starts the command-shaping thread if shaping is enabled.
         """
         logger.info(f"Connecting to UGV on {self._port} at {self._baud_rate} baud...")
         self._serial = serial.Serial(self._port, self._baud_rate, timeout=1)
@@ -78,13 +128,17 @@ class UGVController:
         self._send(
             {"T": 900, "main": self._chassis_main, "module": self._chassis_module}
         )
+        if self._shaper is not None:
+            self._shaper.start()
         logger.info("UGV connected and chassis type set.")
 
     def disconnect(self) -> None:
-        """Stop the UGV and close the serial connection."""
+        """Stop the UGV, shut down the shaper thread, and close the serial connection."""
         logger.info("Disconnecting UGV...")
         if self._serial is not None and self._serial.is_open:
             self.stop()
+            if self._shaper is not None:
+                self._shaper.stop()
             self._serial.close()
             self._serial = None
         logger.info("UGV disconnected.")
@@ -94,6 +148,12 @@ class UGVController:
 
         Uses differential steering: the left/right wheel speeds are derived
         from the desired linear and angular velocities.
+
+        When command shaping is enabled, this method updates the shaper's
+        target and returns immediately; the background thread applies rate
+        limiting and reversal protection before sending to hardware.  When
+        shaping is disabled, the command is written to the serial port
+        directly.
 
         Parameters
         ----------
@@ -105,11 +165,23 @@ class UGVController:
         half_track = self._track_width / 2.0
         left = linear - angular * half_track
         right = linear + angular * half_track
-        self._send({"T": 1, "L": round(left, 4), "R": round(right, 4)})
+        if self._shaper is not None:
+            self._shaper.set_target(left, right)
+        else:
+            self._send_wheel_speeds(left, right)
 
     def stop(self) -> None:
-        """Send a zero-velocity command to halt the UGV."""
-        self._send({"T": 1, "L": 0, "R": 0})
+        """Halt the UGV immediately, bypassing command shaping.
+
+        When shaping is enabled, the shaper state (current speeds, targets,
+        dwell counters) is also reset so the rover does not resume motion
+        after the stop.  A zero-velocity command is always written to the
+        serial port directly.
+        """
+        if self._shaper is not None:
+            self._shaper.immediate_stop()
+        else:
+            self._send({"T": 1, "L": 0, "R": 0})
         logger.info("UGV stopped.")
 
     def set_pan_tilt(self, x_deg: float, y_deg: float) -> None:

@@ -16,6 +16,17 @@ ugv:
   chassis_module: 2       # 0=no module, 1=arm, 2=pan-tilt
   track_width: 0.175        # Wheel centre-to-centre distance in metres (approx; confirm from spec)
 
+# Controller-level command shaping — prevents abrupt wheel speed reversals.
+# Leave disabled (or omit entirely) when running calibration scripts.
+# Enable in the autonomous follower pipeline only.
+#
+# ugv_command_shaping:
+#   enabled: true               # Set true only for the follow-me pipeline
+#   update_rate_hz: 50.0        # Shaper loop frequency (50 Hz is fine at 115200 baud)
+#   ramp_rate_per_s: 2.0        # Max wheel speed change per second (m/s per s)
+#   reversal_dwell_s: 0.05      # Hold-at-zero time before reversing (seconds)
+#   zero_crossing_epsilon: 0.01 # Speeds <= this (m/s) treated as zero
+
 # Waveshare RGB (pan-tilt) camera — intrinsic calibration results
 # Populated by calibrate_waveshare_camera.py after running the calibration workflow.
 waveshare_rgb:

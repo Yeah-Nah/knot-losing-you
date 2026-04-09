@@ -236,3 +236,44 @@ class Settings:
         """
         v = self._ugv_drive_cfg.get("angular_dead_band_rad_s")
         return float(v) if v is not None else None
+
+    # ------------------------------------------------------------------
+    # UGV command shaping properties
+    # ------------------------------------------------------------------
+
+    @property
+    def _ugv_shaping_cfg(self) -> dict[str, Any]:
+        return dict(self.sensor_config.get("ugv_command_shaping") or {})
+
+    @property
+    def ugv_shaping_enabled(self) -> bool:
+        """Whether controller-level command shaping is active.
+
+        When ``False`` (default), wheel commands are sent to hardware
+        immediately.  Calibration scripts should always use the default.
+        """
+        return bool(self._ugv_shaping_cfg.get("enabled", False))
+
+    @property
+    def ugv_shaping_update_rate_hz(self) -> float:
+        """Shaper background thread tick rate in Hz."""
+        return float(self._ugv_shaping_cfg.get("update_rate_hz", 50.0))
+
+    @property
+    def ugv_shaping_ramp_rate_per_s(self) -> float:
+        """Maximum wheel speed change per second (m/s per s).
+
+        A value of 2.0 means the wheel reaches 1 m/s in 0.5 s from rest,
+        or reverses from +1 to −1 m/s in 1.0 s.
+        """
+        return float(self._ugv_shaping_cfg.get("ramp_rate_per_s", 2.0))
+
+    @property
+    def ugv_shaping_reversal_dwell_s(self) -> float:
+        """Seconds to hold a wheel at zero after a sign crossing before reversing."""
+        return float(self._ugv_shaping_cfg.get("reversal_dwell_s", 0.05))
+
+    @property
+    def ugv_shaping_zero_crossing_epsilon(self) -> float:
+        """Wheel speeds below this (m/s) are treated as zero for reversal detection."""
+        return float(self._ugv_shaping_cfg.get("zero_crossing_epsilon", 0.01))

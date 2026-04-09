@@ -43,6 +43,11 @@ class Pipeline:
             chassis_main=settings.ugv_chassis_main,
             chassis_module=settings.ugv_chassis_module,
             track_width=settings.ugv_track_width,
+            shaping_enabled=settings.ugv_shaping_enabled,
+            update_rate_hz=settings.ugv_shaping_update_rate_hz,
+            ramp_rate_per_s=settings.ugv_shaping_ramp_rate_per_s,
+            reversal_dwell_s=settings.ugv_shaping_reversal_dwell_s,
+            zero_crossing_epsilon=settings.ugv_shaping_zero_crossing_epsilon,
         )
         logger.info("Pipeline initialised.")
 
