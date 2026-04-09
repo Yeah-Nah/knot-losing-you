@@ -23,8 +23,10 @@ import yaml
 from tools.calibration.calibrate_ugv_drive import (
     CalibrationStateContainer,
     DriveCalConfig,
+    _SweepCancelled,
     _build_dead_band_row,
     _build_gain_row,
+    _check_cancel,
     _load_config,
     _load_csv,
     _run_sweep,
@@ -911,3 +913,20 @@ def test_replay_analyse_runs_from_csv(tmp_path: Path) -> None:
     assert result.get("turn_rate_gain") is not None
     assert result["turn_rate_gain"] == pytest.approx(1.05, rel=1e-3)
     assert result["angular_dead_band_rad_s"] is not None
+
+
+# ---------------------------------------------------------------------------
+# Cancellation sentinel
+# ---------------------------------------------------------------------------
+
+
+class TestCheckCancel:
+    def test_raises_when_set(self) -> None:
+        event = threading.Event()
+        event.set()
+        with pytest.raises(_SweepCancelled):
+            _check_cancel(event)
+
+    def test_no_raise_when_clear(self) -> None:
+        event = threading.Event()
+        _check_cancel(event)  # should not raise

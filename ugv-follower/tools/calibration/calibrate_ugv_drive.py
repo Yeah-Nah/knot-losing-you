@@ -1057,8 +1057,227 @@ def _build_dead_band_row(
 
 
 # ---------------------------------------------------------------------------
-# Sweep thread
+# Sweep thread — cancellation sentinel and helpers
 # ---------------------------------------------------------------------------
+
+
+class _SweepCancelled(Exception):
+    """Raised internally to short-circuit a cancelled sweep without triggering FAILED."""
+
+
+def _check_cancel(cancel_event: threading.Event) -> None:
+    """Raise ``_SweepCancelled`` if *cancel_event* is set.
+
+    Parameters
+    ----------
+    cancel_event : threading.Event
+        Shared cancellation signal from the orchestrator.
+
+    Raises
+    ------
+    _SweepCancelled
+        When the event is set.
+    """
+    if cancel_event.is_set():
+        raise _SweepCancelled()
+
+
+def _execute_rotation(
+    omega_signed: float,
+    duration_s: float,
+    settle_s: float,
+    cap: cv2.VideoCapture,
+    template: cv2.typing.MatLike,
+    config: DriveCalConfig,
+    ugv: UGVController,
+    cap_lock: threading.Lock,
+    cancel_event: threading.Event,
+) -> tuple[float, float, float, float, float, float]:
+    """Measure bearing, rotate, settle, and measure again.
+
+    Parameters
+    ----------
+    omega_signed : float
+        Angular velocity to command (rad/s), signed (negative = CW).
+    duration_s : float
+        How long to drive the rotation command (seconds).
+    settle_s : float
+        How long to wait after stopping before the post-rotation measurement.
+    cap : cv2.VideoCapture
+        Video capture device.
+    template : cv2.typing.MatLike
+        Template image for bearing measurement.
+    config : DriveCalConfig
+        Calibration configuration (intrinsics, frame dimensions, etc.).
+    ugv : UGVController
+        UGV hardware interface.
+    cap_lock : threading.Lock
+        Lock protecting *cap* from concurrent access.
+    cancel_event : threading.Event
+        Shared cancellation signal.
+
+    Returns
+    -------
+    tuple[float, float, float, float, float, float]
+        ``(b_before, u_before, score_before, b_after, u_after, score_after)``
+
+    Raises
+    ------
+    _SweepCancelled
+        If *cancel_event* is set after stopping or after settling.
+    """
+    b_before, u_before, score_before = _capture_bearing_measurement(
+        cap, template, config.frames_to_average, config.K, config.D, cap_lock
+    )
+    ugv.move(0.0, omega_signed)
+    time.sleep(duration_s)
+    ugv.stop()
+    _check_cancel(cancel_event)
+    time.sleep(settle_s)
+    _check_cancel(cancel_event)
+    b_after, u_after, score_after = _capture_bearing_measurement(
+        cap, template, config.frames_to_average, config.K, config.D, cap_lock
+    )
+    return b_before, u_before, score_before, b_after, u_after, score_after
+
+
+def _run_gain_step(
+    omega: float,
+    direction: str,
+    cap: cv2.VideoCapture,
+    ugv: UGVController,
+    config: DriveCalConfig,
+    template: cv2.typing.MatLike,
+    cap_lock: threading.Lock,
+    cancel_event: threading.Event,
+    t0: float,
+) -> dict[str, Any]:
+    """Execute one CCW or CW gain measurement run and return a row dict.
+
+    Parameters
+    ----------
+    omega : float
+        Unsigned angular velocity (rad/s); negated internally for CW.
+    direction : str
+        ``"ccw"`` or ``"cw"``.
+    cap : cv2.VideoCapture
+        Video capture device.
+    ugv : UGVController
+        UGV hardware interface.
+    config : DriveCalConfig
+        Calibration configuration.
+    template : cv2.typing.MatLike
+        Template image for bearing measurement.
+    cap_lock : threading.Lock
+        Lock protecting *cap* from concurrent access.
+    cancel_event : threading.Event
+        Shared cancellation signal.
+    t0 : float
+        ``time.monotonic()`` reference at sweep start, used for timestamps.
+
+    Returns
+    -------
+    dict[str, Any]
+        Gain sweep CSV row (see ``_build_gain_row``).
+
+    Raises
+    ------
+    _SweepCancelled
+        If the cancel event fires before or during the rotation.
+    """
+    _check_cancel(cancel_event)
+    omega_signed = omega if direction == "ccw" else -omega
+    b_before, u_before, score_before, b_after, u_after, score_after = _execute_rotation(
+        omega_signed, config.command_duration_s, config.settle_time_s,
+        cap, template, config, ugv, cap_lock, cancel_event,
+    )
+    delta = b_after - b_before
+    corrected = correct_for_camera_offset(
+        delta, config.camera_offset_m, config.target_distance_m
+    )
+    expected = math.degrees(omega_signed * config.command_duration_s)
+    qflag = (
+        quality_flag(score_before, u_before, config.frame_width, config.min_match_score)
+        | quality_flag(score_after, u_after, config.frame_width, config.min_match_score)
+    )
+    label = "CCW" if direction == "ccw" else "CW "
+    logger.info(
+        f"Gain {label} {omega:.2f} rad/s: Δ={delta:+.2f}°  "
+        f"corrected={corrected:+.2f}°  expected={expected:+.2f}°  flag={qflag}"
+    )
+    return _build_gain_row(
+        omega=omega, direction=direction, duration_s=config.command_duration_s,
+        b_before=b_before, b_after=b_after, corrected_delta=corrected,
+        expected_angle=expected, score_before=score_before, score_after=score_after,
+        qflag=qflag, t0=t0,
+    )
+
+
+def _run_dead_band_step(
+    omega_d: float,
+    direction: str,
+    cap: cv2.VideoCapture,
+    ugv: UGVController,
+    config: DriveCalConfig,
+    template: cv2.typing.MatLike,
+    cap_lock: threading.Lock,
+    cancel_event: threading.Event,
+    t0: float,
+) -> dict[str, Any]:
+    """Execute one CCW or CW dead-band probe and return a row dict.
+
+    Parameters
+    ----------
+    omega_d : float
+        Unsigned angular velocity step (rad/s); negated internally for CW.
+    direction : str
+        ``"ccw"`` or ``"cw"``.
+    cap : cv2.VideoCapture
+        Video capture device.
+    ugv : UGVController
+        UGV hardware interface.
+    config : DriveCalConfig
+        Calibration configuration.
+    template : cv2.typing.MatLike
+        Template image for bearing measurement.
+    cap_lock : threading.Lock
+        Lock protecting *cap* from concurrent access.
+    cancel_event : threading.Event
+        Shared cancellation signal.
+    t0 : float
+        ``time.monotonic()`` reference at sweep start, used for timestamps.
+
+    Returns
+    -------
+    dict[str, Any]
+        Dead-band CSV row (see ``_build_dead_band_row``).
+
+    Raises
+    ------
+    _SweepCancelled
+        If the cancel event fires before or during the probe.
+    """
+    _check_cancel(cancel_event)
+    omega_signed = omega_d if direction == "ccw" else -omega_d
+    b_before, u_before, score_before, b_after, u_after, score_after = _execute_rotation(
+        omega_signed, config.dead_band_duration_s, config.dead_band_settle_s,
+        cap, template, config, ugv, cap_lock, cancel_event,
+    )
+    delta = b_after - b_before
+    did_move = abs(delta) > config.noise_floor_deg
+    qflag = (
+        quality_flag(score_before, u_before, config.frame_width, config.min_match_score)
+        | quality_flag(score_after, u_after, config.frame_width, config.min_match_score)
+    )
+    label = "CCW" if direction == "ccw" else "CW "
+    logger.info(
+        f"Dead-band {label} {omega_d:.2f} rad/s: Δ={delta:+.2f}°  moved={did_move}"
+    )
+    return _build_dead_band_row(
+        omega=omega_d, direction=direction, duration_s=config.dead_band_duration_s,
+        b_before=b_before, b_after=b_after, moved=did_move,
+        score_before=score_before, score_after=score_after, qflag=qflag, t0=t0,
+    )
 
 
 def _run_sweep(
@@ -1102,167 +1321,23 @@ def _run_sweep(
     rows: list[dict[str, Any]] = []
 
     try:
-        # --- Gain sweep ---------------------------------------------------
         for omega in config.omega_commands_rad_s:
-            # -- CCW run (+omega) --
-            if cancel_event.is_set():
-                return
-            current_step += 1
+            for direction in ("ccw", "cw"):
+                current_step += 1
+                rows.append(_run_gain_step(
+                    omega, direction, cap, ugv, config, template,
+                    cap_lock, cancel_event, t0,
+                ))
+                state.update_sweep_progress(current_step, total_steps)
 
-            b_before, u_before, score_before = _capture_bearing_measurement(
-                cap, template, config.frames_to_average, config.K, config.D, cap_lock
-            )
-            ugv.move(0.0, omega)
-            time.sleep(config.command_duration_s)
-            ugv.stop()
-            if cancel_event.is_set():
-                return
-            time.sleep(config.settle_time_s)
-            if cancel_event.is_set():
-                return
-            b_after, u_after, score_after = _capture_bearing_measurement(
-                cap, template, config.frames_to_average, config.K, config.D, cap_lock
-            )
-
-            delta = b_after - b_before
-            corrected = correct_for_camera_offset(
-                delta, config.camera_offset_m, config.target_distance_m
-            )
-            expected = math.degrees(omega * config.command_duration_s)
-            qflag = (
-                quality_flag(score_before, u_before, config.frame_width, config.min_match_score)
-                | quality_flag(score_after, u_after, config.frame_width, config.min_match_score)
-            )
-
-            rows.append(_build_gain_row(
-                omega=omega, direction="ccw", duration_s=config.command_duration_s,
-                b_before=b_before, b_after=b_after, corrected_delta=corrected,
-                expected_angle=expected, score_before=score_before, score_after=score_after,
-                qflag=qflag, t0=t0,
-            ))
-            state.update_sweep_progress(current_step, total_steps)
-            logger.info(
-                f"Gain CCW {omega:.2f} rad/s: Δ={delta:+.2f}°  "
-                f"corrected={corrected:+.2f}°  expected={expected:+.2f}°  flag={qflag}"
-            )
-
-            # -- CW run (-omega) — returns rover approximately to start --
-            if cancel_event.is_set():
-                return
-            current_step += 1
-
-            b_before, u_before, score_before = _capture_bearing_measurement(
-                cap, template, config.frames_to_average, config.K, config.D, cap_lock
-            )
-            ugv.move(0.0, -omega)
-            time.sleep(config.command_duration_s)
-            ugv.stop()
-            if cancel_event.is_set():
-                return
-            time.sleep(config.settle_time_s)
-            if cancel_event.is_set():
-                return
-            b_after, u_after, score_after = _capture_bearing_measurement(
-                cap, template, config.frames_to_average, config.K, config.D, cap_lock
-            )
-
-            delta = b_after - b_before
-            corrected = correct_for_camera_offset(
-                delta, config.camera_offset_m, config.target_distance_m
-            )
-            expected = math.degrees(-omega * config.command_duration_s)
-            qflag = (
-                quality_flag(score_before, u_before, config.frame_width, config.min_match_score)
-                | quality_flag(score_after, u_after, config.frame_width, config.min_match_score)
-            )
-
-            rows.append(_build_gain_row(
-                omega=omega, direction="cw", duration_s=config.command_duration_s,
-                b_before=b_before, b_after=b_after, corrected_delta=corrected,
-                expected_angle=expected, score_before=score_before, score_after=score_after,
-                qflag=qflag, t0=t0,
-            ))
-            state.update_sweep_progress(current_step, total_steps)
-            logger.info(
-                f"Gain CW  {omega:.2f} rad/s: Δ={delta:+.2f}°  "
-                f"corrected={corrected:+.2f}°  expected={expected:+.2f}°  flag={qflag}"
-            )
-
-        # --- Dead-band sweep (decreasing omega) ---------------------------
         for omega_d in config.dead_band_omega_steps_rad_s:
-            # -- CCW probe (+omega_d) --
-            if cancel_event.is_set():
-                return
-            current_step += 1
-
-            b_before, u_before, score_before = _capture_bearing_measurement(
-                cap, template, config.frames_to_average, config.K, config.D, cap_lock
-            )
-            ugv.move(0.0, omega_d)
-            time.sleep(config.dead_band_duration_s)
-            ugv.stop()
-            if cancel_event.is_set():
-                return
-            time.sleep(config.dead_band_settle_s)
-            if cancel_event.is_set():
-                return
-            b_after, u_after, score_after = _capture_bearing_measurement(
-                cap, template, config.frames_to_average, config.K, config.D, cap_lock
-            )
-
-            delta = b_after - b_before
-            did_move = abs(delta) > config.noise_floor_deg
-            qflag = (
-                quality_flag(score_before, u_before, config.frame_width, config.min_match_score)
-                | quality_flag(score_after, u_after, config.frame_width, config.min_match_score)
-            )
-
-            rows.append(_build_dead_band_row(
-                omega=omega_d, direction="ccw", duration_s=config.dead_band_duration_s,
-                b_before=b_before, b_after=b_after, moved=did_move,
-                score_before=score_before, score_after=score_after, qflag=qflag, t0=t0,
-            ))
-            state.update_sweep_progress(current_step, total_steps)
-            logger.info(
-                f"Dead-band CCW {omega_d:.2f} rad/s: Δ={delta:+.2f}°  moved={did_move}"
-            )
-
-            # -- CW return probe (-omega_d) --
-            if cancel_event.is_set():
-                return
-            current_step += 1
-
-            b_before, u_before, score_before = _capture_bearing_measurement(
-                cap, template, config.frames_to_average, config.K, config.D, cap_lock
-            )
-            ugv.move(0.0, -omega_d)
-            time.sleep(config.dead_band_duration_s)
-            ugv.stop()
-            if cancel_event.is_set():
-                return
-            time.sleep(config.dead_band_settle_s)
-            if cancel_event.is_set():
-                return
-            b_after, u_after, score_after = _capture_bearing_measurement(
-                cap, template, config.frames_to_average, config.K, config.D, cap_lock
-            )
-
-            delta = b_after - b_before
-            did_move = abs(delta) > config.noise_floor_deg
-            qflag = (
-                quality_flag(score_before, u_before, config.frame_width, config.min_match_score)
-                | quality_flag(score_after, u_after, config.frame_width, config.min_match_score)
-            )
-
-            rows.append(_build_dead_band_row(
-                omega=omega_d, direction="cw", duration_s=config.dead_band_duration_s,
-                b_before=b_before, b_after=b_after, moved=did_move,
-                score_before=score_before, score_after=score_after, qflag=qflag, t0=t0,
-            ))
-            state.update_sweep_progress(current_step, total_steps)
-            logger.info(
-                f"Dead-band CW  {omega_d:.2f} rad/s: Δ={delta:+.2f}°  moved={did_move}"
-            )
+            for direction in ("ccw", "cw"):
+                current_step += 1
+                rows.append(_run_dead_band_step(
+                    omega_d, direction, cap, ugv, config, template,
+                    cap_lock, cancel_event, t0,
+                ))
+                state.update_sweep_progress(current_step, total_steps)
 
         state.set_sweep_rows(rows)
         state.transition_to(
@@ -1275,6 +1350,8 @@ def _run_sweep(
         )
         logger.info(f"Sweep complete — {len(rows)} measurement rows collected.")
 
+    except _SweepCancelled:
+        return  # /abort handles ABORTED transition
     except Exception as exc:
         logger.exception(f"Sweep thread raised an exception: {exc}")
         state.transition_to(
