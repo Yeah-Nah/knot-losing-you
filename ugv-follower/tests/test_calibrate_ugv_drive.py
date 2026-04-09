@@ -582,6 +582,64 @@ def test_analyse_runs_dead_band_detected() -> None:
     assert result["angular_dead_band_rad_s"] == pytest.approx(0.225, rel=1e-4)
 
 
+def test_analyse_runs_dead_band_detected_with_string_moved_values() -> None:
+    """Dead-band rows using string moved values ("0"/"1") are parsed correctly."""
+    config = _make_drive_cal_config(noise_floor_deg=1.5)
+    t0 = time.monotonic()
+    rows = _make_gain_rows() + [
+        _build_dead_band_row(
+            omega=0.30,
+            direction="ccw",
+            duration_s=1.0,
+            b_before=0.0,
+            b_after=4.0,
+            moved=True,
+            score_before=0.9,
+            score_after=0.9,
+            qflag=0,
+            t0=t0,
+        ),
+        _build_dead_band_row(
+            omega=0.20,
+            direction="ccw",
+            duration_s=1.0,
+            b_before=0.0,
+            b_after=0.2,
+            moved=False,
+            score_before=0.9,
+            score_after=0.9,
+            qflag=0,
+            t0=t0,
+        ),
+        _build_dead_band_row(
+            omega=0.30,
+            direction="cw",
+            duration_s=1.0,
+            b_before=0.0,
+            b_after=-4.0,
+            moved=True,
+            score_before=0.9,
+            score_after=0.9,
+            qflag=0,
+            t0=t0,
+        ),
+        _build_dead_band_row(
+            omega=0.20,
+            direction="cw",
+            duration_s=1.0,
+            b_before=0.0,
+            b_after=-0.2,
+            moved=False,
+            score_before=0.9,
+            score_after=0.9,
+            qflag=0,
+            t0=t0,
+        ),
+    ]
+    result = analyse_runs(rows, config)
+    assert result["angular_dead_band_rad_s"] == pytest.approx(0.25, rel=1e-4)
+
+
 def test_analyse_runs_no_dead_band_rows() -> None:
     """No dead_band rows → angular_dead_band_rad_s is None."""
     config = _make_drive_cal_config()

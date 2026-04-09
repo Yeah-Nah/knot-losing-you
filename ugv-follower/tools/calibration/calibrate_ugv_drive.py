@@ -643,6 +643,31 @@ def _estimate_dead_band_from_rows(rows: list[dict[str, Any]]) -> float | None:
     if not dead_rows:
         return None
 
+    def _parse_moved(value: Any) -> bool | None:
+        """Parse a stored ``moved`` value into bool.
+
+        Accepts booleans, numeric 0/1, and string encodings such as
+        ``"0"``, ``"1"``, ``"true"``, and ``"false"``.
+        Returns ``None`` when the value cannot be interpreted.
+        """
+        if value is None:
+            return None
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            if value == 0:
+                return False
+            if value == 1:
+                return True
+            return None
+        if isinstance(value, str):
+            v = value.strip().lower()
+            if v in {"0", "false", "f", "no", "n"}:
+                return False
+            if v in {"1", "true", "t", "yes", "y"}:
+                return True
+        return None
+
     def _estimate_for_direction(direction: str) -> float | None:
         dir_rows = [
             r for r in dead_rows
@@ -652,8 +677,15 @@ def _estimate_dead_band_from_rows(rows: list[dict[str, Any]]) -> float | None:
             return None
         # Sort descending by omega.
         dir_rows_sorted = sorted(dir_rows, key=lambda r: -float(r["omega_commanded_rad_s"]))
-        omegas = [float(r["omega_commanded_rad_s"]) for r in dir_rows_sorted]
-        moved_flags = [bool(r["moved"]) for r in dir_rows_sorted]
+        parsed = [
+            (float(r["omega_commanded_rad_s"]), _parse_moved(r.get("moved")))
+            for r in dir_rows_sorted
+        ]
+        valid = [(omega, moved) for omega, moved in parsed if moved is not None]
+        if not valid:
+            return None
+        omegas = [omega for omega, _ in valid]
+        moved_flags = [moved for _, moved in valid]
         return estimate_dead_band(omegas, moved_flags)
 
     ccw_est = _estimate_for_direction("ccw")
