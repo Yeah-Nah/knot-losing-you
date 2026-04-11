@@ -16,10 +16,9 @@ axis.  A forward-offset correction (same geometry as pan-tilt calibration)
 removes the bias introduced by the camera lens being displaced forward from
 the rover's differential-drive rotation centre.
 
-The sweep interleaves CCW (+ω) and CW (−ω) runs at each commanded angular
-velocity.  The return run keeps the rover approximately pointing at the
-target across the full sweep, exploiting the wide fisheye field of view
-(≈ 100° horizontal).
+The sweep runs all CCW (+ω) commands as a block, then all CW (−ω) commands
+as a block.  Block-direction runs avoid the directional instability caused
+by immediate sign reversals at each ω level.
 
 Results written to ``sensor_config.yaml`` under the ``ugv_drive`` key:
 
@@ -427,6 +426,29 @@ def quality_flag(
     return 0
 
 
+def _sign_consistent(corrected_delta_deg: float, expected_angle_deg: float) -> bool:
+    """Return True if corrected delta and expected angle share the same sign.
+
+    A sign mismatch indicates the rover rotated opposite to the commanded
+    direction — typically caused by directional instability near the motion
+    threshold.  Such samples corrupt the OLS gain fit and are excluded.
+
+    Parameters
+    ----------
+    corrected_delta_deg : float
+        Camera-offset-corrected bearing change (degrees).
+    expected_angle_deg : float
+        Kinematically expected bearing change (degrees).
+
+    Returns
+    -------
+    bool
+        ``True`` when both values are positive or both are negative.
+        ``False`` when the signs differ or either value is zero.
+    """
+    return corrected_delta_deg * expected_angle_deg > 0.0
+
+
 def fit_turn_rate_gain(
     corrected_deltas_deg: list[float],
     expected_angles_deg: list[float],
@@ -556,13 +578,32 @@ def analyse_runs(
         ``raw_csv`` — the caller fills those in).  Contains an ``"error"``
         key if analysis failed due to insufficient good samples.
     """
-    gain_good = [
+    quality_passed = [
         r
         for r in rows
         if r["run_type"] == _GAIN_RUN
         and int(r["quality_flag"]) == 0
         and r.get("corrected_delta_deg") is not None
         and r.get("expected_angle_deg") is not None
+    ]
+    n_sign_inconsistent = sum(
+        1
+        for r in quality_passed
+        if not _sign_consistent(
+            float(r["corrected_delta_deg"]), float(r["expected_angle_deg"])
+        )
+    )
+    if n_sign_inconsistent > 0:
+        logger.warning(
+            f"analyse_runs: excluding {n_sign_inconsistent} sign-inconsistent "
+            "gain sample(s) — rover rotated opposite to commanded direction."
+        )
+    gain_good = [
+        r
+        for r in quality_passed
+        if _sign_consistent(
+            float(r["corrected_delta_deg"]), float(r["expected_angle_deg"])
+        )
     ]
     n_good = len(gain_good)
     n_total = len(rows)
@@ -1346,9 +1387,9 @@ def _run_sweep(
     - Wait ``settle_time_s`` after stopping.
     - Measure the bearing again and record the difference.
 
-    Gain sweep: runs CCW (+ω) immediately followed by CW (−ω) at each
-    commanded angular velocity, keeping the rover approximately facing the
-    target throughout.
+    Gain sweep: all CCW (+ω) runs complete as a block before any CW (−ω) run
+    begins.  Block-direction ordering avoids directional instability from
+    immediate sign reversals at each ω level.
 
     Dead-band sweep: decreasing ω values; records whether rotation occurred.
 
@@ -1368,8 +1409,8 @@ def _run_sweep(
     rows: list[dict[str, Any]] = []
 
     try:
-        for omega in config.omega_commands_rad_s:
-            for direction in ("ccw", "cw"):
+        for direction in ("ccw", "cw"):
+            for omega in config.omega_commands_rad_s:
                 current_step += 1
                 rows.append(
                     _run_gain_step(
@@ -1386,8 +1427,8 @@ def _run_sweep(
                 )
                 state.update_sweep_progress(current_step, total_steps)
 
-        for omega_d in config.dead_band_omega_steps_rad_s:
-            for direction in ("ccw", "cw"):
+        for direction in ("ccw", "cw"):
+            for omega_d in config.dead_band_omega_steps_rad_s:
                 current_step += 1
                 rows.append(
                     _run_dead_band_step(

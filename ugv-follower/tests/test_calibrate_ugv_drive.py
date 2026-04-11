@@ -28,6 +28,7 @@ from tools.calibration.calibrate_ugv_drive import (
     _load_config,
     _load_csv,
     _run_sweep,
+    _sign_consistent,
     _validate_geometry,
     _write_csv,
     _write_results_atomic,
@@ -443,6 +444,29 @@ def test_quality_flag_bitor_combines_two_measurements() -> None:
 
 
 # ---------------------------------------------------------------------------
+# _sign_consistent
+# ---------------------------------------------------------------------------
+
+
+def test_sign_consistent_matching_signs() -> None:
+    """Both positive or both negative → consistent."""
+    assert _sign_consistent(10.0, 5.0) is True
+    assert _sign_consistent(-10.0, -5.0) is True
+
+
+def test_sign_consistent_opposite_signs() -> None:
+    """Opposite signs → inconsistent."""
+    assert _sign_consistent(-5.0, 5.0) is False
+    assert _sign_consistent(5.0, -5.0) is False
+
+
+def test_sign_consistent_zero() -> None:
+    """Zero corrected or expected → inconsistent (product is 0, not > 0)."""
+    assert _sign_consistent(0.0, 5.0) is False
+    assert _sign_consistent(5.0, 0.0) is False
+
+
+# ---------------------------------------------------------------------------
 # fit_turn_rate_gain
 # ---------------------------------------------------------------------------
 
@@ -544,6 +568,42 @@ def test_analyse_runs_excludes_bad_quality_rows() -> None:
     result = analyse_runs(good_rows + bad_rows, config)
     # Only 2 good gain rows (1 omega × CCW + CW), not the 2 bad ones
     assert result["n_samples"] == 2
+
+
+def test_analyse_runs_excludes_sign_inconsistent_rows() -> None:
+    """Gain rows where corrected sign differs from expected sign are excluded.
+
+    A CCW command with negative corrected_delta_deg must be excluded even
+    when quality_flag == 0.
+    """
+    config = _make_drive_cal_config()
+    t0 = time.monotonic()
+
+    # Good: CCW, positive corrected delta (signs match)
+    good_ccw = _build_gain_row(
+        omega=1.0, direction="ccw", duration_s=2.0,
+        b_before=0.0, b_after=10.0, corrected_delta=10.0,
+        expected_angle=math.degrees(1.0 * 2.0),
+        score_before=0.9, score_after=0.9, qflag=0, t0=t0,
+    )
+    # Bad: CCW command but negative corrected delta (sign flip)
+    bad_ccw = _build_gain_row(
+        omega=1.0, direction="ccw", duration_s=2.0,
+        b_before=0.0, b_after=-5.0, corrected_delta=-5.0,
+        expected_angle=math.degrees(1.0 * 2.0),
+        score_before=0.9, score_after=0.9, qflag=0, t0=t0,
+    )
+    # Good: CW, negative corrected delta (signs match)
+    good_cw = _build_gain_row(
+        omega=0.5, direction="cw", duration_s=2.0,
+        b_before=0.0, b_after=-5.0, corrected_delta=-5.0,
+        expected_angle=math.degrees(-0.5 * 2.0),
+        score_before=0.9, score_after=0.9, qflag=0, t0=t0,
+    )
+
+    result = analyse_runs([good_ccw, bad_ccw, good_cw], config)
+    assert result["n_samples"] == 2  # bad_ccw excluded
+    assert "error" not in result
 
 
 def test_analyse_runs_identity_gain() -> None:
@@ -943,6 +1003,46 @@ def test_run_sweep_ccw_and_cw_signs(
     # CCW: move(0.0, +0.7); CW: move(0.0, -0.7)
     assert move_args[0] == (0.0, pytest.approx(0.7))
     assert move_args[1] == (0.0, pytest.approx(-0.7))
+
+
+@patch(
+    "tools.calibration.calibrate_ugv_drive._capture_bearing_measurement",
+    return_value=(5.0, 320.0, 0.90),
+)
+@patch("tools.calibration.calibrate_ugv_drive.time.sleep")
+def test_run_sweep_gain_block_ordering(
+    mock_sleep: MagicMock, mock_bearing: MagicMock
+) -> None:
+    """All CCW gain runs complete before any CW gain run starts.
+
+    With 2 omega commands the expected row order is:
+    CCW@omega_0, CCW@omega_1, CW@omega_0, CW@omega_1.
+    """
+    config = _make_drive_cal_config(
+        omega_commands=(0.5, 1.0),
+        dead_band_steps=(),
+    )
+    state = CalibrationStateContainer()
+    state.try_start_sweep()
+    ugv_mock = MagicMock()
+
+    _run_sweep(
+        MagicMock(),
+        ugv_mock,
+        config,
+        np.zeros((40, 40, 3), dtype=np.uint8),
+        state,
+        threading.Lock(),
+        threading.Event(),
+        time.monotonic(),
+    )
+
+    rows = state.get_sweep_rows()
+    assert rows is not None
+    gain_rows = [r for r in rows if r["run_type"] == "gain_sweep"]
+    assert len(gain_rows) == 4
+    directions = [r["direction"] for r in gain_rows]
+    assert directions == ["ccw", "ccw", "cw", "cw"]
 
 
 # ---------------------------------------------------------------------------
