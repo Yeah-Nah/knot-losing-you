@@ -106,6 +106,7 @@ import yaml
 from loguru import logger
 
 from ugv_follower.control.ugv_controller import UGVController
+from ugv_follower.utils.camera_preflight import ensure_camera_device_available
 from ugv_follower.utils.config_utils import get_project_root
 from ugv_follower.utils.fisheye_utils import load_fisheye_intrinsics, pixel_to_bearing_deg
 
@@ -1957,6 +1958,12 @@ def main() -> None:
     try:
         ugv.connect()
         time.sleep(_CONNECT_SETTLE_S)
+
+        try:
+            ensure_camera_device_available(config.camera_device)
+        except RuntimeError as exc:
+            logger.error(str(exc))
+            sys.exit(1)
 
         cap = cv2.VideoCapture(config.camera_device, cv2.CAP_V4L2)
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, config.frame_width)

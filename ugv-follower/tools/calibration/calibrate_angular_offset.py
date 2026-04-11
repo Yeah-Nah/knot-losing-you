@@ -95,6 +95,7 @@ from loguru import logger
 
 from ugv_follower.control.ugv_controller import UGVController
 from ugv_follower.perception.lidar_access import LidarAccess, LidarPoint
+from ugv_follower.utils.camera_preflight import ensure_camera_device_available
 from ugv_follower.utils.config_utils import get_project_root
 
 _DEFAULT_SENSOR_CONFIG = get_project_root() / "configs" / "sensor_config.yaml"
@@ -937,6 +938,12 @@ def main() -> None:
             f"Pan-tilt commanded to (0°, 0°). Waiting {_SERVO_SETTLE_S} s to settle..."
         )
         time.sleep(_SERVO_SETTLE_S)
+
+        try:
+            ensure_camera_device_available(config.camera_device)
+        except RuntimeError as exc:
+            logger.error(str(exc))
+            sys.exit(1)
 
         # -- Open camera -------------------------------------------------------
         cap = cv2.VideoCapture(config.camera_device, cv2.CAP_V4L2)

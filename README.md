@@ -51,7 +51,9 @@ sudo udevadm trigger
 
 Before running, check `configs/calibration_config.yaml` and confirm `inner_corners` matches your checkerboard (squares − 1 in each dimension) and `square_mm` is the physical side length of one square.
 
-The rover's main process may be holding the camera open. Kill it first if needed:
+Camera preflight is now automatic for camera-based calibration tools. If `/dev/video0` is held open, the script attempts to release it before opening `VideoCapture`.
+
+If your user cannot terminate the holder process, stop it manually once and then re-run:
 
 ```bash
 sudo fuser -k /dev/video0
@@ -144,6 +146,25 @@ ugv-run \
 ---
 
 ## Troubleshooting
+
+### Camera device in use (`/dev/video0`)
+
+Camera-based calibration commands now run an automatic preflight that checks whether
+the camera device is busy and attempts to release it. If this still fails, the holder
+process is usually started at boot by another service.
+
+Use these checks:
+
+```bash
+# Show process IDs holding the camera device
+lsof -t /dev/video0
+
+# Kill holders manually (only needed if automatic preflight cannot)
+sudo fuser -k /dev/video0
+```
+
+For a permanent fix, disable the process that auto-starts and takes ownership of
+the camera device.
 
 ### Serial port in use (`/dev/ttyAMA0`)
 
