@@ -923,7 +923,9 @@ def test_run_sweep_row_count(mock_sleep: MagicMock, mock_bearing: MagicMock) -> 
     ugv_mock = MagicMock()
 
     recenter_event = threading.Event()
-    recenter_event.set()  # pre-set so the pause is skipped immediately
+    state.transition_to = _make_auto_unblock_transition(  # type: ignore[method-assign]
+        state, recenter_event, []
+    )
     _run_sweep(
         MagicMock(),  # cap — not used because _capture_bearing_measurement is mocked
         ugv_mock,
@@ -964,7 +966,9 @@ def test_run_sweep_ugv_move_and_stop_calls(
     ugv_mock = MagicMock()
 
     recenter_event = threading.Event()
-    recenter_event.set()
+    state.transition_to = _make_auto_unblock_transition(  # type: ignore[method-assign]
+        state, recenter_event, []
+    )
     _run_sweep(
         MagicMock(),
         ugv_mock,
@@ -999,7 +1003,9 @@ def test_run_sweep_ccw_and_cw_signs(
     ugv_mock = MagicMock()
 
     recenter_event = threading.Event()
-    recenter_event.set()
+    state.transition_to = _make_auto_unblock_transition(  # type: ignore[method-assign]
+        state, recenter_event, []
+    )
     _run_sweep(
         MagicMock(),
         ugv_mock,
@@ -1040,7 +1046,9 @@ def test_run_sweep_gain_block_ordering(
     ugv_mock = MagicMock()
 
     recenter_event = threading.Event()
-    recenter_event.set()
+    state.transition_to = _make_auto_unblock_transition(  # type: ignore[method-assign]
+        state, recenter_event, []
+    )
     _run_sweep(
         MagicMock(),
         ugv_mock,
