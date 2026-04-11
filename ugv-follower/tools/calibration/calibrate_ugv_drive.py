@@ -108,7 +108,10 @@ from loguru import logger
 from ugv_follower.control.ugv_controller import UGVController
 from ugv_follower.utils.camera_preflight import ensure_camera_device_available
 from ugv_follower.utils.config_utils import get_project_root
-from ugv_follower.utils.fisheye_utils import load_fisheye_intrinsics, pixel_to_bearing_deg
+from ugv_follower.utils.fisheye_utils import (
+    load_fisheye_intrinsics,
+    pixel_to_bearing_deg,
+)
 
 _DEFAULT_SENSOR_CONFIG: Path = get_project_root() / "configs" / "sensor_config.yaml"
 _DEFAULT_CAL_CONFIG: Path = get_project_root() / "configs" / "calibration_config.yaml"
@@ -140,9 +143,9 @@ _CSV_COLUMNS: list[str] = [
     "bearing_before_deg",
     "bearing_after_deg",
     "delta_bearing_deg",
-    "corrected_delta_deg",   # gain_sweep only; empty string for dead_band rows
-    "expected_angle_deg",    # gain_sweep only; empty string for dead_band rows
-    "moved",                 # dead_band only ("0"/"1"); empty string for gain_sweep rows
+    "corrected_delta_deg",  # gain_sweep only; empty string for dead_band rows
+    "expected_angle_deg",  # gain_sweep only; empty string for dead_band rows
+    "moved",  # dead_band only ("0"/"1"); empty string for gain_sweep rows
     "match_score_before",
     "match_score_after",
     "quality_flag",
@@ -200,7 +203,7 @@ class DriveCalConfig:
     D: np.ndarray
     frame_width: int
     frame_height: int
-    cx: float   # principal point x — used for crosshair overlay
+    cx: float  # principal point x — used for crosshair overlay
 
     # From sensor_config.yaml — ugv
     ugv_port: str
@@ -554,8 +557,10 @@ def analyse_runs(
         key if analysis failed due to insufficient good samples.
     """
     gain_good = [
-        r for r in rows
-        if r["run_type"] == _GAIN_RUN and int(r["quality_flag"]) == 0
+        r
+        for r in rows
+        if r["run_type"] == _GAIN_RUN
+        and int(r["quality_flag"]) == 0
         and r.get("corrected_delta_deg") is not None
         and r.get("expected_angle_deg") is not None
     ]
@@ -595,8 +600,8 @@ def analyse_runs(
             [float(r["corrected_delta_deg"]) for r in cw_rows],
             [float(r["expected_angle_deg"]) for r in cw_rows],
         )
-        k_pos = fit_ccw["slope"]   # positive: CCW delta / CCW expected
-        k_neg = fit_cw["slope"]    # also positive: CW delta / CW expected (both negative)
+        k_pos = fit_ccw["slope"]  # positive: CCW delta / CCW expected
+        k_neg = fit_cw["slope"]  # also positive: CW delta / CW expected (both negative)
         asymmetry = abs(k_pos - k_neg) / max(abs(k_pos), abs(k_neg))
         asymmetric = asymmetry > _ASYMMETRY_THRESHOLD
         if asymmetric:
@@ -614,9 +619,15 @@ def analyse_runs(
         "calibration_surface": config.calibration_surface,
         "effective_track_width_m": round(w_eff, 6) if w_eff is not None else None,
         "turn_rate_gain": round(k, 6),
-        "turn_rate_gain_pos": round(k_pos, 6) if asymmetric and k_pos is not None else None,
-        "turn_rate_gain_neg": round(k_neg, 6) if asymmetric and k_neg is not None else None,
-        "angular_dead_band_rad_s": round(omega_dead, 4) if omega_dead is not None else None,
+        "turn_rate_gain_pos": round(k_pos, 6)
+        if asymmetric and k_pos is not None
+        else None,
+        "turn_rate_gain_neg": round(k_neg, 6)
+        if asymmetric and k_neg is not None
+        else None,
+        "angular_dead_band_rad_s": round(omega_dead, 4)
+        if omega_dead is not None
+        else None,
         "n_samples": n_good,
         "fit_mae_deg": round(fit_all["mae_deg"], 4),
         "n_total_samples": n_total,
@@ -671,13 +682,16 @@ def _estimate_dead_band_from_rows(rows: list[dict[str, Any]]) -> float | None:
 
     def _estimate_for_direction(direction: str) -> float | None:
         dir_rows = [
-            r for r in dead_rows
+            r
+            for r in dead_rows
             if r["direction"] == direction and r.get("moved") is not None
         ]
         if not dir_rows:
             return None
         # Sort descending by omega.
-        dir_rows_sorted = sorted(dir_rows, key=lambda r: -float(r["omega_commanded_rad_s"]))
+        dir_rows_sorted = sorted(
+            dir_rows, key=lambda r: -float(r["omega_commanded_rad_s"])
+        )
         parsed = [
             (float(r["omega_commanded_rad_s"]), _parse_moved(r.get("moved")))
             for r in dir_rows_sorted
@@ -765,7 +779,9 @@ def _load_config(
 
     dead_raw = ud_cfg.get("dead_band_omega_steps_rad_s")
     if not dead_raw:
-        raise ValueError("ugv_drive.dead_band_omega_steps_rad_s must be a non-empty list.")
+        raise ValueError(
+            "ugv_drive.dead_band_omega_steps_rad_s must be a non-empty list."
+        )
     dead_steps = tuple(float(v) for v in dead_raw)
 
     camera_offset = float(ud_cfg.get("camera_offset_m", 0.0))
@@ -776,7 +792,9 @@ def _load_config(
     if args.noise_floor is not None:
         noise_floor = float(args.noise_floor)
 
-    camera_device = args.camera_device or str(ud_cfg.get("camera_device", "/dev/video0"))
+    camera_device = args.camera_device or str(
+        ud_cfg.get("camera_device", "/dev/video0")
+    )
 
     return DriveCalConfig(
         K=K,
@@ -925,7 +943,9 @@ def _capture_bearing_measurement(
         for _ in range(frames_to_average):
             ok, frame = cap.read()
             if not ok or frame is None:
-                logger.warning("cap.read() failed during bearing measurement — skipping frame.")
+                logger.warning(
+                    "cap.read() failed during bearing measurement — skipping frame."
+                )
                 continue
             u, v, score = _match_template_uv(frame, template)
             bearing = pixel_to_bearing_deg(u, v, K, D)
@@ -1189,28 +1209,41 @@ def _run_gain_step(
     _check_cancel(cancel_event)
     omega_signed = omega if direction == "ccw" else -omega
     b_before, u_before, score_before, b_after, u_after, score_after = _execute_rotation(
-        omega_signed, config.command_duration_s, config.settle_time_s,
-        cap, template, config, ugv, cap_lock, cancel_event,
+        omega_signed,
+        config.command_duration_s,
+        config.settle_time_s,
+        cap,
+        template,
+        config,
+        ugv,
+        cap_lock,
+        cancel_event,
     )
     delta = b_after - b_before
     corrected = correct_for_camera_offset(
         delta, config.camera_offset_m, config.target_distance_m
     )
     expected = math.degrees(omega_signed * config.command_duration_s)
-    qflag = (
-        quality_flag(score_before, u_before, config.frame_width, config.min_match_score)
-        | quality_flag(score_after, u_after, config.frame_width, config.min_match_score)
-    )
+    qflag = quality_flag(
+        score_before, u_before, config.frame_width, config.min_match_score
+    ) | quality_flag(score_after, u_after, config.frame_width, config.min_match_score)
     label = "CCW" if direction == "ccw" else "CW "
     logger.info(
         f"Gain {label} {omega:.2f} rad/s: Δ={delta:+.2f}°  "
         f"corrected={corrected:+.2f}°  expected={expected:+.2f}°  flag={qflag}"
     )
     return _build_gain_row(
-        omega=omega, direction=direction, duration_s=config.command_duration_s,
-        b_before=b_before, b_after=b_after, corrected_delta=corrected,
-        expected_angle=expected, score_before=score_before, score_after=score_after,
-        qflag=qflag, t0=t0,
+        omega=omega,
+        direction=direction,
+        duration_s=config.command_duration_s,
+        b_before=b_before,
+        b_after=b_after,
+        corrected_delta=corrected,
+        expected_angle=expected,
+        score_before=score_before,
+        score_after=score_after,
+        qflag=qflag,
+        t0=t0,
     )
 
 
@@ -1261,23 +1294,36 @@ def _run_dead_band_step(
     _check_cancel(cancel_event)
     omega_signed = omega_d if direction == "ccw" else -omega_d
     b_before, u_before, score_before, b_after, u_after, score_after = _execute_rotation(
-        omega_signed, config.dead_band_duration_s, config.dead_band_settle_s,
-        cap, template, config, ugv, cap_lock, cancel_event,
+        omega_signed,
+        config.dead_band_duration_s,
+        config.dead_band_settle_s,
+        cap,
+        template,
+        config,
+        ugv,
+        cap_lock,
+        cancel_event,
     )
     delta = b_after - b_before
     did_move = abs(delta) > config.noise_floor_deg
-    qflag = (
-        quality_flag(score_before, u_before, config.frame_width, config.min_match_score)
-        | quality_flag(score_after, u_after, config.frame_width, config.min_match_score)
-    )
+    qflag = quality_flag(
+        score_before, u_before, config.frame_width, config.min_match_score
+    ) | quality_flag(score_after, u_after, config.frame_width, config.min_match_score)
     label = "CCW" if direction == "ccw" else "CW "
     logger.info(
         f"Dead-band {label} {omega_d:.2f} rad/s: Δ={delta:+.2f}°  moved={did_move}"
     )
     return _build_dead_band_row(
-        omega=omega_d, direction=direction, duration_s=config.dead_band_duration_s,
-        b_before=b_before, b_after=b_after, moved=did_move,
-        score_before=score_before, score_after=score_after, qflag=qflag, t0=t0,
+        omega=omega_d,
+        direction=direction,
+        duration_s=config.dead_band_duration_s,
+        b_before=b_before,
+        b_after=b_after,
+        moved=did_move,
+        score_before=score_before,
+        score_after=score_after,
+        qflag=qflag,
+        t0=t0,
     )
 
 
@@ -1315,7 +1361,7 @@ def _run_sweep(
     t0 : float
         ``time.monotonic()`` reference at sweep start, used for timestamps.
     """
-    n_gain = len(config.omega_commands_rad_s) * 2   # CCW + CW per omega
+    n_gain = len(config.omega_commands_rad_s) * 2  # CCW + CW per omega
     n_dead = len(config.dead_band_omega_steps_rad_s) * 2
     total_steps = n_gain + n_dead
     current_step = 0
@@ -1325,19 +1371,37 @@ def _run_sweep(
         for omega in config.omega_commands_rad_s:
             for direction in ("ccw", "cw"):
                 current_step += 1
-                rows.append(_run_gain_step(
-                    omega, direction, cap, ugv, config, template,
-                    cap_lock, cancel_event, t0,
-                ))
+                rows.append(
+                    _run_gain_step(
+                        omega,
+                        direction,
+                        cap,
+                        ugv,
+                        config,
+                        template,
+                        cap_lock,
+                        cancel_event,
+                        t0,
+                    )
+                )
                 state.update_sweep_progress(current_step, total_steps)
 
         for omega_d in config.dead_band_omega_steps_rad_s:
             for direction in ("ccw", "cw"):
                 current_step += 1
-                rows.append(_run_dead_band_step(
-                    omega_d, direction, cap, ugv, config, template,
-                    cap_lock, cancel_event, t0,
-                ))
+                rows.append(
+                    _run_dead_band_step(
+                        omega_d,
+                        direction,
+                        cap,
+                        ugv,
+                        config,
+                        template,
+                        cap_lock,
+                        cancel_event,
+                        t0,
+                    )
+                )
                 state.update_sweep_progress(current_step, total_steps)
 
         state.set_sweep_rows(rows)
@@ -1987,7 +2051,14 @@ def main() -> None:
 
         frame_thread = threading.Thread(
             target=_run_frame,
-            args=(cap, config.cx, config.template_half_width_px, state, cap_lock, stop_event),
+            args=(
+                cap,
+                config.cx,
+                config.template_half_width_px,
+                state,
+                cap_lock,
+                stop_event,
+            ),
             daemon=True,
         )
         frame_thread.start()

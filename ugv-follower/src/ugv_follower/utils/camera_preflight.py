@@ -100,9 +100,7 @@ def _find_device_holders(device_path: str) -> list[int]:
     if shutil.which("fuser") is not None:
         # fuser often prints PID info on stderr; parse both streams.
         fuser_result = _run_command(["fuser", device_path])
-        fuser_pids = _parse_pid_tokens(
-            fuser_result.stdout + "\n" + fuser_result.stderr
-        )
+        fuser_pids = _parse_pid_tokens(fuser_result.stdout + "\n" + fuser_result.stderr)
         return fuser_pids
 
     return []

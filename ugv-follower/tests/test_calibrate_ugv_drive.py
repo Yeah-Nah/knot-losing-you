@@ -8,8 +8,6 @@ from __future__ import annotations
 
 import argparse
 import math
-import os
-import tempfile
 import threading
 import time
 from pathlib import Path
@@ -67,7 +65,11 @@ def _make_minimal_sensor_cfg() -> dict[str, Any]:
     return {
         "waveshare_rgb": {
             "model": "fisheye",
-            "camera_matrix": [[500.0, 0.0, 320.0], [0.0, 500.0, 240.0], [0.0, 0.0, 1.0]],
+            "camera_matrix": [
+                [500.0, 0.0, 320.0],
+                [0.0, 500.0, 240.0],
+                [0.0, 0.0, 1.0],
+            ],
             "dist_coeffs": [0.0, 0.0, 0.0, 0.0],
             "resolution": [640, 480],
         },
@@ -172,22 +174,24 @@ def _make_gain_rows(
         for direction, sign in [("ccw", 1.0), ("cw", -1.0)]:
             expected = math.degrees(sign * omega * duration_s)
             corrected = k_actual * expected
-            rows.append({
-                "run_type": "gain_sweep",
-                "omega_commanded_rad_s": omega,
-                "direction": direction,
-                "command_duration_s": duration_s,
-                "bearing_before_deg": 0.0,
-                "bearing_after_deg": corrected,
-                "delta_bearing_deg": corrected,
-                "corrected_delta_deg": corrected,
-                "expected_angle_deg": expected,
-                "moved": None,
-                "match_score_before": 0.9,
-                "match_score_after": 0.9,
-                "quality_flag": quality,
-                "timestamp_s": 0.0,
-            })
+            rows.append(
+                {
+                    "run_type": "gain_sweep",
+                    "omega_commanded_rad_s": omega,
+                    "direction": direction,
+                    "command_duration_s": duration_s,
+                    "bearing_before_deg": 0.0,
+                    "bearing_after_deg": corrected,
+                    "delta_bearing_deg": corrected,
+                    "corrected_delta_deg": corrected,
+                    "expected_angle_deg": expected,
+                    "moved": None,
+                    "match_score_before": 0.9,
+                    "match_score_after": 0.9,
+                    "quality_flag": quality,
+                    "timestamp_s": 0.0,
+                }
+            )
     return rows
 
 
@@ -203,22 +207,24 @@ def _make_dead_band_rows(
     rows = []
     for omega, moved in zip(omegas, moved_flags):
         for direction in ("ccw", "cw"):
-            rows.append({
-                "run_type": "dead_band",
-                "omega_commanded_rad_s": omega,
-                "direction": direction,
-                "command_duration_s": 1.5,
-                "bearing_before_deg": 0.0,
-                "bearing_after_deg": 5.0 if moved else 0.0,
-                "delta_bearing_deg": 5.0 if moved else 0.0,
-                "corrected_delta_deg": None,
-                "expected_angle_deg": None,
-                "moved": moved,
-                "match_score_before": 0.9,
-                "match_score_after": 0.9,
-                "quality_flag": 0,
-                "timestamp_s": 0.0,
-            })
+            rows.append(
+                {
+                    "run_type": "dead_band",
+                    "omega_commanded_rad_s": omega,
+                    "direction": direction,
+                    "command_duration_s": 1.5,
+                    "bearing_before_deg": 0.0,
+                    "bearing_after_deg": 5.0 if moved else 0.0,
+                    "delta_bearing_deg": 5.0 if moved else 0.0,
+                    "corrected_delta_deg": None,
+                    "expected_angle_deg": None,
+                    "moved": moved,
+                    "match_score_before": 0.9,
+                    "match_score_after": 0.9,
+                    "quality_flag": 0,
+                    "timestamp_s": 0.0,
+                }
+            )
     return rows
 
 
@@ -322,11 +328,13 @@ def test_load_fisheye_intrinsics_missing_matrix_raises() -> None:
 def test_load_fisheye_intrinsics_missing_dist_raises() -> None:
     """Missing dist_coeffs → ValueError."""
     with pytest.raises(ValueError, match="dist_coeffs is null"):
-        load_fisheye_intrinsics({
-            "waveshare_rgb": {
-                "camera_matrix": [[500, 0, 320], [0, 500, 240], [0, 0, 1]]
+        load_fisheye_intrinsics(
+            {
+                "waveshare_rgb": {
+                    "camera_matrix": [[500, 0, 320], [0, 500, 240], [0, 0, 1]]
+                }
             }
-        })
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -429,8 +437,8 @@ def test_quality_flag_both() -> None:
 
 def test_quality_flag_bitor_combines_two_measurements() -> None:
     """Bitwise OR of before/after flags: low_match | near_edge = 3."""
-    flag_before = quality_flag(0.4, 320.0, 640, min_match_score=0.65)   # 1 (low_match)
-    flag_after = quality_flag(0.9, 5.0, 640, min_match_score=0.65)       # 2 (near_edge)
+    flag_before = quality_flag(0.4, 320.0, 640, min_match_score=0.65)  # 1 (low_match)
+    flag_after = quality_flag(0.9, 5.0, 640, min_match_score=0.65)  # 2 (near_edge)
     assert (flag_before | flag_after) == 3
 
 
@@ -465,7 +473,7 @@ def test_fit_turn_rate_gain_too_few_samples() -> None:
 def test_fit_turn_rate_gain_residuals_nonzero() -> None:
     """Noisy data produces non-zero MAE."""
     expected = [57.3, 114.6, -57.3, -114.6]
-    noisy = [62.0, 120.0, -55.0, -110.0]   # not perfectly proportional
+    noisy = [62.0, 120.0, -55.0, -110.0]  # not perfectly proportional
     result = fit_turn_rate_gain(noisy, expected)
     assert result["mae_deg"] > 0.0
 
@@ -530,7 +538,9 @@ def test_analyse_runs_excludes_bad_quality_rows() -> None:
     """Gain rows with quality_flag != 0 are excluded from the fit."""
     config = _make_drive_cal_config()
     good_rows = _make_gain_rows(omegas=[1.0], k_actual=1.0, quality=0)
-    bad_rows = _make_gain_rows(omegas=[0.5], k_actual=99.0, quality=1)   # should be ignored
+    bad_rows = _make_gain_rows(
+        omegas=[0.5], k_actual=99.0, quality=1
+    )  # should be ignored
     result = analyse_runs(good_rows + bad_rows, config)
     # Only 2 good gain rows (1 omega × CCW + CW), not the 2 bad ones
     assert result["n_samples"] == 2
@@ -542,7 +552,9 @@ def test_analyse_runs_identity_gain() -> None:
     rows = _make_gain_rows(k_actual=1.0)
     result = analyse_runs(rows, config)
     assert result["turn_rate_gain"] == pytest.approx(1.0, rel=1e-4)
-    assert result["effective_track_width_m"] == pytest.approx(config.ugv_track_width_nom, rel=1e-4)
+    assert result["effective_track_width_m"] == pytest.approx(
+        config.ugv_track_width_nom, rel=1e-4
+    )
 
 
 def test_analyse_runs_over_turn_gain() -> None:
@@ -567,7 +579,7 @@ def test_analyse_runs_symmetric_gain_no_split() -> None:
 def test_analyse_runs_insufficient_good_samples() -> None:
     """Fewer than 2 good gain_sweep rows → error key present."""
     config = _make_drive_cal_config()
-    rows = _make_gain_rows(quality=1)   # all bad quality
+    rows = _make_gain_rows(quality=1)  # all bad quality
     result = analyse_runs(rows, config)
     assert "error" in result
 
@@ -659,24 +671,54 @@ def _make_sample_rows() -> list[dict[str, Any]]:
     t0 = time.monotonic()
     return [
         _build_gain_row(
-            omega=0.5, direction="ccw", duration_s=2.0,
-            b_before=1.23, b_after=58.6, corrected_delta=55.4, expected_angle=57.3,
-            score_before=0.91, score_after=0.88, qflag=0, t0=t0,
+            omega=0.5,
+            direction="ccw",
+            duration_s=2.0,
+            b_before=1.23,
+            b_after=58.6,
+            corrected_delta=55.4,
+            expected_angle=57.3,
+            score_before=0.91,
+            score_after=0.88,
+            qflag=0,
+            t0=t0,
         ),
         _build_gain_row(
-            omega=0.5, direction="cw", duration_s=2.0,
-            b_before=58.6, b_after=1.3, corrected_delta=-55.2, expected_angle=-57.3,
-            score_before=0.89, score_after=0.92, qflag=0, t0=t0,
+            omega=0.5,
+            direction="cw",
+            duration_s=2.0,
+            b_before=58.6,
+            b_after=1.3,
+            corrected_delta=-55.2,
+            expected_angle=-57.3,
+            score_before=0.89,
+            score_after=0.92,
+            qflag=0,
+            t0=t0,
         ),
         _build_dead_band_row(
-            omega=0.2, direction="ccw", duration_s=1.5,
-            b_before=0.0, b_after=3.5, moved=True,
-            score_before=0.87, score_after=0.85, qflag=0, t0=t0,
+            omega=0.2,
+            direction="ccw",
+            duration_s=1.5,
+            b_before=0.0,
+            b_after=3.5,
+            moved=True,
+            score_before=0.87,
+            score_after=0.85,
+            qflag=0,
+            t0=t0,
         ),
         _build_dead_band_row(
-            omega=0.1, direction="cw", duration_s=1.5,
-            b_before=0.0, b_after=0.3, moved=False,
-            score_before=0.86, score_after=0.84, qflag=0, t0=t0,
+            omega=0.1,
+            direction="cw",
+            duration_s=1.5,
+            b_before=0.0,
+            b_after=0.3,
+            moved=False,
+            score_before=0.86,
+            score_after=0.84,
+            qflag=0,
+            t0=t0,
         ),
     ]
 
@@ -696,7 +738,7 @@ def test_csv_round_trip_types(tmp_path: Path) -> None:
     assert gain_row["run_type"] == "gain_sweep"
     assert isinstance(gain_row["quality_flag"], int)
     assert isinstance(gain_row["corrected_delta_deg"], float)
-    assert gain_row["moved"] is None   # empty for gain_sweep
+    assert gain_row["moved"] is None  # empty for gain_sweep
 
     dead_row = loaded[2]
     assert dead_row["run_type"] == "dead_band"
@@ -765,7 +807,7 @@ def test_load_config_missing_ugv_drive_section_raises(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="ugv_drive section is missing"):
         _load_config(
             _make_minimal_sensor_cfg(),
-            {},   # no ugv_drive key
+            {},  # no ugv_drive key
             _make_args(tmp_path),
         )
 
@@ -817,7 +859,7 @@ def test_run_sweep_row_count(mock_sleep: MagicMock, mock_bearing: MagicMock) -> 
     ugv_mock = MagicMock()
 
     _run_sweep(
-        MagicMock(),   # cap — not used because _capture_bearing_measurement is mocked
+        MagicMock(),  # cap — not used because _capture_bearing_measurement is mocked
         ugv_mock,
         config,
         np.zeros((40, 40, 3), dtype=np.uint8),
@@ -833,8 +875,8 @@ def test_run_sweep_row_count(mock_sleep: MagicMock, mock_bearing: MagicMock) -> 
 
     gain_rows = [r for r in rows if r["run_type"] == "gain_sweep"]
     dead_rows = [r for r in rows if r["run_type"] == "dead_band"]
-    assert len(gain_rows) == 4   # 2 omegas × CCW + CW
-    assert len(dead_rows) == 4   # 2 dead-band steps × CCW + CW
+    assert len(gain_rows) == 4  # 2 omegas × CCW + CW
+    assert len(dead_rows) == 4  # 2 dead-band steps × CCW + CW
 
 
 @patch(
@@ -855,9 +897,14 @@ def test_run_sweep_ugv_move_and_stop_calls(
     ugv_mock = MagicMock()
 
     _run_sweep(
-        MagicMock(), ugv_mock, config,
+        MagicMock(),
+        ugv_mock,
+        config,
         np.zeros((40, 40, 3), dtype=np.uint8),
-        state, threading.Lock(), threading.Event(), time.monotonic(),
+        state,
+        threading.Lock(),
+        threading.Event(),
+        time.monotonic(),
     )
 
     # 1 omega: 1 CCW + 1 CW = 2 gain runs
@@ -882,9 +929,14 @@ def test_run_sweep_ccw_and_cw_signs(
     ugv_mock = MagicMock()
 
     _run_sweep(
-        MagicMock(), ugv_mock, config,
+        MagicMock(),
+        ugv_mock,
+        config,
         np.zeros((40, 40, 3), dtype=np.uint8),
-        state, threading.Lock(), threading.Event(), time.monotonic(),
+        state,
+        threading.Lock(),
+        threading.Event(),
+        time.monotonic(),
     )
 
     move_args = [call.args for call in ugv_mock.move.call_args_list]

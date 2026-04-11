@@ -234,9 +234,7 @@ class TestCommandShaperThreading:
         for i in range(1, len(all_lefts)):
             prev, curr = all_lefts[i - 1], all_lefts[i]
             if prev > 0.05 and curr < -0.05:
-                pytest.fail(
-                    f"Direct sign flip at index {i}: {prev:.4f} → {curr:.4f}"
-                )
+                pytest.fail(f"Direct sign flip at index {i}: {prev:.4f} → {curr:.4f}")
 
     def test_already_running_raises(self) -> None:
         """Starting an already-running shaper raises RuntimeError."""
@@ -328,8 +326,12 @@ class TestImmediateStop:
 class TestUGVControllerShaping:
     """UGVController shaping on/off behaviour without real hardware."""
 
-    def _make_controller(self, shaping_enabled: bool = False, **kwargs) -> UGVController:
-        return UGVController(port="/dev/null", shaping_enabled=shaping_enabled, **kwargs)
+    def _make_controller(
+        self, shaping_enabled: bool = False, **kwargs
+    ) -> UGVController:
+        return UGVController(
+            port="/dev/null", shaping_enabled=shaping_enabled, **kwargs
+        )
 
     def test_shaping_disabled_move_sends_immediately(self) -> None:
         """With shaping off, move() calls _send_wheel_speeds synchronously."""
