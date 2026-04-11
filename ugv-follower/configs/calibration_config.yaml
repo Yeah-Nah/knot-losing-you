@@ -39,22 +39,22 @@ pan_tilt_servo:
 ugv_drive:
   # Angular velocity commands for the turn-rate gain sweep (rad/s).
   # Start above the confirmed motion threshold (~3.5 rad/s on smooth concrete).
-  omega_commands_rad_s: [3.5, 4.0, 4.5]
-  command_duration_s: 0.15             # Duration of each rotation run (seconds)
+  omega_commands_rad_s: [3.5, 3.8, 4]
+  command_duration_s: 0.10             # Duration of each rotation run (seconds)
   settle_time_s: 1.2                   # Wait after stop before measuring (seconds)
 
   # Dead-band probe — commands applied in decreasing order until stall is detected.
-  dead_band_omega_steps_rad_s: [4.5, 4.0, 3.5, 3.0, 2.5, 2.0]
-  dead_band_duration_s: 1.0            # Duration per dead-band probe run (seconds)
+  dead_band_omega_steps_rad_s: [4.0, 3.5, 3.0, 2.5, 2.0, 1.5, 1.0]
+  dead_band_duration_s: 0.30            # Duration per dead-band probe run (seconds)
   dead_band_settle_s: 1.2              # Wait after stop before measuring (seconds)
 
   # Measurement
   frames_to_average: 7                 # Frames to median-average at each bearing measurement
-  noise_floor_deg: 1.5                 # Min bearing change (°) considered real rotation
+  noise_floor_deg: 2                 # Min bearing change (°) considered real rotation
   camera_offset_m: 0.085                # Forward offset of camera lens from rover rotation centre (m)
   target_distance_m: 2.7               # Approximate distance from rover rotation centre to target (m)
   template_half_width_px: 60           # Half-width of the square template crop (pixels)
-  min_match_score: 0.75                # Minimum TM_CCOEFF_NORMED score for a usable measurement
+  min_match_score: 0.8                # Minimum TM_CCOEFF_NORMED score for a usable measurement
 
   camera_device: "/dev/video0"         # V4L2 device path for the Waveshare RGB camera
   calibration_surface: "smooth concrete"  # Human-readable description of the calibration surface
