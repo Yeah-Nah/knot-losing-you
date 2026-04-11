@@ -8,6 +8,29 @@ closed-loop follower architecture.
 
 ---
 
+## 0. Symbol Definitions
+
+Key symbols used throughout this document:
+
+- **$r$** – reference signal; the desired target value (e.g., desired heading, desired speed).
+- **$y$** – measured output; the actual system state as observed (e.g., measured heading, actual speed).
+- **$t$** – time; the continuous time variable used in differential equations and signal expressions (e.g., $r(t)$ means reference as a function of time).
+- **$u$** – command signal; the control input sent to the system.
+- **$v$** – linear velocity term used in rover kinematics (typically forward chassis speed command/state).
+- **$e(t)$** – error signal; the difference between reference and measured output: $e(t) = r(t) - y(t)$.
+- **$s$** – Laplace variable; used in transfer-function notation for frequency-domain analysis.
+- **$k$** – turn-rate gain ratio used in drive calibration, typically $k = \omega_a / \omega_c$, where $\omega_a$ is measured actual angular velocity and $\omega_c$ is commanded angular velocity.
+- **$P(s)$** – plant transfer function in the $s$-domain; here, "plant" means the physical rover system being controlled (motors, drivetrain, chassis-ground interaction, and resulting motion), modelled as input-command to output-response dynamics.
+- **$Y(s)$** – Laplace transform of the output signal $y(t)$ (that is, output represented in the $s$-domain).
+- **$W_{\text{nom}}$** – nominal track width; the design/model value for the lateral spacing between the left and right wheel paths in the rover kinematic model.
+- **$W_{\text{eff}}$** – effective track width; the calibrated track width that best matches the rover's real turning behaviour, often used to correct the nominal differential-drive model.
+- **PI/PID** – controller types:
+  - **P** (Proportional): responds to current error: $u(t) = K_P e(t)$.
+  - **PI** (Proportional-Integral): responds to current and accumulated error: $u(t) = K_P e(t) + K_I \int e(\tau) d\tau$.
+  - **PID** (Proportional-Integral-Derivative): responds to current, accumulated, and rate of error: $u(t) = K_P e(t) + K_I \int e(\tau) d\tau + K_D \frac{de(t)}{dt}$.
+
+---
+
 ## 1. The Core Idea
 
 A control loop answers one question repeatedly:
@@ -20,7 +43,7 @@ is used.
 - Open loop: command is computed from the reference only.
 - Closed loop: command is computed from reference minus measured output (the error).
 
-In symbols, with reference $r$, measured output $y$, and command $u$:
+In symbols, with reference **$r$** (desired value), measured output **$y$** (actual system state), and command **$u$** (control signal):
 
 - Open loop: $u = f(r)$
 - Closed loop: $u = f(r - y)$
@@ -51,7 +74,7 @@ Open loop is the right format for calibration experiments because it isolates pl
 In Phase 2 drive calibration, the rover is intentionally run in open loop to estimate:
 
 - turn-rate gain $k = \omega_a / \omega_c$
-- effective track width $W_{\text{eff}} = W_{\text{nom}} / k$
+- effective track width $W_{\text{eff}} = W_{\text{nom}} / k$, where $W_{\text{nom}}$ is the nominal model track width and $W_{\text{eff}}$ is the calibrated track width used to better match real turning behaviour
 - angular dead-band $\omega_{\text{dead}}$
 
 Those are plant parameters. Measuring them directly is easier when no outer correction loop hides the raw actuator response.
@@ -80,17 +103,23 @@ $$
 e(t) = r(t) - y(t), \qquad u(t) = C\big(e(t)\big)
 $$
 
-where $C(\cdot)$ is the controller (often proportional or PI/PID).
+where:
+- **$e(t)$** is the error signal at time $t$ (difference between desired and actual).
+- **$r(t)$** is the reference (desired value) at time $t$.
+- **$y(t)$** is the measured output (actual value) at time $t$.
+- **$C(\cdot)$** is the controller function (often proportional, PI, or PID).
 
 ### Why It Works
 
 If the rover under-turns, the measured error remains non-zero, so the controller keeps commanding
 correction until the error is reduced. Disturbances are not "predicted away"; they are measured and corrected.
 
-In transfer-function form (single-input/single-output):
+In transfer-function form (frequency domain via Laplace transform, where $s$ is the Laplace variable; see [Laplace Transform Primer](./math_theory/laplace_transform_primer.md) for background):
 
 - Plant: $P(s)$
 - Controller: $C(s)$
+
+In this context, the plant is the real rover dynamics being controlled: the commanded motion input goes through motors/drivetrain and vehicle-ground interaction to produce measured motion output.
 
 Closed-loop reference-to-output map:
 
