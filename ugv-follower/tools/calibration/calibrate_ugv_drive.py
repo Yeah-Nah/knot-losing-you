@@ -168,6 +168,7 @@ class CalibrationState(str, Enum):
 
     WAITING_TARGET = "WAITING_TARGET"
     SWEEPING = "SWEEPING"
+    WAITING_RECENTER = "WAITING_RECENTER"
     COMPLETE = "COMPLETE"
     FAILED = "FAILED"
     ABORTED = "ABORTED"
@@ -290,6 +291,25 @@ class CalibrationStateContainer:
             self._status = SweepStatus(state=CalibrationState.SWEEPING)
             return True
 
+    def try_start_recenter_resume(self) -> bool:
+        """Atomically transition WAITING_RECENTER → SWEEPING, preserving progress.
+
+        Returns
+        -------
+        bool
+            True if the transition succeeded; False if not in WAITING_RECENTER.
+        """
+        with self._lock:
+            if self._status.state != CalibrationState.WAITING_RECENTER:
+                return False
+            self._status = SweepStatus(
+                state=CalibrationState.SWEEPING,
+                progress_pct=self._status.progress_pct,
+                current_step=self._status.current_step,
+                total_steps=self._status.total_steps,
+            )
+            return True
+
     def update_sweep_progress(self, current_step: int, total_steps: int) -> None:
         """Update progress fields while remaining in SWEEPING state."""
         with self._lock:
@@ -310,10 +330,14 @@ class CalibrationStateContainer:
     def try_reset(self) -> bool:
         """Atomically reset to WAITING_TARGET, clearing previous results.
 
-        Returns True on success, False if currently SWEEPING.
+        Returns True on success, False if the sweep thread is still active
+        (SWEEPING or WAITING_RECENTER).
         """
         with self._lock:
-            if self._status.state == CalibrationState.SWEEPING:
+            if self._status.state in (
+                CalibrationState.SWEEPING,
+                CalibrationState.WAITING_RECENTER,
+            ):
                 return False
             self._status = SweepStatus()
             self._sweep_rows = None
@@ -1376,6 +1400,7 @@ def _run_sweep(
     state: CalibrationStateContainer,
     cap_lock: threading.Lock,
     cancel_event: threading.Event,
+    recenter_event: threading.Event,
     t0: float,
 ) -> None:
     """Execute the gain sweep and dead-band sweep, then transition to COMPLETE or FAILED.
@@ -1391,6 +1416,12 @@ def _run_sweep(
     begins.  Block-direction ordering avoids directional instability from
     immediate sign reversals at each ω level.
 
+    Between the gain sweep and the dead-band sweep the state transitions to
+    WAITING_RECENTER and the thread blocks until the operator calls ``GET
+    /confirm`` (which sets ``recenter_event``).  This lets the operator
+    manually re-centre the rover on the calibration target before the
+    dead-band probe begins.
+
     Dead-band sweep: decreasing ω values; records whether rotation occurred.
 
     On completion: calls ``state.set_sweep_rows`` then transitions to COMPLETE.
@@ -1399,6 +1430,9 @@ def _run_sweep(
 
     Parameters
     ----------
+    recenter_event : threading.Event
+        Set by the operator via ``GET /confirm`` to resume after recentering.
+        Also set by ``cancel_sweep()`` so that ``/abort`` unblocks the wait.
     t0 : float
         ``time.monotonic()`` reference at sweep start, used for timestamps.
     """
@@ -1426,6 +1460,26 @@ def _run_sweep(
                     )
                 )
                 state.update_sweep_progress(current_step, total_steps)
+
+        # Pause for operator recenter between gain sweep and dead-band sweep.
+        state.transition_to(
+            SweepStatus(
+                state=CalibrationState.WAITING_RECENTER,
+                progress_pct=100.0 * current_step / total_steps,
+                current_step=current_step,
+                total_steps=total_steps,
+            )
+        )
+        logger.info(
+            "Gain sweep complete (%d/%d). Waiting for operator to re-centre "
+            "rover and GET /confirm before dead-band sweep.",
+            current_step,
+            total_steps,
+        )
+        while not recenter_event.wait(timeout=0.5):
+            _check_cancel(cancel_event)
+        _check_cancel(cancel_event)
+        logger.info("Recenter confirmed — starting dead-band sweep.")
 
         for direction in ("ccw", "cw"):
             for omega_d in config.dead_band_omega_steps_rad_s:
@@ -1546,6 +1600,7 @@ class CalibrationOrchestrator:
         self._state = state
         self._cap_lock = cap_lock
         self._cancel_event: threading.Event = threading.Event()
+        self._recenter_event: threading.Event = threading.Event()
         self._csv_path: Path | None = None
         self._saved_result: dict[str, Any] | None = None
 
@@ -1572,6 +1627,7 @@ class CalibrationOrchestrator:
             )
 
         self._cancel_event.clear()
+        self._recenter_event.clear()
         self._csv_path = _make_csv_path()
         t0 = time.monotonic()
 
@@ -1585,6 +1641,7 @@ class CalibrationOrchestrator:
                 self._state,
                 self._cap_lock,
                 self._cancel_event,
+                self._recenter_event,
                 t0,
             ),
             daemon=True,
@@ -1594,6 +1651,20 @@ class CalibrationOrchestrator:
     def cancel_sweep(self) -> None:
         """Signal the running sweep thread (if any) to stop early."""
         self._cancel_event.set()
+        self._recenter_event.set()  # unblock sweep thread if paused for recenter
+
+    def resume_recenter(self) -> None:
+        """Transition WAITING_RECENTER → SWEEPING and unblock the paused sweep thread.
+
+        Raises
+        ------
+        RuntimeError
+            If not currently in WAITING_RECENTER state.
+        """
+        if not self._state.try_start_recenter_resume():
+            raise RuntimeError("not in WAITING_RECENTER state")
+        self._recenter_event.set()
+        logger.info("Operator confirmed recenter — continuing to dead-band sweep.")
 
     def save_results(self) -> tuple[Path, dict[str, Any]]:
         """Write CSV and sensor_config.yaml from the completed sweep.
@@ -1703,10 +1774,16 @@ def _make_handler(
                 pass
 
         def _handle_confirm(self) -> None:
+            # /confirm handles both initial start (WAITING_TARGET) and
+            # mid-sweep recenter resume (WAITING_RECENTER).
+            current = state.get_status()["state"]
             try:
-                orchestrator.confirm_target()
-            except RuntimeError:
-                self._serve_json({"error": "not in WAITING_TARGET state"}, 409)
+                if current == CalibrationState.WAITING_RECENTER.value:
+                    orchestrator.resume_recenter()
+                else:
+                    orchestrator.confirm_target()
+            except RuntimeError as exc:
+                self._serve_json({"error": str(exc)}, 409)
                 return
             self._serve_json({"status": "sweeping"})
 
@@ -1744,7 +1821,7 @@ def _make_handler(
 
         def _handle_reset(self) -> None:
             if not state.try_reset():
-                self._serve_json({"error": "cannot reset while SWEEPING"}, 409)
+                self._serve_json({"error": "cannot reset while sweep is in progress"}, 409)
                 return
             self._serve_json({"status": "reset"})
 
@@ -1768,6 +1845,14 @@ def _get_status_text(
         total = status["total_steps"]
         pct = status["progress_pct"]
         return f"Sweeping: {step}/{total}  ({pct:.0f}%)", (0, 200, 255), 0.8
+    if current_state == CalibrationState.WAITING_RECENTER.value:
+        step = status["current_step"]
+        total = status["total_steps"]
+        return (
+            f"Re-centre rover on target ({step}/{total}), then GET /confirm",
+            (0, 255, 255),  # yellow
+            0.7,
+        )
     if current_state == CalibrationState.COMPLETE.value:
         return "COMPLETE — GET /save to persist results", (0, 255, 128), 0.8
     if current_state == CalibrationState.FAILED.value:

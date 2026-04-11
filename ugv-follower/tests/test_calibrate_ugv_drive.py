@@ -19,12 +19,16 @@ import pytest
 import yaml
 
 from tools.calibration.calibrate_ugv_drive import (
+    CalibrationOrchestrator,
+    CalibrationState,
     CalibrationStateContainer,
     DriveCalConfig,
+    SweepStatus,
     _SweepCancelled,
     _build_dead_band_row,
     _build_gain_row,
     _check_cancel,
+    _get_status_text,
     _load_config,
     _load_csv,
     _run_sweep,
@@ -918,6 +922,8 @@ def test_run_sweep_row_count(mock_sleep: MagicMock, mock_bearing: MagicMock) -> 
     state.try_start_sweep()
     ugv_mock = MagicMock()
 
+    recenter_event = threading.Event()
+    recenter_event.set()  # pre-set so the pause is skipped immediately
     _run_sweep(
         MagicMock(),  # cap — not used because _capture_bearing_measurement is mocked
         ugv_mock,
@@ -926,6 +932,7 @@ def test_run_sweep_row_count(mock_sleep: MagicMock, mock_bearing: MagicMock) -> 
         state,
         threading.Lock(),
         threading.Event(),
+        recenter_event,
         time.monotonic(),
     )
 
@@ -956,6 +963,8 @@ def test_run_sweep_ugv_move_and_stop_calls(
     state.try_start_sweep()
     ugv_mock = MagicMock()
 
+    recenter_event = threading.Event()
+    recenter_event.set()
     _run_sweep(
         MagicMock(),
         ugv_mock,
@@ -964,6 +973,7 @@ def test_run_sweep_ugv_move_and_stop_calls(
         state,
         threading.Lock(),
         threading.Event(),
+        recenter_event,
         time.monotonic(),
     )
 
@@ -988,6 +998,8 @@ def test_run_sweep_ccw_and_cw_signs(
     state.try_start_sweep()
     ugv_mock = MagicMock()
 
+    recenter_event = threading.Event()
+    recenter_event.set()
     _run_sweep(
         MagicMock(),
         ugv_mock,
@@ -996,6 +1008,7 @@ def test_run_sweep_ccw_and_cw_signs(
         state,
         threading.Lock(),
         threading.Event(),
+        recenter_event,
         time.monotonic(),
     )
 
@@ -1026,6 +1039,8 @@ def test_run_sweep_gain_block_ordering(
     state.try_start_sweep()
     ugv_mock = MagicMock()
 
+    recenter_event = threading.Event()
+    recenter_event.set()
     _run_sweep(
         MagicMock(),
         ugv_mock,
@@ -1034,6 +1049,7 @@ def test_run_sweep_gain_block_ordering(
         state,
         threading.Lock(),
         threading.Event(),
+        recenter_event,
         time.monotonic(),
     )
 
@@ -1082,3 +1098,131 @@ class TestCheckCancel:
     def test_no_raise_when_clear(self) -> None:
         event = threading.Event()
         _check_cancel(event)  # should not raise
+
+
+# ---------------------------------------------------------------------------
+# Recenter pause — state transitions and event wiring
+# ---------------------------------------------------------------------------
+
+
+@patch(
+    "tools.calibration.calibrate_ugv_drive._capture_bearing_measurement",
+    return_value=(5.0, 320.0, 0.90),
+)
+@patch("tools.calibration.calibrate_ugv_drive.time.sleep")
+def test_run_sweep_pauses_for_recenter(
+    mock_sleep: MagicMock, mock_bearing: MagicMock
+) -> None:
+    """_run_sweep transitions to WAITING_RECENTER between gain and dead-band loops.
+
+    The recenter_event is not pre-set; instead a side-effect on transition_to
+    sets it once the WAITING_RECENTER state is entered so the sweep can
+    proceed.  This verifies that the pause actually occurs and that state
+    passes through WAITING_RECENTER before completing.
+    """
+    config = _make_drive_cal_config(
+        omega_commands=(0.5,),
+        dead_band_steps=(0.2,),
+    )
+    state = CalibrationStateContainer()
+    state.try_start_sweep()
+
+    recenter_event = threading.Event()
+    states_seen: list[str] = []
+
+    original_transition = state.transition_to
+
+    def capturing_transition(new_status: SweepStatus) -> None:
+        states_seen.append(new_status.state.value)
+        original_transition(new_status)
+        if new_status.state == CalibrationState.WAITING_RECENTER:
+            # Simulate operator pressing /confirm after recentering.
+            state.try_start_recenter_resume()
+            recenter_event.set()
+
+    state.transition_to = capturing_transition  # type: ignore[method-assign]
+
+    _run_sweep(
+        MagicMock(),
+        MagicMock(),
+        config,
+        np.zeros((40, 40, 3), dtype=np.uint8),
+        state,
+        threading.Lock(),
+        threading.Event(),
+        recenter_event,
+        time.monotonic(),
+    )
+
+    assert CalibrationState.WAITING_RECENTER.value in states_seen
+    assert states_seen[-1] == CalibrationState.COMPLETE.value
+
+
+def test_try_start_recenter_resume_transitions_state() -> None:
+    """try_start_recenter_resume returns True and preserves progress."""
+    state = CalibrationStateContainer()
+    state.transition_to(
+        SweepStatus(
+            state=CalibrationState.WAITING_RECENTER,
+            progress_pct=52.5,
+            current_step=3,
+            total_steps=6,
+        )
+    )
+
+    result = state.try_start_recenter_resume()
+
+    assert result is True
+    snap = state.get_snapshot()
+    assert snap.state == CalibrationState.SWEEPING
+    assert snap.progress_pct == pytest.approx(52.5)
+    assert snap.current_step == 3
+    assert snap.total_steps == 6
+
+
+def test_try_start_recenter_resume_fails_in_wrong_state() -> None:
+    """try_start_recenter_resume returns False when not in WAITING_RECENTER."""
+    state = CalibrationStateContainer()  # starts in WAITING_TARGET
+    assert state.try_start_recenter_resume() is False
+
+
+def test_try_reset_blocked_in_waiting_recenter() -> None:
+    """try_reset returns False when state is WAITING_RECENTER."""
+    state = CalibrationStateContainer()
+    state.transition_to(SweepStatus(state=CalibrationState.WAITING_RECENTER))
+    assert state.try_reset() is False
+
+
+def test_cancel_sweep_sets_recenter_event() -> None:
+    """cancel_sweep sets both cancel and recenter events."""
+    state = CalibrationStateContainer()
+    orchestrator = CalibrationOrchestrator(
+        config=_make_drive_cal_config(),
+        ugv=MagicMock(),
+        cap=MagicMock(),
+        state=state,
+        cap_lock=threading.Lock(),
+    )
+
+    orchestrator.cancel_sweep()
+
+    assert orchestrator._cancel_event.is_set()
+    assert orchestrator._recenter_event.is_set()
+
+
+def test_get_status_text_waiting_recenter() -> None:
+    """_get_status_text returns yellow recenter guidance for WAITING_RECENTER."""
+    status = {
+        "state": CalibrationState.WAITING_RECENTER.value,
+        "current_step": 3,
+        "total_steps": 10,
+        "progress_pct": 30.0,
+        "error_message": None,
+    }
+    result = _get_status_text(CalibrationState.WAITING_RECENTER.value, status)
+    assert result is not None
+    text, colour, _scale = result
+    assert "Re-centre" in text
+    assert "/confirm" in text
+    assert "3/10" in text
+    assert colour == (0, 255, 255)  # yellow in BGR
