@@ -16,9 +16,10 @@ axis.  A forward-offset correction (same geometry as pan-tilt calibration)
 removes the bias introduced by the camera lens being displaced forward from
 the rover's differential-drive rotation centre.
 
-The sweep runs all CCW (+ω) commands as a block, then all CW (−ω) commands
-as a block.  Block-direction runs avoid the directional instability caused
-by immediate sign reversals at each ω level.
+The sweep runs four directional blocks in order: gain CCW, gain CW,
+dead-band CCW, dead-band CW.  The operator is prompted to re-centre the
+rover between every block, avoiding directional instability from sign
+reversals and accumulated drift.
 
 Results written to ``sensor_config.yaml`` under the ``ugv_drive`` key:
 
@@ -97,7 +98,7 @@ from datetime import datetime
 from enum import Enum
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, Sequence
 
 import cv2
 import numpy as np
@@ -1392,6 +1393,64 @@ def _run_dead_band_step(
     )
 
 
+def _wait_for_recenter(
+    state: CalibrationStateContainer,
+    current_step: int,
+    total_steps: int,
+    recenter_event: threading.Event,
+    cancel_event: threading.Event,
+    next_block_label: str,
+) -> None:
+    """Pause the sweep and block until the operator confirms re-centring.
+
+    Clears ``recenter_event`` before transitioning to ``WAITING_RECENTER`` so
+    that a stale set from a previous pause cannot bypass the wait.
+
+    Parameters
+    ----------
+    state : CalibrationStateContainer
+        Shared state container; transitions to ``WAITING_RECENTER`` then back
+        to ``SWEEPING`` when resumed.
+    current_step : int
+        Completed step count, used for progress reporting.
+    total_steps : int
+        Total step count across all blocks.
+    recenter_event : threading.Event
+        Set by the operator via ``GET /confirm`` to resume after re-centring.
+        Also set by ``cancel_sweep()`` so that ``/abort`` unblocks the wait.
+    cancel_event : threading.Event
+        Checked periodically during the wait; raises ``_SweepCancelled`` if set.
+    next_block_label : str
+        Human-readable label for the block that follows this pause, used in
+        log messages so the operator knows what is coming next.
+
+    Raises
+    ------
+    _SweepCancelled
+        If the cancel event fires while waiting for re-centre confirmation.
+    """
+    recenter_event.clear()
+    state.transition_to(
+        SweepStatus(
+            state=CalibrationState.WAITING_RECENTER,
+            progress_pct=100.0 * current_step / total_steps,
+            current_step=current_step,
+            total_steps=total_steps,
+        )
+    )
+    logger.info(
+        "Block complete (%d/%d). Waiting for operator to re-centre rover "
+        "and GET /confirm before %s.",
+        current_step,
+        total_steps,
+        next_block_label,
+    )
+    while not recenter_event.wait(timeout=0.5):
+        _check_cancel(cancel_event)
+    _check_cancel(cancel_event)
+    logger.info("Recenter confirmed — starting %s.", next_block_label)
+
+
 def _run_sweep(
     cap: cv2.VideoCapture,
     ugv: UGVController,
@@ -1403,7 +1462,7 @@ def _run_sweep(
     recenter_event: threading.Event,
     t0: float,
 ) -> None:
-    """Execute the gain sweep and dead-band sweep, then transition to COMPLETE or FAILED.
+    """Execute the calibration sweep, then transition to COMPLETE or FAILED.
 
     Intended to run in a daemon thread.  For each commanded step:
 
@@ -1412,15 +1471,18 @@ def _run_sweep(
     - Wait ``settle_time_s`` after stopping.
     - Measure the bearing again and record the difference.
 
-    Gain sweep: all CCW (+ω) runs complete as a block before any CW (−ω) run
-    begins.  Block-direction ordering avoids directional instability from
-    immediate sign reversals at each ω level.
+    The sweep runs four directional blocks in order:
 
-    Between the gain sweep and the dead-band sweep the state transitions to
-    WAITING_RECENTER and the thread blocks until the operator calls ``GET
-    /confirm`` (which sets ``recenter_event``).  This lets the operator
-    manually re-centre the rover on the calibration target before the
-    dead-band probe begins.
+    1. gain sweep CCW
+    2. gain sweep CW
+    3. dead-band sweep CCW
+    4. dead-band sweep CW
+
+    After each completed block except the last the state transitions to
+    ``WAITING_RECENTER`` and the thread blocks until the operator calls
+    ``GET /confirm`` (which sets ``recenter_event``).  This lets the
+    operator manually re-centre the rover on the calibration target between
+    every directional block.
 
     Dead-band sweep: decreasing ω values; records whether rotation occurred.
 
@@ -1431,23 +1493,36 @@ def _run_sweep(
     Parameters
     ----------
     recenter_event : threading.Event
-        Set by the operator via ``GET /confirm`` to resume after recentering.
+        Set by the operator via ``GET /confirm`` to resume after re-centring.
         Also set by ``cancel_sweep()`` so that ``/abort`` unblocks the wait.
     t0 : float
         ``time.monotonic()`` reference at sweep start, used for timestamps.
     """
-    n_gain = len(config.omega_commands_rad_s) * 2  # CCW + CW per omega
-    n_dead = len(config.dead_band_omega_steps_rad_s) * 2
-    total_steps = n_gain + n_dead
+    total_steps = (
+        len(config.omega_commands_rad_s) * 2
+        + len(config.dead_band_omega_steps_rad_s) * 2
+    )
     current_step = 0
     rows: list[dict[str, Any]] = []
 
+    # Ordered directional blocks: (step_fn, direction, omegas, label).
+    # Block boundaries drive the recenter pause locations dynamically.
+    blocks: list[
+        tuple[Callable[..., dict[str, Any]], str, Sequence[float], str]
+    ] = [
+        (_run_gain_step,      "ccw", config.omega_commands_rad_s,        "gain sweep CCW"),
+        (_run_gain_step,      "cw",  config.omega_commands_rad_s,        "gain sweep CW"),
+        (_run_dead_band_step, "ccw", config.dead_band_omega_steps_rad_s, "dead-band sweep CCW"),
+        (_run_dead_band_step, "cw",  config.dead_band_omega_steps_rad_s, "dead-band sweep CW"),
+    ]
+
     try:
-        for direction in ("ccw", "cw"):
-            for omega in config.omega_commands_rad_s:
+        for block_idx, (step_fn, direction, omegas, label) in enumerate(blocks):
+            logger.info("Starting %s.", label)
+            for omega in omegas:
                 current_step += 1
                 rows.append(
-                    _run_gain_step(
+                    step_fn(
                         omega,
                         direction,
                         cap,
@@ -1461,43 +1536,15 @@ def _run_sweep(
                 )
                 state.update_sweep_progress(current_step, total_steps)
 
-        # Pause for operator recenter between gain sweep and dead-band sweep.
-        state.transition_to(
-            SweepStatus(
-                state=CalibrationState.WAITING_RECENTER,
-                progress_pct=100.0 * current_step / total_steps,
-                current_step=current_step,
-                total_steps=total_steps,
-            )
-        )
-        logger.info(
-            "Gain sweep complete (%d/%d). Waiting for operator to re-centre "
-            "rover and GET /confirm before dead-band sweep.",
-            current_step,
-            total_steps,
-        )
-        while not recenter_event.wait(timeout=0.5):
-            _check_cancel(cancel_event)
-        _check_cancel(cancel_event)
-        logger.info("Recenter confirmed — starting dead-band sweep.")
-
-        for direction in ("ccw", "cw"):
-            for omega_d in config.dead_band_omega_steps_rad_s:
-                current_step += 1
-                rows.append(
-                    _run_dead_band_step(
-                        omega_d,
-                        direction,
-                        cap,
-                        ugv,
-                        config,
-                        template,
-                        cap_lock,
-                        cancel_event,
-                        t0,
-                    )
+            if block_idx < len(blocks) - 1:
+                _wait_for_recenter(
+                    state,
+                    current_step,
+                    total_steps,
+                    recenter_event,
+                    cancel_event,
+                    blocks[block_idx + 1][3],
                 )
-                state.update_sweep_progress(current_step, total_steps)
 
         state.set_sweep_rows(rows)
         state.transition_to(

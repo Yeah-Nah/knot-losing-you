@@ -1105,6 +1105,30 @@ class TestCheckCancel:
 # ---------------------------------------------------------------------------
 
 
+def _make_auto_unblock_transition(
+    state: CalibrationStateContainer,
+    recenter_event: threading.Event,
+    states_seen: list[str],
+) -> Any:
+    """Return a transition_to replacement that auto-unblocks each recenter pause.
+
+    Records every state transition in ``states_seen``.  When a
+    ``WAITING_RECENTER`` transition fires it immediately calls
+    ``try_start_recenter_resume()`` and sets ``recenter_event``, simulating
+    an operator pressing ``GET /confirm``.
+    """
+    original_transition = state.transition_to
+
+    def _capturing(new_status: SweepStatus) -> None:
+        states_seen.append(new_status.state.value)
+        original_transition(new_status)
+        if new_status.state == CalibrationState.WAITING_RECENTER:
+            state.try_start_recenter_resume()
+            recenter_event.set()
+
+    return _capturing
+
+
 @patch(
     "tools.calibration.calibrate_ugv_drive._capture_bearing_measurement",
     return_value=(5.0, 320.0, 0.90),
@@ -1113,12 +1137,11 @@ class TestCheckCancel:
 def test_run_sweep_pauses_for_recenter(
     mock_sleep: MagicMock, mock_bearing: MagicMock
 ) -> None:
-    """_run_sweep transitions to WAITING_RECENTER between gain and dead-band loops.
+    """_run_sweep transitions to WAITING_RECENTER between every directional block.
 
-    The recenter_event is not pre-set; instead a side-effect on transition_to
-    sets it once the WAITING_RECENTER state is entered so the sweep can
-    proceed.  This verifies that the pause actually occurs and that state
-    passes through WAITING_RECENTER before completing.
+    With 4 blocks (gain CCW, gain CW, dead-band CCW, dead-band CW) there must
+    be exactly 3 recenter pauses.  The auto-unblock helper simulates the
+    operator pressing ``GET /confirm`` after each pause.
     """
     config = _make_drive_cal_config(
         omega_commands=(0.5,),
@@ -1129,6 +1152,49 @@ def test_run_sweep_pauses_for_recenter(
 
     recenter_event = threading.Event()
     states_seen: list[str] = []
+    state.transition_to = _make_auto_unblock_transition(  # type: ignore[method-assign]
+        state, recenter_event, states_seen
+    )
+
+    _run_sweep(
+        MagicMock(),
+        MagicMock(),
+        config,
+        np.zeros((40, 40, 3), dtype=np.uint8),
+        state,
+        threading.Lock(),
+        threading.Event(),
+        recenter_event,
+        time.monotonic(),
+    )
+
+    assert states_seen.count(CalibrationState.WAITING_RECENTER.value) == 3
+    assert states_seen[-1] == CalibrationState.COMPLETE.value
+
+
+@patch(
+    "tools.calibration.calibrate_ugv_drive._capture_bearing_measurement",
+    return_value=(5.0, 320.0, 0.90),
+)
+@patch("tools.calibration.calibrate_ugv_drive.time.sleep")
+def test_recenter_pause_count_matches_block_count(
+    mock_sleep: MagicMock, mock_bearing: MagicMock
+) -> None:
+    """Recenter pause positions are driven by configured block lengths.
+
+    With 2 gain commands and 3 dead-band steps the 4 blocks have sizes
+    2, 2, 3, 3 (total 10 steps).  Pauses must occur at steps 2, 4, and 7.
+    """
+    config = _make_drive_cal_config(
+        omega_commands=(1.0, 2.0),
+        dead_band_steps=(0.5, 1.0, 1.5),
+    )
+    state = CalibrationStateContainer()
+    state.try_start_sweep()
+
+    recenter_event = threading.Event()
+    states_seen: list[str] = []
+    pause_steps: list[int] = []
 
     original_transition = state.transition_to
 
@@ -1136,7 +1202,7 @@ def test_run_sweep_pauses_for_recenter(
         states_seen.append(new_status.state.value)
         original_transition(new_status)
         if new_status.state == CalibrationState.WAITING_RECENTER:
-            # Simulate operator pressing /confirm after recentering.
+            pause_steps.append(new_status.current_step)
             state.try_start_recenter_resume()
             recenter_event.set()
 
@@ -1154,7 +1220,52 @@ def test_run_sweep_pauses_for_recenter(
         time.monotonic(),
     )
 
-    assert CalibrationState.WAITING_RECENTER.value in states_seen
+    assert pause_steps == [2, 4, 7]
+    assert states_seen[-1] == CalibrationState.COMPLETE.value
+
+
+@patch(
+    "tools.calibration.calibrate_ugv_drive._capture_bearing_measurement",
+    return_value=(5.0, 320.0, 0.90),
+)
+@patch("tools.calibration.calibrate_ugv_drive.time.sleep")
+def test_recenter_event_cleared_between_pauses(
+    mock_sleep: MagicMock, mock_bearing: MagicMock
+) -> None:
+    """A pre-set recenter_event does not allow any pause to be skipped.
+
+    ``_wait_for_recenter`` clears the event before entering
+    ``WAITING_RECENTER``, so even if the event is already set at the start
+    of a pause all 3 pauses must still be entered.
+    """
+    config = _make_drive_cal_config(
+        omega_commands=(0.5,),
+        dead_band_steps=(0.2,),
+    )
+    state = CalibrationStateContainer()
+    state.try_start_sweep()
+
+    recenter_event = threading.Event()
+    recenter_event.set()  # pre-set: would skip pauses if clear() were absent
+
+    states_seen: list[str] = []
+    state.transition_to = _make_auto_unblock_transition(  # type: ignore[method-assign]
+        state, recenter_event, states_seen
+    )
+
+    _run_sweep(
+        MagicMock(),
+        MagicMock(),
+        config,
+        np.zeros((40, 40, 3), dtype=np.uint8),
+        state,
+        threading.Lock(),
+        threading.Event(),
+        recenter_event,
+        time.monotonic(),
+    )
+
+    assert states_seen.count(CalibrationState.WAITING_RECENTER.value) == 3
     assert states_seen[-1] == CalibrationState.COMPLETE.value
 
 
