@@ -39,8 +39,8 @@ pan_tilt_servo:
 ugv_drive:
   # Angular velocity commands for the turn-rate gain sweep (rad/s).
   # Interleaved CCW (+) and CW (−) runs keep the rover facing the target.
-  omega_commands_rad_s: [3, 3.5, 4.0, 4.5]
-  command_duration_s: 1.2              # Duration of each rotation run (seconds)
+  omega_commands_rad_s: [3, 3.5, 4.0]
+  command_duration_s: 0.2              # Duration of each rotation run (seconds)
   settle_time_s: 1.2                   # Wait after stop before measuring (seconds)
 
   # Dead-band probe — commands applied in decreasing order until stall is detected.
@@ -49,7 +49,7 @@ ugv_drive:
   dead_band_settle_s: 1.2              # Wait after stop before measuring (seconds)
 
   # Measurement
-  frames_to_average: 3                 # Frames to median-average at each bearing measurement
+  frames_to_average: 5                 # Frames to median-average at each bearing measurement
   noise_floor_deg: 2.0                 # Min bearing change (°) considered real rotation
   camera_offset_m: 0.085                # Forward offset of camera lens from rover rotation centre (m)
   target_distance_m: 2.7               # Approximate distance from rover rotation centre to target (m)
