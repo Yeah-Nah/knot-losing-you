@@ -39,12 +39,12 @@ pan_tilt_servo:
 ugv_drive:
   # Angular velocity commands for the turn-rate gain sweep (rad/s).
   # Interleaved CCW (+) and CW (−) runs keep the rover facing the target.
-  omega_commands_rad_s: [1.0, 1.4, 1.8, 2.2]
+  omega_commands_rad_s: [3, 3.5, 4.0, 4.5]
   command_duration_s: 1.2              # Duration of each rotation run (seconds)
   settle_time_s: 1.2                   # Wait after stop before measuring (seconds)
 
   # Dead-band probe — commands applied in decreasing order until stall is detected.
-  dead_band_omega_steps_rad_s: [0.30, 0.24, 0.20, 0.16, 0.13, 0.10]
+  dead_band_omega_steps_rad_s: [3.0, 2.5, 2.0, 1.5, 1.0]
   dead_band_duration_s: 1.0            # Duration per dead-band probe run (seconds)
   dead_band_settle_s: 1.2              # Wait after stop before measuring (seconds)
 
