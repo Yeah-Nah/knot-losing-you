@@ -1674,6 +1674,7 @@ def _get_status_text(
 def _run_frame(
     cap: cv2.VideoCapture,
     cx: float,
+    template_half_width_px: int,
     state: CalibrationStateContainer,
     cap_lock: threading.Lock,
     stop_event: threading.Event,
@@ -1698,9 +1699,17 @@ def _run_frame(
             time.sleep(0.05)
             continue
 
-        h = frame.shape[0]
+        h, w = frame.shape[:2]
+        cy_row = int(round(h / 2.0))
         annotated = frame.copy()
         cv2.line(annotated, (cx_col, 0), (cx_col, h - 1), (0, 255, 0), 2)
+
+        x1 = max(0, cx_col - template_half_width_px)
+        x2 = min(w - 1, cx_col + template_half_width_px)
+        y1 = max(0, cy_row - template_half_width_px)
+        y2 = min(h - 1, cy_row + template_half_width_px)
+        cv2.rectangle(annotated, (x1, y1), (x2, y2), (0, 255, 255), 2)
+        cv2.circle(annotated, (cx_col, cy_row), 4, (0, 255, 255), -1)
 
         status = state.get_status()
         overlay = _get_status_text(status["state"], status)
@@ -1978,7 +1987,7 @@ def main() -> None:
 
         frame_thread = threading.Thread(
             target=_run_frame,
-            args=(cap, config.cx, state, cap_lock, stop_event),
+            args=(cap, config.cx, config.template_half_width_px, state, cap_lock, stop_event),
             daemon=True,
         )
         frame_thread.start()
