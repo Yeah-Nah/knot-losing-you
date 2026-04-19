@@ -4,17 +4,31 @@ Purpose: keep a single running record of what has been tested, what has been lea
 
 ## Current Status (2026-04-19)
 
-### Latest calibration run (run 6, 2026-04-19 06:20 session, aborted)
+### Latest calibration run (run 7, 2026-04-19 10:33 session)
+- omega_commands_rad_s: [4.5, 5.0, 5.5, 5.0, 4.5], command_duration_s: 0.20
+- dead_band_omega_steps_rad_s: [4.0, 3.0, 2.5]
+- turn_rate_gain: 0.378166
+- effective_track_width_m: 0.46276
+- angular_dead_band_rad_s: null
+- n_samples used in gain fit: 6 of 16 total rows
+- fit_mae_deg: 1.5773
+
+Run analysis:
+- Run completed end-to-end (16 rows) with no template-recapture crash.
+- Best fit quality so far: n_samples increased to 6 and MAE dropped to 1.58°.
+- Gain remains near prior level (0.378 vs 0.386 in run 5), suggesting a stable but still low effective turn-rate gain.
+- `analyse_runs` excluded 2 sign-inconsistent gain samples; opposite-direction events are still present.
+- Undistorted matching alone previously did not improve retention; lowering `min_match_score` to 0.45 had the larger impact.
+- Dead-band was not estimated (`null`) because all tested dead-band commands were classified as moved.
+
+### Previous calibration run (run 6, 2026-04-19 06:20 session, aborted)
 - omega_commands_rad_s: [4.5, 5.0, 5.5], command_duration_s: 0.20
 - dead_band_omega_steps_rad_s: [5.0, 4.0, 3.0, 2.5]
 - Run did not complete (aborted during transition to dead-band CCW; no final JSON result saved)
 
 Run analysis:
-- Gain-floor change is applied (3.5 removed). Early gain samples are stronger than prior run but still under-deliver vs expected.
-- Out-of-frame drift still occurs within gain blocks: at step 3 the center marker left frame; at step 6 it was at the left edge.
-- Low confidence aligns with edge/distortion conditions: score_after dropped to ~0.47 on flagged 5.5 steps (both directions), with sign failure on CCW 5.5.
-- Stream/camera reliability is now a hard blocker: run crashed at dead-band CCW start with `Failed to capture frame for template extraction` and V4L2 `errno=19 (No such device)`.
-- This confirms two active blockers: (1) target retention/match robustness at frame edges, and (2) capture-device instability during recenter/template recapture.
+- Run crashed at dead-band CCW start with `Failed to capture frame for template extraction` and V4L2 `errno=19 (No such device)`.
+- This prompted the camera recovery/reopen handling work.
 
 ### Previous calibration run (run 5, 2026-04-19 05:37 session)
 - omega_commands_rad_s: [3.5, 4.0, 4.5, 5.0], command_duration_s: 0.20
@@ -67,10 +81,10 @@ Run analysis:
 - Only CCW 5.0 and CW 5.0 passed; CW 5.0 delivered only 15% (template tracking confusion)
 
 ### Trend
-- The two implemented fixes remain effective (near-stall gate + block-agnostic mid-block recenter).
-- Raising gain floor to [4.5, 5.0, 5.5] removed near-threshold input, but out-of-frame drift still appears by step 3/6 in practice.
-- Primary blocker is now capture robustness: run 6 terminated on template recapture due to camera device loss (`No such device`).
-- Secondary blocker remains match robustness near frame edges (low `score_after` on high-omega edge cases).
+- Run 7 completed without the run 6 camera/device-dropout failure.
+- Usable gain data improved materially (6 samples, MAE 1.58°), primarily after lowering match confidence.
+- Main uncertainty has shifted to quality balance: higher retention vs more borderline/sign-inconsistent samples.
+- Dead-band threshold remains unresolved in current settings because no stall crossover was observed.
 
 ## Confirmed Findings
 
@@ -94,19 +108,24 @@ Run analysis:
 ### 6) Residual tracking robustness issue remains
 - Some steps with visible movement still fail quality/confidence gating; undistorted matching is a focused next investigation.
 
-### 7) Camera capture stability is now a hard blocker
-- Run 6 aborted at dead-band CCW start: template recapture failed with `Failed to capture frame for template extraction` and V4L2 `errno=19 (No such device)`.
-- Calibration cannot complete until capture-device dropouts during recenter/template extraction are handled.
+### 7) Camera recovery path improved run completion
+- Run 7 completed through all 16 steps without the template-recapture crash seen in run 6.
 
-### 8) Block-direction sweep ordering is necessary
+### 8) Lower confidence threshold had larger effect than undistortion alone
+- Undistorted-only run did not improve match count; lowering `min_match_score` to 0.45 increased retained samples.
+
+### 9) Dead-band is not observable with current probe range
+- With [4.0, 3.0, 2.5], all steps were classified as moved, so `angular_dead_band_rad_s` stayed null.
+
+### 10) Block-direction sweep ordering is necessary
 - Confirmed from earlier manual testing. Alternating CW/CCW within a run produces inconsistent results due to drivetrain hysteresis and stick-slip near threshold.
 - Block ordering (all CCW then all CW) is now baked into the calibration procedure.
 
-### 9) Physical dead-band is load-dependent
+### 11) Physical dead-band is load-dependent
 - Lifted-wheel tests showed consistent response well below these thresholds.
 - On-ground in-place rotation requires overcoming surface scrub, which shifts the effective dead-band above the lifted value.
 
-### 10) Camera preflight contention causes stream freeze on back-to-back runs
+### 12) Camera preflight contention causes stream freeze on back-to-back runs
 - `fuser -k` kills pipewire/wireplumber, which can restart and re-grab `/dev/video0` before the next run begins.
 - Waiting 30–60 seconds between runs avoids this.
 
@@ -124,9 +143,9 @@ Why this matters:
 
 ## Working Hypotheses (ranked)
 
-1. **Capture-device instability during recenter/template extraction is the current blocker.** Device loss (`No such device`) aborts the sweep before completion.
-2. **Edge-of-frame distortion is depressing match confidence on high-omega steps.** Undistorted-frame matching should reduce false rejects.
-3. **Real drivetrain asymmetry remains under load.** Even with improved gating and sweep structure, delivery remains asymmetric.
+1. **Confidence threshold is now the dominant calibration-quality lever.** Lowering `min_match_score` increases retention but may admit borderline samples.
+2. **Dead-band probe range is too high to find crossover.** Lower omega probes are needed to identify a moved/stall boundary.
+3. **Real drivetrain asymmetry remains under load.** Even with better completion and retention, delivery remains asymmetric.
 
 ## Completed Tests
 
@@ -150,48 +169,47 @@ Why this matters:
 
 ## Next Steps (priority order)
 
-### 1) Stabilize camera capture during recenter/template extraction
-Goal: prevent sweep aborts from camera-device dropouts.
+### 1) Re-balance `min_match_score` with undistortion enabled
+Goal: keep improved retention while reducing borderline/sign-inconsistent matches.
 
 What to change:
-- Add retry/reopen handling around template recapture when frame capture fails.
-- Add a short guarded recovery path when V4L2 returns transient errors before hard-failing the sweep.
+- Sweep `min_match_score` upward from 0.45 in small steps (e.g. 0.50, then 0.55), keeping other settings fixed.
 
 Expected outcome:
-- Calibration run continues through dead-band blocks instead of terminating at recenter transitions.
+- Preserve most sample-count gains while reducing low-quality accepted samples.
 
-### 2) A/B test undistorted-frame template matching
-Goal: reduce low-confidence rejects when target moves toward frame edges.
+### 2) Extend dead-band probe lower to force a stall crossover
+Goal: recover a valid `angular_dead_band_rad_s` estimate.
 
-What to investigate:
-- Compare one run with raw-frame template matching vs one run with undistorted-frame matching at the same motion settings.
-
-Expected outcome:
-- Higher `score_after` and fewer false rejects on high-omega edge cases.
-
-### 3) Tune confidence/quality gates after undistortion result
-Goal: recover valid moving steps without re-admitting bad data.
-
-What to investigate:
-- Re-check which gate rejects moving steps (match score, sign consistency, frame quality) after undistortion A/B.
+What to change:
+- Add lower dead-band commands (e.g. 2.0, 1.5, 1.0) while keeping settle timing.
 
 Expected outcome:
-- Higher usable sample count with stable fit quality.
+- At least one clear moved=False boundary per direction.
 
-### 4) Re-run gain sweep with current [4.5, 5.0, 5.5] once capture is stable
-Goal: get a full completed run and re-evaluate k symmetry.
+### 3) Repeat run 7 settings for repeatability
+Goal: verify gain stability around current value.
 
 What to do:
-- Keep current gain floor and dead-band steps unchanged for one clean confirmation run.
+- Re-run with the same motion profile after step 1 threshold adjustment.
 
 Expected outcome:
-- Comparable completed dataset to isolate remaining asymmetry from measurement artefact.
+- Confirm whether `turn_rate_gain` stays in a narrow band across runs.
+
+### 4) Investigate sign-inconsistent high-omega events
+Goal: reduce opposite-direction samples entering gain analysis.
+
+What to investigate:
+- Check correlation with low `score_after` and tighten sign-quality handling accordingly.
+
+Expected outcome:
+- Cleaner gain dataset and fewer post-hoc exclusions.
 
 ## Open Questions
 
 1. Does battery state materially shift the CW dead-band threshold above 4.5 rad/s?
-2. Does undistorted-frame matching materially improve edge-step confidence and retention?
-3. After camera recovery handling, do runs complete reliably without manual abort/restart?
+2. What `min_match_score` gives the best retention/quality trade-off with undistorted matching enabled?
+3. At what omega does moved=False first appear in each direction with the extended dead-band probe?
 
 ## Notes for Future Updates
 
