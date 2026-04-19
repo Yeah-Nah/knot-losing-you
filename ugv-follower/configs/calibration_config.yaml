@@ -39,7 +39,7 @@ pan_tilt_servo:
 ugv_drive:
   # Angular velocity commands for the turn-rate gain sweep (rad/s).
   # Start above the confirmed motion threshold (~3.5 rad/s on smooth concrete).
-  omega_commands_rad_s: [3.5, 4.0, 4.5, 5.0]
+  omega_commands_rad_s: [4.5, 5.0, 5.5]
   command_duration_s: 0.20             # Duration of each rotation run (seconds)
   settle_time_s: 2.0                   # Wait after stop before measuring (seconds)
 
