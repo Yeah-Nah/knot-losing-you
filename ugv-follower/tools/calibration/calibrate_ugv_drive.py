@@ -133,6 +133,11 @@ _DEAD_RUN: str = "dead_band"
 # When |k_pos − k_neg| / max(k_pos, k_neg) exceeds this, asymmetric gains are reported.
 _ASYMMETRY_THRESHOLD: float = 0.08
 
+# Quality flag bit for a near-stall gain step (|Δ_corrected| too small to be a valid measurement).
+_STALL_FLAG: int = 4
+# Minimum fraction of expected rotation that corrected delta must reach to avoid the stall gate.
+_MIN_ROTATION_FRACTION: float = 0.10
+
 # Canonical CSV column order.
 _CSV_COLUMNS: list[str] = [
     "timestamp_s",
@@ -1293,6 +1298,8 @@ def _run_gain_step(
     qflag = quality_flag(
         score_before, u_before, config.frame_width, config.min_match_score
     ) | quality_flag(score_after, u_after, config.frame_width, config.min_match_score)
+    if abs(corrected) < config.noise_floor_deg or abs(corrected) < _MIN_ROTATION_FRACTION * abs(expected):
+        qflag |= _STALL_FLAG
     label = "CCW" if direction == "ccw" else "CW "
     logger.info(
         f"Gain {label} {omega:.2f} rad/s: Δ={delta:+.2f}°  "
@@ -1504,6 +1511,7 @@ def _run_sweep(
     )
     current_step = 0
     rows: list[dict[str, Any]] = []
+    cy = config.frame_height / 2.0
 
     # Ordered directional blocks: (step_fn, direction, omegas, label).
     # Block boundaries drive the recenter pause locations dynamically.
@@ -1519,7 +1527,8 @@ def _run_sweep(
     try:
         for block_idx, (step_fn, direction, omegas, label) in enumerate(blocks):
             logger.info("Starting %s.", label)
-            for omega in omegas:
+            mid = len(omegas) // 2
+            for step_idx, omega in enumerate(omegas):
                 current_step += 1
                 rows.append(
                     step_fn(
@@ -1536,6 +1545,21 @@ def _run_sweep(
                 )
                 state.update_sweep_progress(current_step, total_steps)
 
+                if step_idx + 1 == mid and mid < len(omegas):
+                    _wait_for_recenter(
+                        state,
+                        current_step,
+                        total_steps,
+                        recenter_event,
+                        cancel_event,
+                        label,
+                    )
+                    with cap_lock:
+                        template = _capture_template(
+                            cap, config.cx, cy, config.template_half_width_px
+                        )
+                    logger.info("Template recaptured after mid-block recenter.")
+
             if block_idx < len(blocks) - 1:
                 _wait_for_recenter(
                     state,
@@ -1545,7 +1569,6 @@ def _run_sweep(
                     cancel_event,
                     blocks[block_idx + 1][3],
                 )
-                cy = config.frame_height / 2.0
                 with cap_lock:
                     template = _capture_template(
                         cap, config.cx, cy, config.template_half_width_px

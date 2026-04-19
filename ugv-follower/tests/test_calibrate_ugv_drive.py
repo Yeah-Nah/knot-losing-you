@@ -1217,7 +1217,15 @@ def test_recenter_pause_count_matches_block_count(
     """Recenter pause positions are driven by configured block lengths.
 
     With 2 gain commands and 3 dead-band steps the 4 blocks have sizes
-    2, 2, 3, 3 (total 10 steps).  Pauses must occur at steps 2, 4, and 7.
+    2, 2, 3, 3 (total 10 steps).  Each block with ≥ 2 steps gets a mid-block
+    pause (after step mid = len // 2) plus the 3 block-boundary pauses, giving:
+
+    gain CCW:      mid pause at step 1, boundary pause at step 2
+    gain CW:       mid pause at step 3, boundary pause at step 4
+    dead-band CCW: mid pause at step 5, boundary pause at step 7
+    dead-band CW:  mid pause at step 8 (no boundary — last block)
+
+    Expected pause steps: [1, 2, 3, 4, 5, 7, 8].
     """
     config = _make_drive_cal_config(
         omega_commands=(1.0, 2.0),
@@ -1254,7 +1262,7 @@ def test_recenter_pause_count_matches_block_count(
         time.monotonic(),
     )
 
-    assert pause_steps == [2, 4, 7]
+    assert pause_steps == [1, 2, 3, 4, 5, 7, 8]
     assert states_seen[-1] == CalibrationState.COMPLETE.value
 
 
@@ -1400,6 +1408,56 @@ def test_run_sweep_recaptures_template_after_each_recenter(
 
     # 4 blocks → 3 recenter pauses → 3 recaptures
     assert mock_capture_template.call_count == 3
+
+
+@patch(
+    "tools.calibration.calibrate_ugv_drive._capture_template",
+    return_value=np.zeros((40, 40, 3), dtype=np.uint8),
+)
+@patch(
+    "tools.calibration.calibrate_ugv_drive._capture_bearing_measurement",
+    return_value=(5.0, 320.0, 0.90),
+)
+@patch("tools.calibration.calibrate_ugv_drive.time.sleep")
+def test_run_sweep_stall_gate_sets_flag(
+    mock_sleep: MagicMock, mock_bearing: MagicMock, mock_capture_template: MagicMock
+) -> None:
+    """Gain steps with zero bearing change have the stall flag (bit 2) set.
+
+    When _capture_bearing_measurement returns the same bearing before and
+    after a rotation command, delta = 0 — below any noise_floor_deg — so
+    the stall gate must set quality_flag bit 2 on every gain row.
+    """
+    config = _make_drive_cal_config(
+        omega_commands=(1.0,),
+        dead_band_steps=(),
+        noise_floor_deg=2.0,
+    )
+    state = CalibrationStateContainer()
+    state.try_start_sweep()
+
+    recenter_event = threading.Event()
+    state.transition_to = _make_auto_unblock_transition(  # type: ignore[method-assign]
+        state, recenter_event, []
+    )
+
+    _run_sweep(
+        MagicMock(),
+        MagicMock(),
+        config,
+        np.zeros((40, 40, 3), dtype=np.uint8),
+        state,
+        threading.Lock(),
+        threading.Event(),
+        recenter_event,
+        time.monotonic(),
+    )
+
+    rows = state.get_sweep_rows()
+    assert rows is not None
+    gain_rows = [r for r in rows if r["run_type"] == "gain_sweep"]
+    assert len(gain_rows) == 2  # 1 omega × CCW + CW
+    assert all(r["quality_flag"] & 4 != 0 for r in gain_rows)
 
 
 def test_get_status_text_waiting_recenter() -> None:
