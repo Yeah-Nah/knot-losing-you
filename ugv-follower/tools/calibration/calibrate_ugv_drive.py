@@ -1303,7 +1303,8 @@ def _run_gain_step(
     label = "CCW" if direction == "ccw" else "CW "
     logger.info(
         f"Gain {label} {omega:.2f} rad/s: Δ={delta:+.2f}°  "
-        f"corrected={corrected:+.2f}°  expected={expected:+.2f}°  flag={qflag}"
+        f"corrected={corrected:+.2f}°  expected={expected:+.2f}°  flag={qflag}  "
+        f"score_before={score_before:.3f}  score_after={score_after:.3f}"
     )
     return _build_gain_row(
         omega=omega,
@@ -1384,7 +1385,8 @@ def _run_dead_band_step(
     ) | quality_flag(score_after, u_after, config.frame_width, config.min_match_score)
     label = "CCW" if direction == "ccw" else "CW "
     logger.info(
-        f"Dead-band {label} {omega_d:.2f} rad/s: Δ={delta:+.2f}°  moved={did_move}"
+        f"Dead-band {label} {omega_d:.2f} rad/s: Δ={delta:+.2f}°  moved={did_move}  "
+        f"score_before={score_before:.3f}  score_after={score_after:.3f}"
     )
     return _build_dead_band_row(
         omega=omega_d,
