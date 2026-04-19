@@ -96,22 +96,22 @@ def _make_minimal_cal_cfg(
 ) -> dict[str, Any]:
     """Minimal calibration_config.yaml content for config loading tests."""
     return {
-        "ugv_drive": {
-            "omega_commands_rad_s": [0.5, 1.0],
+        "shared": {
             "command_duration_s": 1.0,
             "settle_time_s": 1.0,
-            "dead_band_omega_steps_rad_s": [0.2, 0.1],
-            "dead_band_duration_s": 1.0,
-            "dead_band_settle_s": 1.0,
-            "frames_to_average": 3,
             "noise_floor_deg": 1.5,
+            "template_half_width_px": 40,
+            "camera_device": "/dev/video0",
+        },
+        "ugv_drive": {
+            "omega_commands_rad_s": [0.5, 1.0],
+            "dead_band_omega_steps_rad_s": [0.2, 0.1],
+            "frames_to_average": 3,
             "camera_offset_m": camera_offset_m,
             "target_distance_m": target_distance_m,
-            "template_half_width_px": 40,
             "min_match_score": 0.6,
-            "camera_device": "/dev/video0",
             "calibration_surface": "test floor",
-        }
+        },
     }
 
 
@@ -129,9 +129,7 @@ def _make_drive_cal_config(
     omega_commands: tuple[float, ...] = (0.5, 1.0),
     dead_band_steps: tuple[float, ...] = (0.2, 0.1),
     settle_time_s: float = 0.0,
-    dead_band_settle_s: float = 0.0,
     command_duration_s: float = 0.0,
-    dead_band_duration_s: float = 0.0,
     noise_floor_deg: float = 1.5,
     camera_offset_m: float = 0.0,
     target_distance_m: float = 2.0,
@@ -153,8 +151,6 @@ def _make_drive_cal_config(
         command_duration_s=command_duration_s,
         settle_time_s=settle_time_s,
         dead_band_omega_steps_rad_s=dead_band_steps,
-        dead_band_duration_s=dead_band_duration_s,
-        dead_band_settle_s=dead_band_settle_s,
         frames_to_average=1,
         noise_floor_deg=noise_floor_deg,
         camera_offset_m=camera_offset_m,

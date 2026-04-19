@@ -49,7 +49,7 @@ Arguments
                 Overrides calibration_config.yaml pan_tilt_servo.camera_device.
 --sensor-config Path to sensor_config.yaml (default: configs/sensor_config.yaml).
 --cal-config    Path to calibration_config.yaml (default: configs/calibration_config.yaml).
---noise-floor   Override pan_tilt_servo.noise_floor_deg from calibration config.
+--noise-floor   Override shared.noise_floor_deg from calibration config.
 
 Hardware setup
 --------------
