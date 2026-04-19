@@ -1545,6 +1545,12 @@ def _run_sweep(
                     cancel_event,
                     blocks[block_idx + 1][3],
                 )
+                cy = config.frame_height / 2.0
+                with cap_lock:
+                    template = _capture_template(
+                        cap, config.cx, cy, config.template_half_width_px
+                    )
+                logger.info("Template recaptured after recenter.")
 
         state.set_sweep_rows(rows)
         state.transition_to(

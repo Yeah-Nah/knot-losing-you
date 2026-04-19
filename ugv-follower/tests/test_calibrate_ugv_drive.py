@@ -908,11 +908,17 @@ def test_load_config_loads_omega_commands(tmp_path: Path) -> None:
 
 
 @patch(
+    "tools.calibration.calibrate_ugv_drive._capture_template",
+    return_value=np.zeros((40, 40, 3), dtype=np.uint8),
+)
+@patch(
     "tools.calibration.calibrate_ugv_drive._capture_bearing_measurement",
     return_value=(5.0, 320.0, 0.90),
 )
 @patch("tools.calibration.calibrate_ugv_drive.time.sleep")
-def test_run_sweep_row_count(mock_sleep: MagicMock, mock_bearing: MagicMock) -> None:
+def test_run_sweep_row_count(
+    mock_sleep: MagicMock, mock_bearing: MagicMock, mock_capture_template: MagicMock
+) -> None:
     """2 omega commands + 2 dead-band steps → 4 gain rows + 4 dead-band rows = 8 total."""
     config = _make_drive_cal_config(
         omega_commands=(0.5, 1.0),
@@ -949,12 +955,16 @@ def test_run_sweep_row_count(mock_sleep: MagicMock, mock_bearing: MagicMock) -> 
 
 
 @patch(
+    "tools.calibration.calibrate_ugv_drive._capture_template",
+    return_value=np.zeros((40, 40, 3), dtype=np.uint8),
+)
+@patch(
     "tools.calibration.calibrate_ugv_drive._capture_bearing_measurement",
     return_value=(5.0, 320.0, 0.90),
 )
 @patch("tools.calibration.calibrate_ugv_drive.time.sleep")
 def test_run_sweep_ugv_move_and_stop_calls(
-    mock_sleep: MagicMock, mock_bearing: MagicMock
+    mock_sleep: MagicMock, mock_bearing: MagicMock, mock_capture_template: MagicMock
 ) -> None:
     """Each rotation run issues exactly one ugv.move and one ugv.stop."""
     config = _make_drive_cal_config(
@@ -989,12 +999,16 @@ def test_run_sweep_ugv_move_and_stop_calls(
 
 
 @patch(
+    "tools.calibration.calibrate_ugv_drive._capture_template",
+    return_value=np.zeros((40, 40, 3), dtype=np.uint8),
+)
+@patch(
     "tools.calibration.calibrate_ugv_drive._capture_bearing_measurement",
     return_value=(5.0, 320.0, 0.90),
 )
 @patch("tools.calibration.calibrate_ugv_drive.time.sleep")
 def test_run_sweep_ccw_and_cw_signs(
-    mock_sleep: MagicMock, mock_bearing: MagicMock
+    mock_sleep: MagicMock, mock_bearing: MagicMock, mock_capture_template: MagicMock
 ) -> None:
     """CCW run uses +omega; CW run uses -omega."""
     config = _make_drive_cal_config(omega_commands=(0.7,), dead_band_steps=())
@@ -1025,12 +1039,16 @@ def test_run_sweep_ccw_and_cw_signs(
 
 
 @patch(
+    "tools.calibration.calibrate_ugv_drive._capture_template",
+    return_value=np.zeros((40, 40, 3), dtype=np.uint8),
+)
+@patch(
     "tools.calibration.calibrate_ugv_drive._capture_bearing_measurement",
     return_value=(5.0, 320.0, 0.90),
 )
 @patch("tools.calibration.calibrate_ugv_drive.time.sleep")
 def test_run_sweep_gain_block_ordering(
-    mock_sleep: MagicMock, mock_bearing: MagicMock
+    mock_sleep: MagicMock, mock_bearing: MagicMock, mock_capture_template: MagicMock
 ) -> None:
     """All CCW gain runs complete before any CW gain run starts.
 
@@ -1138,12 +1156,16 @@ def _make_auto_unblock_transition(
 
 
 @patch(
+    "tools.calibration.calibrate_ugv_drive._capture_template",
+    return_value=np.zeros((40, 40, 3), dtype=np.uint8),
+)
+@patch(
     "tools.calibration.calibrate_ugv_drive._capture_bearing_measurement",
     return_value=(5.0, 320.0, 0.90),
 )
 @patch("tools.calibration.calibrate_ugv_drive.time.sleep")
 def test_run_sweep_pauses_for_recenter(
-    mock_sleep: MagicMock, mock_bearing: MagicMock
+    mock_sleep: MagicMock, mock_bearing: MagicMock, mock_capture_template: MagicMock
 ) -> None:
     """_run_sweep transitions to WAITING_RECENTER between every directional block.
 
@@ -1181,12 +1203,16 @@ def test_run_sweep_pauses_for_recenter(
 
 
 @patch(
+    "tools.calibration.calibrate_ugv_drive._capture_template",
+    return_value=np.zeros((40, 40, 3), dtype=np.uint8),
+)
+@patch(
     "tools.calibration.calibrate_ugv_drive._capture_bearing_measurement",
     return_value=(5.0, 320.0, 0.90),
 )
 @patch("tools.calibration.calibrate_ugv_drive.time.sleep")
 def test_recenter_pause_count_matches_block_count(
-    mock_sleep: MagicMock, mock_bearing: MagicMock
+    mock_sleep: MagicMock, mock_bearing: MagicMock, mock_capture_template: MagicMock
 ) -> None:
     """Recenter pause positions are driven by configured block lengths.
 
@@ -1233,12 +1259,16 @@ def test_recenter_pause_count_matches_block_count(
 
 
 @patch(
+    "tools.calibration.calibrate_ugv_drive._capture_template",
+    return_value=np.zeros((40, 40, 3), dtype=np.uint8),
+)
+@patch(
     "tools.calibration.calibrate_ugv_drive._capture_bearing_measurement",
     return_value=(5.0, 320.0, 0.90),
 )
 @patch("tools.calibration.calibrate_ugv_drive.time.sleep")
 def test_recenter_event_cleared_between_pauses(
-    mock_sleep: MagicMock, mock_bearing: MagicMock
+    mock_sleep: MagicMock, mock_bearing: MagicMock, mock_capture_template: MagicMock
 ) -> None:
     """A pre-set recenter_event does not allow any pause to be skipped.
 
@@ -1327,6 +1357,49 @@ def test_cancel_sweep_sets_recenter_event() -> None:
 
     assert orchestrator._cancel_event.is_set()
     assert orchestrator._recenter_event.is_set()
+
+
+@patch(
+    "tools.calibration.calibrate_ugv_drive._capture_template",
+    return_value=np.zeros((40, 40, 3), dtype=np.uint8),
+)
+@patch(
+    "tools.calibration.calibrate_ugv_drive._capture_bearing_measurement",
+    return_value=(5.0, 320.0, 0.90),
+)
+@patch("tools.calibration.calibrate_ugv_drive.time.sleep")
+def test_run_sweep_recaptures_template_after_each_recenter(
+    mock_sleep: MagicMock,
+    mock_bearing: MagicMock,
+    mock_capture_template: MagicMock,
+) -> None:
+    """Template is recaptured once after each of the 3 recenter pauses."""
+    config = _make_drive_cal_config(
+        omega_commands=(0.5,),
+        dead_band_steps=(0.2,),
+    )
+    state = CalibrationStateContainer()
+    state.try_start_sweep()
+
+    recenter_event = threading.Event()
+    state.transition_to = _make_auto_unblock_transition(  # type: ignore[method-assign]
+        state, recenter_event, []
+    )
+
+    _run_sweep(
+        MagicMock(),
+        MagicMock(),
+        config,
+        np.zeros((40, 40, 3), dtype=np.uint8),
+        state,
+        threading.Lock(),
+        threading.Event(),
+        recenter_event,
+        time.monotonic(),
+    )
+
+    # 4 blocks → 3 recenter pauses → 3 recaptures
+    assert mock_capture_template.call_count == 3
 
 
 def test_get_status_text_waiting_recenter() -> None:
