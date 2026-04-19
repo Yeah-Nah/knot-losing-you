@@ -165,3 +165,65 @@ def pixel_to_bearing_deg(
     """
     x_n, _y_n = pixel_to_normalised(u, v, K, D)
     return math.degrees(math.atan(x_n))
+
+
+def undistort_frame(
+    frame: cv2.typing.MatLike,
+    K: np.ndarray,
+    D: np.ndarray,
+) -> cv2.typing.MatLike:
+    """Undistort a fisheye frame using the stored intrinsics.
+
+    Applies ``cv2.fisheye.undistortImage`` with ``Knew=K`` so the output
+    image maps to a virtual pinhole camera with the same principal point
+    and focal length as the original.  Pixels in the returned image satisfy
+    the pinhole relation ``x_n = (u − cx) / fx``.
+
+    Parameters
+    ----------
+    frame : cv2.typing.MatLike
+        Raw distorted input frame.
+    K : np.ndarray
+        3×3 fisheye camera matrix.
+    D : np.ndarray
+        Fisheye distortion coefficients shaped ``(4, 1)``.
+
+    Returns
+    -------
+    cv2.typing.MatLike
+        Undistorted frame with the same resolution as the input.
+    """
+    return cv2.fisheye.undistortImage(frame, K, D, Knew=K)
+
+
+def pixel_to_bearing_deg_pinhole(u: float, cx: float, fx: float) -> float:
+    """Return the horizontal bearing to an undistorted-frame pixel in degrees.
+
+    For a frame undistorted with ``Knew=K`` the pinhole relation holds:
+    ``x_n = (u − cx) / fx``, giving ``bearing = atan(x_n)``.
+
+    Sign convention matches ``pixel_to_bearing_deg``: positive bearing means
+    the target is to the right of the optical axis.
+
+    Parameters
+    ----------
+    u : float
+        Horizontal pixel coordinate in the **undistorted** frame.
+    cx : float
+        Principal point x-coordinate (``K[0, 2]``).
+    fx : float
+        Horizontal focal length (``K[0, 0]``).
+
+    Returns
+    -------
+    float
+        Horizontal bearing in degrees.
+
+    Examples
+    --------
+    >>> pixel_to_bearing_deg_pinhole(320.0, 320.0, 500.0)   # centre → 0°
+    0.0
+    >>> pixel_to_bearing_deg_pinhole(820.0, 320.0, 500.0)   # cx + fx → 45°
+    45.0
+    """
+    return math.degrees(math.atan((u - cx) / fx))

@@ -47,7 +47,9 @@ from tools.calibration.calibrate_ugv_drive import (
 from ugv_follower.utils.fisheye_utils import (
     load_fisheye_intrinsics,
     pixel_to_bearing_deg,
+    pixel_to_bearing_deg_pinhole,
     pixel_to_normalised,
+    undistort_frame,
 )
 
 
@@ -338,6 +340,32 @@ def test_load_fisheye_intrinsics_missing_dist_raises() -> None:
                 }
             }
         )
+
+
+# ---------------------------------------------------------------------------
+# fisheye_utils — undistort_frame and pixel_to_bearing_deg_pinhole
+# ---------------------------------------------------------------------------
+
+
+def test_undistort_frame_returns_same_shape() -> None:
+    """Output frame has the same shape as the input."""
+    K, D = _make_K_D_zero_distortion()
+    frame = np.zeros((480, 640, 3), dtype=np.uint8)
+    assert undistort_frame(frame, K, D).shape == frame.shape
+
+
+def test_pixel_to_bearing_deg_pinhole_centre_is_zero() -> None:
+    """Principal point u=cx → bearing of exactly 0°."""
+    K, _ = _make_K_D_zero_distortion()
+    cx, fx = float(K[0, 2]), float(K[0, 0])
+    assert pixel_to_bearing_deg_pinhole(cx, cx, fx) == pytest.approx(0.0, abs=1e-9)
+
+
+def test_pixel_to_bearing_deg_pinhole_known_value() -> None:
+    """u = cx + fx → x_n = 1 → bearing = atan(1) = 45°."""
+    K, _ = _make_K_D_zero_distortion()
+    cx, fx = float(K[0, 2]), float(K[0, 0])
+    assert pixel_to_bearing_deg_pinhole(cx + fx, cx, fx) == pytest.approx(45.0, rel=1e-6)
 
 
 # ---------------------------------------------------------------------------

@@ -110,7 +110,8 @@ from ugv_follower.utils.camera_preflight import ensure_camera_device_available
 from ugv_follower.utils.config_utils import get_project_root
 from ugv_follower.utils.fisheye_utils import (
     load_fisheye_intrinsics,
-    pixel_to_bearing_deg,
+    pixel_to_bearing_deg_pinhole,
+    undistort_frame,
 )
 
 _DEFAULT_SENSOR_CONFIG: Path = get_project_root() / "configs" / "sensor_config.yaml"
@@ -917,8 +918,10 @@ def _capture_template(
     cx: float,
     cy: float,
     half_w: int,
+    K: np.ndarray,
+    D: np.ndarray,
 ) -> cv2.typing.MatLike:
-    """Capture one frame and extract a square template centred at (cx, cy).
+    """Capture one frame, undistort it, and extract a square template centred at (cx, cy).
 
     Parameters
     ----------
@@ -930,11 +933,15 @@ def _capture_template(
         Vertical centre for the template crop (principal point y).
     half_w : int
         Half-width of the square template in pixels.
+    K : np.ndarray
+        3×3 fisheye camera matrix used to undistort the captured frame.
+    D : np.ndarray
+        Fisheye distortion coefficients shaped ``(4, 1)``.
 
     Returns
     -------
     cv2.typing.MatLike
-        The cropped template patch.
+        The cropped template patch from the undistorted frame.
 
     Raises
     ------
@@ -944,6 +951,7 @@ def _capture_template(
     ok, frame = cap.read()
     if not ok or frame is None:
         raise RuntimeError("Failed to capture frame for template extraction.")
+    frame = undistort_frame(frame, K, D)
     h, w = frame.shape[:2]
     cx_i = int(round(cx))
     cy_i = int(round(cy))
@@ -1036,7 +1044,7 @@ def _capture_template_resilient(
     last_exc: RuntimeError | None = None
     for attempt in range(1, _CAPTURE_TEMPLATE_RETRIES + 1):
         try:
-            return _capture_template(cap, cx, cy, half_w)
+            return _capture_template(cap, cx, cy, half_w, config.K, config.D)
         except RuntimeError as exc:
             last_exc = exc
             logger.warning(
@@ -1055,7 +1063,7 @@ def _capture_template_resilient(
         cap, config.camera_device, config.frame_width, config.frame_height
     )
     try:
-        return _capture_template(cap, cx, cy, half_w)
+        return _capture_template(cap, cx, cy, half_w, config.K, config.D)
     except RuntimeError as exc:
         logger.error("Template capture still failed after reopen: %s", exc)
         raise RuntimeError(
@@ -1111,9 +1119,11 @@ def _capture_bearing_measurement(
     frames_to_average : int
         Number of frames to collect and median-average.
     K : np.ndarray
-        3×3 fisheye camera matrix.
+        3×3 fisheye camera matrix — used to undistort each frame and to
+        extract ``cx`` and ``fx`` for the pinhole bearing formula.
     D : np.ndarray
-        Fisheye distortion coefficients shaped (4, 1).
+        Fisheye distortion coefficients shaped ``(4, 1)`` — used to undistort
+        each frame.
     cap_lock : threading.Lock
         Shared lock serialising camera access with the frame-display thread.
 
@@ -1127,6 +1137,8 @@ def _capture_bearing_measurement(
     RuntimeError
         If no frames can be read from the camera.
     """
+    cx = float(K[0, 2])
+    fx = float(K[0, 0])
     bearings: list[float] = []
     u_list: list[float] = []
     scores: list[float] = []
@@ -1138,8 +1150,9 @@ def _capture_bearing_measurement(
                     "cap.read() failed during bearing measurement — skipping frame."
                 )
                 continue
+            frame = undistort_frame(frame, K, D)
             u, v, score = _match_template_uv(frame, template)
-            bearing = pixel_to_bearing_deg(u, v, K, D)
+            bearing = pixel_to_bearing_deg_pinhole(u, cx, fx)
             bearings.append(bearing)
             u_list.append(u)
             scores.append(score)
