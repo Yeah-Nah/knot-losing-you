@@ -39,14 +39,14 @@ pan_tilt_servo:
 ugv_drive:
   # Angular velocity commands for the turn-rate gain sweep (rad/s).
   # Start above the confirmed motion threshold (~3.5 rad/s on smooth concrete).
-  omega_commands_rad_s: [3.5, 4.0, 4.5]
+  omega_commands_rad_s: [3.5, 4.0, 4.5, 5.0]
   command_duration_s: 0.20             # Duration of each rotation run (seconds)
-  settle_time_s: 1.2                   # Wait after stop before measuring (seconds)
+  settle_time_s: 2.0                   # Wait after stop before measuring (seconds)
 
   # Dead-band probe — commands applied in decreasing order until stall is detected.
-  dead_band_omega_steps_rad_s: [5.0, 4.5, 4.0, 3.5, 3.0, 2.5, 2.0, 1.5, 1.0]
+  dead_band_omega_steps_rad_s: [5.0, 4.0, 3.0, 2.5]
   dead_band_duration_s: 0.2            # Duration per dead-band probe run (seconds)
-  dead_band_settle_s: 1.2              # Wait after stop before measuring (seconds)
+  dead_band_settle_s: 2.0              # Wait after stop before measuring (seconds)
 
   # Measurement
   frames_to_average: 7                 # Frames to median-average at each bearing measurement
