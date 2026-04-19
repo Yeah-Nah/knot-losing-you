@@ -27,12 +27,14 @@ from tools.calibration.calibrate_ugv_drive import (
     _SweepCancelled,
     _build_dead_band_row,
     _build_gain_row,
+    _capture_template_resilient,
     _check_cancel,
     _get_status_text,
     _load_config,
     _load_csv,
     _run_sweep,
     _sign_consistent,
+    _try_reopen_capture,
     _validate_geometry,
     _write_csv,
     _write_results_atomic,
@@ -1476,3 +1478,82 @@ def test_get_status_text_waiting_recenter() -> None:
     assert "/confirm" in text
     assert "3/10" in text
     assert colour == (0, 255, 255)  # yellow in BGR
+
+
+# ---------------------------------------------------------------------------
+# _capture_template_resilient and _try_reopen_capture
+# ---------------------------------------------------------------------------
+
+
+@patch("tools.calibration.calibrate_ugv_drive.time.sleep")
+@patch("tools.calibration.calibrate_ugv_drive._capture_template")
+def test_capture_template_resilient_succeeds_on_first_try(
+    mock_capture: MagicMock,
+    mock_sleep: MagicMock,
+) -> None:
+    """Returns immediately when _capture_template succeeds on the first call."""
+    expected = np.zeros((40, 40, 3), dtype=np.uint8)
+    mock_capture.return_value = expected
+    config = _make_drive_cal_config()
+    result = _capture_template_resilient(MagicMock(), 320.0, 240.0, 20, config)
+    assert result is expected
+    mock_capture.assert_called_once()
+    mock_sleep.assert_not_called()
+
+
+@patch("tools.calibration.calibrate_ugv_drive.time.sleep")
+@patch("tools.calibration.calibrate_ugv_drive._capture_template")
+def test_capture_template_resilient_retries_on_transient_failure(
+    mock_capture: MagicMock,
+    mock_sleep: MagicMock,
+) -> None:
+    """Retries up to _CAPTURE_TEMPLATE_RETRIES times before succeeding."""
+    expected = np.zeros((40, 40, 3), dtype=np.uint8)
+    mock_capture.side_effect = [
+        RuntimeError("dropout"),
+        RuntimeError("dropout"),
+        expected,
+    ]
+    config = _make_drive_cal_config()
+    result = _capture_template_resilient(MagicMock(), 320.0, 240.0, 20, config)
+    assert result is expected
+    assert mock_capture.call_count == 3
+
+
+@patch("tools.calibration.calibrate_ugv_drive._try_reopen_capture")
+@patch("tools.calibration.calibrate_ugv_drive.time.sleep")
+@patch("tools.calibration.calibrate_ugv_drive._capture_template")
+def test_capture_template_resilient_reopens_after_all_retries_fail(
+    mock_capture: MagicMock,
+    mock_sleep: MagicMock,
+    mock_reopen: MagicMock,
+) -> None:
+    """Calls _try_reopen_capture and succeeds on the post-reopen attempt."""
+    expected = np.zeros((40, 40, 3), dtype=np.uint8)
+    mock_capture.side_effect = [
+        RuntimeError("dropout"),
+        RuntimeError("dropout"),
+        RuntimeError("dropout"),
+        expected,
+    ]
+    config = _make_drive_cal_config()
+    result = _capture_template_resilient(MagicMock(), 320.0, 240.0, 20, config)
+    assert result is expected
+    mock_reopen.assert_called_once()
+    assert mock_capture.call_count == 4
+
+
+@patch("tools.calibration.calibrate_ugv_drive._try_reopen_capture")
+@patch("tools.calibration.calibrate_ugv_drive.time.sleep")
+@patch("tools.calibration.calibrate_ugv_drive._capture_template")
+def test_capture_template_resilient_raises_after_reopen_failure(
+    mock_capture: MagicMock,
+    mock_sleep: MagicMock,
+    mock_reopen: MagicMock,
+) -> None:
+    """Raises RuntimeError when capture still fails after reopen."""
+    mock_capture.side_effect = RuntimeError("persistent dropout")
+    config = _make_drive_cal_config()
+    with pytest.raises(RuntimeError, match="retry and device reopen"):
+        _capture_template_resilient(MagicMock(), 320.0, 240.0, 20, config)
+    mock_reopen.assert_called_once()

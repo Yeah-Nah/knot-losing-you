@@ -138,6 +138,11 @@ _STALL_FLAG: int = 4
 # Minimum fraction of expected rotation that corrected delta must reach to avoid the stall gate.
 _MIN_ROTATION_FRACTION: float = 0.10
 
+# Resilient template capture: retry and reopen parameters.
+_CAPTURE_TEMPLATE_RETRIES: int = 3
+_CAPTURE_TEMPLATE_RETRY_SLEEP_S: float = 0.15
+_CAPTURE_WARMUP_FRAMES: int = 5
+
 # Canonical CSV column order.
 _CSV_COLUMNS: list[str] = [
     "timestamp_s",
@@ -943,6 +948,115 @@ def _capture_template(
     return frame[y1:y2, x1:x2].copy()
 
 
+def _try_reopen_capture(
+    cap: cv2.VideoCapture,
+    device: str,
+    width: int,
+    height: int,
+) -> None:
+    """Release and reopen a V4L2 VideoCapture in-place to recover from a device dropout.
+
+    Parameters
+    ----------
+    cap : cv2.VideoCapture
+        The capture object to reopen.  Modified in-place.
+    device : str
+        V4L2 device path (e.g. ``"/dev/video0"``).
+    width : int
+        Frame width to restore after reopen.
+    height : int
+        Frame height to restore after reopen.
+
+    Raises
+    ------
+    RuntimeError
+        If the device cannot be reopened.
+    """
+    logger.warning("Reopening camera device %s after dropout.", device)
+    cap.release()
+    time.sleep(0.5)
+    cap.open(device, cv2.CAP_V4L2)
+    if not cap.isOpened():
+        raise RuntimeError(f"Failed to reopen camera device {device}.")
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+    cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 3)
+    for _ in range(_CAPTURE_WARMUP_FRAMES):
+        cap.read()
+    logger.info("Camera device %s reopened successfully.", device)
+
+
+def _capture_template_resilient(
+    cap: cv2.VideoCapture,
+    cx: float,
+    cy: float,
+    half_w: int,
+    config: DriveCalConfig,
+) -> cv2.typing.MatLike:
+    """Capture a calibration template with retry and one reopen attempt on transient failure.
+
+    Attempts ``_capture_template`` up to ``_CAPTURE_TEMPLATE_RETRIES`` times,
+    sleeping ``_CAPTURE_TEMPLATE_RETRY_SLEEP_S`` between each.  If all retries
+    are exhausted, releases and reopens the capture device via
+    ``_try_reopen_capture``, then makes one final attempt.  Raises on
+    persistent failure so the sweep fails cleanly.
+
+    Must be called while holding the ``cap_lock`` that protects *cap* from
+    concurrent access by the frame thread.
+
+    Parameters
+    ----------
+    cap : cv2.VideoCapture
+        Open capture device.  May be reopened in-place on transient failure.
+    cx : float
+        Horizontal centre for the template crop (principal point x).
+    cy : float
+        Vertical centre for the template crop.
+    half_w : int
+        Half-width of the square template in pixels.
+    config : DriveCalConfig
+        Calibration configuration (provides device path and resolution).
+
+    Returns
+    -------
+    cv2.typing.MatLike
+        The cropped template patch.
+
+    Raises
+    ------
+    RuntimeError
+        If the frame cannot be captured after all retries and one reopen.
+    """
+    last_exc: RuntimeError | None = None
+    for attempt in range(1, _CAPTURE_TEMPLATE_RETRIES + 1):
+        try:
+            return _capture_template(cap, cx, cy, half_w)
+        except RuntimeError as exc:
+            last_exc = exc
+            logger.warning(
+                "Template capture failed (attempt %d/%d): %s",
+                attempt,
+                _CAPTURE_TEMPLATE_RETRIES,
+                exc,
+            )
+            if attempt < _CAPTURE_TEMPLATE_RETRIES:
+                time.sleep(_CAPTURE_TEMPLATE_RETRY_SLEEP_S)
+    logger.error(
+        "All %d template capture attempts failed — attempting device reopen.",
+        _CAPTURE_TEMPLATE_RETRIES,
+    )
+    _try_reopen_capture(
+        cap, config.camera_device, config.frame_width, config.frame_height
+    )
+    try:
+        return _capture_template(cap, cx, cy, half_w)
+    except RuntimeError as exc:
+        logger.error("Template capture still failed after reopen: %s", exc)
+        raise RuntimeError(
+            "Failed to capture template after retry and device reopen."
+        ) from last_exc
+
+
 def _match_template_uv(
     frame: cv2.typing.MatLike,
     template: cv2.typing.MatLike,
@@ -1557,8 +1671,8 @@ def _run_sweep(
                         label,
                     )
                     with cap_lock:
-                        template = _capture_template(
-                            cap, config.cx, cy, config.template_half_width_px
+                        template = _capture_template_resilient(
+                            cap, config.cx, cy, config.template_half_width_px, config
                         )
                     logger.info("Template recaptured after mid-block recenter.")
 
@@ -1572,8 +1686,8 @@ def _run_sweep(
                     blocks[block_idx + 1][3],
                 )
                 with cap_lock:
-                    template = _capture_template(
-                        cap, config.cx, cy, config.template_half_width_px
+                    template = _capture_template_resilient(
+                        cap, config.cx, cy, config.template_half_width_px, config
                     )
                 logger.info("Template recaptured after recenter.")
 
@@ -1697,11 +1811,12 @@ class CalibrationOrchestrator:
         h = self._config.frame_height
         cy = float(h) / 2.0
         with self._cap_lock:
-            template = _capture_template(
+            template = _capture_template_resilient(
                 self._cap,
                 self._config.cx,
                 cy,
                 self._config.template_half_width_px,
+                self._config,
             )
 
         self._cancel_event.clear()
