@@ -8,7 +8,9 @@ These pure functions are used by:
 - ``calibrate_ugv_drive.py``  (Phase 2): rover rotation angle measurement
 - Future Phase 3 runtime: bounding-box pixel centroid → angular heading error
 
-All functions are pure — no side effects, no I/O.
+Most functions are pure.  ``undistort_frame`` maintains a module-level remap
+cache so that ``cv2.fisheye.initUndistortRectifyMap`` is called at most once
+per unique (K, D, frame-size) combination.
 """
 
 from __future__ import annotations
@@ -18,6 +20,12 @@ from typing import Any
 
 import cv2
 import numpy as np
+
+# Cache of pre-computed fisheye undistortion maps keyed by (K_bytes, D_bytes, (h, w)).
+# Built on first use; avoids recomputing O(W×H) maps on every frame.
+_UNDISTORT_MAP_CACHE: dict[
+    tuple[bytes, bytes, tuple[int, int]], tuple[np.ndarray, np.ndarray]
+] = {}
 
 
 def load_fisheye_intrinsics(
@@ -172,12 +180,16 @@ def undistort_frame(
     K: np.ndarray,
     D: np.ndarray,
 ) -> cv2.typing.MatLike:
-    """Undistort a fisheye frame using the stored intrinsics.
+    """Undistort a fisheye frame using cached remap maps.
 
-    Applies ``cv2.fisheye.undistortImage`` with ``Knew=K`` so the output
-    image maps to a virtual pinhole camera with the same principal point
-    and focal length as the original.  Pixels in the returned image satisfy
-    the pinhole relation ``x_n = (u − cx) / fx``.
+    Builds ``cv2.fisheye.initUndistortRectifyMap`` maps once per unique
+    (K, D, frame-size) combination and caches them.  Subsequent calls with
+    the same parameters use ``cv2.remap`` directly, avoiding the O(W×H)
+    map-rebuild cost on every frame.
+
+    The output maps to a virtual pinhole camera with the same principal point
+    and focal length as the original (``Knew=K``).  Pixels in the returned
+    image satisfy the pinhole relation ``x_n = (u − cx) / fx``.
 
     Parameters
     ----------
@@ -193,7 +205,15 @@ def undistort_frame(
     cv2.typing.MatLike
         Undistorted frame with the same resolution as the input.
     """
-    return cv2.fisheye.undistortImage(frame, K, D, Knew=K)
+    h, w = frame.shape[:2]
+    cache_key = (K.tobytes(), D.tobytes(), (h, w))
+    if cache_key not in _UNDISTORT_MAP_CACHE:
+        map_x, map_y = cv2.fisheye.initUndistortRectifyMap(
+            K, D, np.eye(3), K, (w, h), cv2.CV_32F
+        )
+        _UNDISTORT_MAP_CACHE[cache_key] = (map_x, map_y)
+    map_x, map_y = _UNDISTORT_MAP_CACHE[cache_key]
+    return cv2.remap(frame, map_x, map_y, cv2.INTER_LINEAR)
 
 
 def pixel_to_bearing_deg_pinhole(u: float, cx: float, fx: float) -> float:
