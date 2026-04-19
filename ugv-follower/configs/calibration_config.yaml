@@ -22,7 +22,7 @@ pan_tilt_servo:
   settle_time_s: 2.5          # Seconds to wait after each pan command before collecting frames
   frames_to_average: 10       # Number of frames to collect and median-average at each step
   tilt_setpoint_deg: 0.0      # Tilt angle held constant throughout the sweep
-  template_half_width_px: 60  # Half-width (pixels) of the square template cropped at zero position
+  template_half_width_px: 50  # Half-width (pixels) of the square template cropped at zero position
   noise_floor_deg: 0.5        # Minimum phi magnitude (degrees) considered as real motion
   sign_override: null         # Override sign multiplier applied after centroid_to_angle.
                               # null = default (−1 baked into centroid_to_angle).
