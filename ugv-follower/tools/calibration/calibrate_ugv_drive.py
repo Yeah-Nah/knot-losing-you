@@ -51,7 +51,7 @@ Arguments
 --camera-device V4L2 device path (overrides calibration_config.yaml).
 --sensor-config Path to sensor_config.yaml (default: configs/sensor_config.yaml).
 --cal-config    Path to calibration_config.yaml (default: configs/calibration_config.yaml).
---noise-floor   Override ugv_drive.noise_floor_deg from calibration config.
+--noise-floor   Override shared.noise_floor_deg from calibration config.
 
 Hardware setup
 --------------
@@ -228,8 +228,6 @@ class DriveCalConfig:
     command_duration_s: float
     settle_time_s: float
     dead_band_omega_steps_rad_s: tuple[float, ...]
-    dead_band_duration_s: float
-    dead_band_settle_s: float
     frames_to_average: int
     noise_floor_deg: float
     camera_offset_m: float
@@ -842,6 +840,7 @@ def _load_config(
 
     # --- Calibration parameters ---
     ud_cfg: dict[str, Any] = cal_cfg.get("ugv_drive")  # type: ignore[assignment]
+    shared_cfg: dict[str, Any] = cal_cfg.get("shared", {})
     if ud_cfg is None:
         raise ValueError(
             "ugv_drive section is missing from calibration_config.yaml. "
@@ -864,12 +863,19 @@ def _load_config(
     target_dist = float(ud_cfg.get("target_distance_m", 2.0))
     _validate_geometry(camera_offset, target_dist)
 
-    noise_floor = float(ud_cfg.get("noise_floor_deg", 1.5))
+    noise_floor = float(shared_cfg.get("noise_floor_deg", ud_cfg.get("noise_floor_deg", 1.5)))
     if args.noise_floor is not None:
         noise_floor = float(args.noise_floor)
 
     camera_device = args.camera_device or str(
-        ud_cfg.get("camera_device", "/dev/video0")
+        shared_cfg.get("camera_device", ud_cfg.get("camera_device", "/dev/video0"))
+    )
+
+    command_duration_s = float(
+        shared_cfg.get("command_duration_s", ud_cfg.get("command_duration_s", 2.0))
+    )
+    settle_time_s = float(
+        shared_cfg.get("settle_time_s", ud_cfg.get("settle_time_s", 2.0))
     )
 
     return DriveCalConfig(
@@ -884,16 +890,16 @@ def _load_config(
         ugv_chassis_module=int(ugv_cfg["chassis_module"]),
         ugv_track_width_nom=float(ugv_cfg["track_width"]),
         omega_commands_rad_s=omega_cmds,
-        command_duration_s=float(ud_cfg.get("command_duration_s", 2.0)),
-        settle_time_s=float(ud_cfg.get("settle_time_s", 2.0)),
+        command_duration_s=command_duration_s,
+        settle_time_s=settle_time_s,
         dead_band_omega_steps_rad_s=dead_steps,
-        dead_band_duration_s=float(ud_cfg.get("dead_band_duration_s", 1.5)),
-        dead_band_settle_s=float(ud_cfg.get("dead_band_settle_s", 1.5)),
         frames_to_average=int(ud_cfg.get("frames_to_average", 5)),
         noise_floor_deg=noise_floor,
         camera_offset_m=camera_offset,
         target_distance_m=target_dist,
-        template_half_width_px=int(ud_cfg.get("template_half_width_px", 80)),
+        template_half_width_px=int(
+            shared_cfg.get("template_half_width_px", ud_cfg.get("template_half_width_px", 80))
+        ),
         min_match_score=float(ud_cfg.get("min_match_score", 0.65)),
         camera_device=camera_device,
         calibration_surface=str(ud_cfg.get("calibration_surface", "unspecified")),
@@ -1483,8 +1489,8 @@ def _run_dead_band_step(
     omega_signed = omega_d if direction == "ccw" else -omega_d
     b_before, u_before, score_before, b_after, u_after, score_after = _execute_rotation(
         omega_signed,
-        config.dead_band_duration_s,
-        config.dead_band_settle_s,
+        config.command_duration_s,
+        config.settle_time_s,
         cap,
         template,
         config,
@@ -1505,7 +1511,7 @@ def _run_dead_band_step(
     return _build_dead_band_row(
         omega=omega_d,
         direction=direction,
-        duration_s=config.dead_band_duration_s,
+        duration_s=config.command_duration_s,
         b_before=b_before,
         b_after=b_after,
         moved=did_move,
@@ -2245,7 +2251,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         type=float,
         default=None,
         metavar="DEG",
-        help="Override ugv_drive.noise_floor_deg from calibration config.",
+        help="Override shared.noise_floor_deg from calibration config.",
     )
     return parser
 
@@ -2328,7 +2334,7 @@ def main() -> None:
     )
     logger.info(
         f"Dead-band: {config.dead_band_omega_steps_rad_s} rad/s  "
-        f"duration={config.dead_band_duration_s}s  settle={config.dead_band_settle_s}s"
+        f"duration={config.command_duration_s}s  settle={config.settle_time_s}s"
     )
     logger.info(
         f"Camera offset: {config.camera_offset_m} m  "
