@@ -33,7 +33,7 @@ waveshare_rgb:
   model: "fisheye"                # fisheye or pinhole — set after calibration
   camera_matrix: [[542.44, 0.0, 672.07], [0.0, 544.64, 379.80], [0.0, 0.0, 1.0]] # 3x3 K matrix (row-major) — set after calibration
   dist_coeffs: [0.04838097993620094, -0.041844537572354824, 0.012958617562528365, -0.0031300600380237465] # [k1, k2, k3, k4] fisheye distortion vector — set after calibration
-  resolution: [1920, 1080]   # [width, height] at calibration time
+  resolution: [1280, 720]   # [width, height] at calibration time
   rms_reprojection_error: 0.7737  # RMS error in pixels — set after calibration
 
 # Pan-tilt servo curve calibration — command-to-angle mapping
