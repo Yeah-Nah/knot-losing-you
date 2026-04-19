@@ -20,7 +20,7 @@ shared:
   noise_floor_deg: 0.5         # Minimum measured angle magnitude (degrees) considered real motion
   camera_device: "/dev/video0"  # V4L2 device path for the Waveshare RGB camera
   command_duration_s: 0.20     # Rotation command duration (seconds)
-  settle_time_s: 2.0           # Wait after stop before measuring (seconds)
+  settle_time_s: 3.0           # Wait after stop before measuring (seconds)
 
 # Pan-tilt servo curve calibration — used by calibrate_pantilt_servo.py
 pan_tilt_servo:
@@ -43,11 +43,11 @@ pan_tilt_servo:
 ugv_drive:
   # Angular velocity commands for the turn-rate gain sweep (rad/s).
   # Start above the confirmed motion threshold (~3.5 rad/s on smooth concrete).
-  omega_commands_rad_s: [4.5, 5.0, 5.5]
+  omega_commands_rad_s: [4.5, 5.0, 5.5, 5.0, 4.5]
 
   # Dead-band probe — commands applied in decreasing order until stall is detected.
   # Uses shared.command_duration_s and shared.settle_time_s.
-  dead_band_omega_steps_rad_s: [5.0, 4.0, 3.0, 2.5]
+  dead_band_omega_steps_rad_s: [4.0, 3.0, 2.5]
 
   # Measurement
   frames_to_average: 7                 # Frames to median-average at each bearing measurement
