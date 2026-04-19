@@ -53,6 +53,6 @@ ugv_drive:
   frames_to_average: 7                 # Frames to median-average at each bearing measurement
   camera_offset_m: 0.085                # Forward offset of camera lens from rover rotation centre (m)
   target_distance_m: 2.7               # Approximate distance from rover rotation centre to target (m)
-  min_match_score: 0.7                # Minimum TM_CCOEFF_NORMED score for a usable measurement
+  min_match_score: 0.45                # Minimum TM_CCOEFF_NORMED score for a usable measurement
 
   calibration_surface: "smooth concrete"  # Human-readable description of the calibration surface
