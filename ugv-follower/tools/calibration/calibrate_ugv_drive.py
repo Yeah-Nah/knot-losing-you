@@ -1446,8 +1446,8 @@ def _wait_for_recenter(
         )
     )
     logger.info(
-        "Block complete (%d/%d). Waiting for operator to re-centre rover "
-        "and GET /confirm before %s.",
+        "Block complete ({}/{}). Waiting for operator to re-centre rover "
+        "and GET /confirm before {}.",
         current_step,
         total_steps,
         next_block_label,
@@ -1455,7 +1455,7 @@ def _wait_for_recenter(
     while not recenter_event.wait(timeout=0.5):
         _check_cancel(cancel_event)
     _check_cancel(cancel_event)
-    logger.info("Recenter confirmed — starting %s.", next_block_label)
+    logger.info("Recenter confirmed — starting {}.", next_block_label)
 
 
 def _run_sweep(
@@ -1526,7 +1526,7 @@ def _run_sweep(
 
     try:
         for block_idx, (step_fn, direction, omegas, label) in enumerate(blocks):
-            logger.info("Starting %s.", label)
+            logger.info("Starting {}.", label)
             mid = len(omegas) // 2
             for step_idx, omega in enumerate(omegas):
                 current_step += 1
@@ -1951,6 +1951,7 @@ def _run_frame(
     lock exclusively during frame collection without starving this thread.
     """
     cx_col = int(round(cx))
+    last_good_frame: cv2.typing.MatLike | None = None
     while not stop_event.is_set():
         acquired = cap_lock.acquire(blocking=False)
         if not acquired:
@@ -1962,8 +1963,12 @@ def _run_frame(
             cap_lock.release()
 
         if not ok or frame is None:
-            time.sleep(0.05)
-            continue
+            if last_good_frame is None:
+                time.sleep(0.05)
+                continue
+            frame = last_good_frame
+        else:
+            last_good_frame = frame
 
         h, w = frame.shape[:2]
         cy_row = int(round(h / 2.0))
