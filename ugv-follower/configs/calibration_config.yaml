@@ -7,30 +7,52 @@ checkerboard:
 
 camera:
   device_index: 0        # cv2.VideoCapture device index for the Waveshare RGB camera
-  resolution: [1280, 720]  # Capture resolution [width, height]
+  resolution: [1920, 1080]  # Capture resolution [width, height]
   stream_fps: 25         # MJPEG stream frame rate served to the browser
 
 ugv:
   port: "/dev/ttyAMA0"   # Serial port for the UGV sub-controller (Pi 5: ttyAMA0, Pi 4B: serial0)
   baud_rate: 115200
 
+# Shared calibration defaults consumed by both pan-tilt and rover-drive scripts.
+shared:
+  template_half_width_px: 60   # Half-width (pixels) of the square template crop
+  noise_floor_deg: 0.5         # Minimum measured angle magnitude (degrees) considered real motion
+  camera_device: "/dev/video0"  # Portable default V4L2 device path; override with a stable /dev/v4l/by-id/... path on your hardware if needed
+  command_duration_s: 0.20     # Rotation command duration (seconds)
+  settle_time_s: 3.0           # Wait after stop before measuring (seconds)
+
 # Pan-tilt servo curve calibration — used by calibrate_pantilt_servo.py
 pan_tilt_servo:
   sweep_min_deg: -45.0        # Start of the commanded pan sweep (degrees)
   sweep_max_deg: 45.0         # End of the commanded pan sweep (degrees)
   sweep_step_deg: 5.0         # Step size between commanded pan values (degrees)
-  settle_time_s: 2.5          # Seconds to wait after each pan command before collecting frames
   frames_to_average: 10       # Number of frames to collect and median-average at each step
   tilt_setpoint_deg: 0.0      # Tilt angle held constant throughout the sweep
-  template_half_width_px: 60  # Half-width (pixels) of the square template cropped at zero position
-  noise_floor_deg: 0.5        # Minimum phi magnitude (degrees) considered as real motion
   sign_override: null         # Override sign multiplier applied after centroid_to_angle.
                               # null = default (−1 baked into centroid_to_angle).
                               # Set to -1.0 to flip the sign if hardware uses opposite convention.
-  camera_device: "/dev/video0"  # V4L2 device path for the Waveshare RGB camera
   camera_forward_offset_m: 0.0665         # Forward offset of camera lens from pan-tilt rotation centre (metres)
   calibration_target_distance_m: 2.82    # Distance from pan-tilt rotation centre to calibration target (metres)
   precondition_cycles: 1                # Full forward+reverse warmup passes before recording begins (0 = skip)
   precondition_settle_time_s: 0.3      # Dwell time (seconds) used only during warmup/precondition passes.
                                         # Defaults to settle_time_s when absent. Set lower than settle_time_s
                                         # to speed up the warmup sweep without affecting measurement timing.
+
+# Rover drive calibration — used by calibrate_ugv_drive.py
+ugv_drive:
+  # Angular velocity commands for the turn-rate gain sweep (rad/s).
+  # Start above the confirmed motion threshold (~3.5 rad/s on smooth concrete).
+  omega_commands_rad_s: [4.5, 5.0, 5.5, 5.0, 4.5, 4, 3.5]
+
+  # Dead-band probe — commands applied in decreasing order until stall is detected.
+  # Uses shared.command_duration_s and shared.settle_time_s.
+  dead_band_omega_steps_rad_s: [2.0, 1.5, 1, 0.5]
+
+  # Measurement
+  frames_to_average: 7                 # Frames to median-average at each bearing measurement
+  camera_offset_m: 0.085                # Forward offset of camera lens from rover rotation centre (m)
+  target_distance_m: 2.7               # Approximate distance from rover rotation centre to target (m)
+  min_match_score: 0.7                # Minimum TM_CCOEFF_NORMED score for a usable measurement
+
+  calibration_surface: "smooth concrete"  # Human-readable description of the calibration surface

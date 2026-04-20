@@ -1,5 +1,5 @@
 ---
-description: "Generate a filled PR description and create the PR on GitHub"
+description: "Generate a filled PR description and create the PR on GitHub by analyzing all commits since the last PR"
 agent: "agent"
 tools: [get_changed_files, github-pull-request_activePullRequest, github/*]
 ---
@@ -7,6 +7,14 @@ tools: [get_changed_files, github-pull-request_activePullRequest, github/*]
 Generate a pull request description for the current branch compared to `main`.
 
 Fill in every section of the template at [pull_request_template.md](../pull_request_template.md) using the actual diff between this branch and `main`. Use [PROGRESS_UPDATES.md](../../PROGRESS_UPDATES.md) as supplementary context where relevant.
+
+## Prerequisites
+
+Before generating the PR description:
+1. Use `get_changed_files` to retrieve all unstaged and staged changes between the current branch and `main`
+2. Retrieve all commits between the current branch and `main` (not just the latest commit)
+3. Aggregate the full diff to understand what's actually changed across the entire branch
+4. Cross-reference with PROGRESS_UPDATES.md to add context about why changes were made
 
 ## Section guidance
 

@@ -126,6 +126,9 @@ def method_name(self, param1: int, param2: str) -> bool:
     """
 ```
 
+Use UK english spelling:
+- E.g. "behaviour" instead of "behavior"
+
 ---
 
 ## Code Review Checklist

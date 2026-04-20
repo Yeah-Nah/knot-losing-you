@@ -52,7 +52,7 @@ No sea legs required.
   _Skills: intrinsic/extrinsic calibration algorithms · coordinate system conversions ·
   integrate and calibrate sensors_
 
-- [ ] **Pan-tilt servo curve calibration**: command a sweep of servo values, measure resulting pan
+- [x] **Pan-tilt servo curve calibration**: command a sweep of servo values, measure resulting pan
   angles; characterise the command-to-degrees mapping and dead-band; stored in `sensor_config.yaml`
   _Skills: actuator calibration · integrate and calibrate sensors_
 

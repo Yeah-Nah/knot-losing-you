@@ -49,7 +49,7 @@ Arguments
                 Overrides calibration_config.yaml pan_tilt_servo.camera_device.
 --sensor-config Path to sensor_config.yaml (default: configs/sensor_config.yaml).
 --cal-config    Path to calibration_config.yaml (default: configs/calibration_config.yaml).
---noise-floor   Override pan_tilt_servo.noise_floor_deg from calibration config.
+--noise-floor   Override shared.noise_floor_deg from calibration config.
 
 Hardware setup
 --------------
@@ -117,6 +117,7 @@ import yaml
 from loguru import logger
 
 from ugv_follower.control.ugv_controller import UGVController
+from ugv_follower.utils.camera_preflight import ensure_camera_device_available
 from ugv_follower.utils.config_utils import get_project_root
 
 _DEFAULT_SENSOR_CONFIG: Path = get_project_root() / "configs" / "sensor_config.yaml"
@@ -850,15 +851,24 @@ def _load_config(
 
     ugv_cfg: dict[str, Any] = sensor_cfg["ugv"]
     pt_cfg: dict[str, Any] = cal_cfg.get("pan_tilt_servo", {})
+    shared_cfg: dict[str, Any] = cal_cfg.get("shared", {})
 
     sweep_min = float(pt_cfg.get("sweep_min_deg", -45.0))
     sweep_max = float(pt_cfg.get("sweep_max_deg", 45.0))
     sweep_step = float(pt_cfg.get("sweep_step_deg", 5.0))
-    settle_time = float(pt_cfg.get("settle_time_s", 1.5))
+    settle_time = float(
+        shared_cfg.get("settle_time_s", pt_cfg.get("settle_time_s", 1.5))
+    )
     frames_to_avg = int(pt_cfg.get("frames_to_average", 10))
     tilt_sp = float(pt_cfg.get("tilt_setpoint_deg", 0.0))
-    tmpl_half_w = int(pt_cfg.get("template_half_width_px", 60))
-    noise_floor = float(pt_cfg.get("noise_floor_deg", 0.5))
+    tmpl_half_w = int(
+        shared_cfg.get(
+            "template_half_width_px", pt_cfg.get("template_half_width_px", 60)
+        )
+    )
+    noise_floor = float(
+        shared_cfg.get("noise_floor_deg", pt_cfg.get("noise_floor_deg", 0.5))
+    )
 
     precondition_cycles_raw = int(pt_cfg.get("precondition_cycles", 0))
     if precondition_cycles_raw < 0:
@@ -880,7 +890,7 @@ def _load_config(
 
     # CLI --camera-device overrides config; config overrides default.
     camera_device = args.camera_device or str(
-        pt_cfg.get("camera_device", "/dev/video0")
+        shared_cfg.get("camera_device", pt_cfg.get("camera_device", "/dev/video0"))
     )
 
     # CLI --noise-floor overrides config.
@@ -1885,7 +1895,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         type=float,
         default=None,
         metavar="DEG",
-        help="Override pan_tilt_servo.noise_floor_deg from calibration config.",
+        help="Override shared.noise_floor_deg from calibration config.",
     )
     return parser
 
@@ -1917,10 +1927,15 @@ def _run_replay_mode(args: argparse.Namespace, sensor_config_path: Path) -> None
     with cal_config_path.open() as f:
         cal_cfg_replay: dict[str, Any] = yaml.safe_load(f) or {}
     pt_cfg_replay: dict[str, Any] = cal_cfg_replay.get("pan_tilt_servo", {})
+    shared_cfg_replay: dict[str, Any] = cal_cfg_replay.get("shared", {})
     noise_floor: float = (
         float(args.noise_floor)
         if args.noise_floor is not None
-        else float(pt_cfg_replay.get("noise_floor_deg", 0.5))
+        else float(
+            shared_cfg_replay.get(
+                "noise_floor_deg", pt_cfg_replay.get("noise_floor_deg", 0.5)
+            )
+        )
     )
     _fwd_replay = pt_cfg_replay.get("camera_forward_offset_m")
     if _fwd_replay is None:
@@ -2022,6 +2037,12 @@ def main() -> None:
             f"Waiting {_SERVO_SETTLE_S}s to settle..."
         )
         time.sleep(_SERVO_SETTLE_S)
+
+        try:
+            ensure_camera_device_available(config.camera_device)
+        except RuntimeError as exc:
+            logger.error(str(exc))
+            sys.exit(1)
 
         # -- Open camera -----------------------------------------------------------
         cap = cv2.VideoCapture(config.camera_device, cv2.CAP_V4L2)

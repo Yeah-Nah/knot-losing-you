@@ -196,3 +196,94 @@ class Settings:
         """Distance from pan-tilt rotation centre to calibration target (metres), or None."""
         v = self._pan_tilt_servo_cfg.get("calibration_target_distance_m")
         return float(v) if v is not None else None
+
+    # ------------------------------------------------------------------
+    # Rover drive calibration properties
+    # ------------------------------------------------------------------
+
+    @property
+    def _ugv_drive_cfg(self) -> dict[str, Any]:
+        return dict(self.sensor_config.get("ugv_drive") or {})
+
+    @property
+    def ugv_drive_effective_track_width_m(self) -> float | None:
+        """Calibrated effective track width in metres, or None if uncalibrated.
+
+        Used by the Phase 3 outer control loop to correct the differential-drive
+        kinematic model at its root.  When present, Phase 3 should pass this
+        value instead of ``ugv_track_width`` to ``UGVController``.
+        """
+        v = self._ugv_drive_cfg.get("effective_track_width_m")
+        return float(v) if v is not None else None
+
+    @property
+    def ugv_control_track_width_m(self) -> float:
+        """Track width used by control (calibrated effective if present, else nominal)."""
+        effective_track_width = self.ugv_drive_effective_track_width_m
+        return (
+            effective_track_width
+            if effective_track_width is not None
+            else self.ugv_track_width
+        )
+
+    @property
+    def ugv_drive_turn_rate_gain(self) -> float | None:
+        """Turn rate gain k = ω_actual / ω_commanded (dimensionless), or None.
+
+        Equivalent to ``ugv_track_width / ugv_drive_effective_track_width_m``.
+        Stored explicitly so the relationship to the nominal track width is
+        preserved if the config value is ever changed.
+        """
+        v = self._ugv_drive_cfg.get("turn_rate_gain")
+        return float(v) if v is not None else None
+
+    @property
+    def ugv_drive_angular_dead_band_rad_s(self) -> float | None:
+        """Minimum |ω| that overcomes static friction (rad/s), or None if uncalibrated.
+
+        The Phase 3 outer control loop should not issue commands below this
+        threshold unless the intent is a full stop.
+        """
+        v = self._ugv_drive_cfg.get("angular_dead_band_rad_s")
+        return float(v) if v is not None else None
+
+    # ------------------------------------------------------------------
+    # UGV command shaping properties
+    # ------------------------------------------------------------------
+
+    @property
+    def _ugv_shaping_cfg(self) -> dict[str, Any]:
+        return dict(self.sensor_config.get("ugv_command_shaping") or {})
+
+    @property
+    def ugv_shaping_enabled(self) -> bool:
+        """Whether controller-level command shaping is active.
+
+        When ``False`` (default), wheel commands are sent to hardware
+        immediately.  Calibration scripts should always use the default.
+        """
+        return bool(self._ugv_shaping_cfg.get("enabled", False))
+
+    @property
+    def ugv_shaping_update_rate_hz(self) -> float:
+        """Shaper background thread tick rate in Hz."""
+        return float(self._ugv_shaping_cfg.get("update_rate_hz", 50.0))
+
+    @property
+    def ugv_shaping_ramp_rate_per_s(self) -> float:
+        """Maximum wheel speed change per second (m/s per s).
+
+        A value of 2.0 means the wheel reaches 1 m/s in 0.5 s from rest,
+        or reverses from +1 to −1 m/s in 1.0 s.
+        """
+        return float(self._ugv_shaping_cfg.get("ramp_rate_per_s", 2.0))
+
+    @property
+    def ugv_shaping_reversal_dwell_s(self) -> float:
+        """Seconds to hold a wheel at zero after a sign crossing before reversing."""
+        return float(self._ugv_shaping_cfg.get("reversal_dwell_s", 0.05))
+
+    @property
+    def ugv_shaping_zero_crossing_epsilon(self) -> float:
+        """Wheel speeds below this (m/s) are treated as zero for reversal detection."""
+        return float(self._ugv_shaping_cfg.get("zero_crossing_epsilon", 0.01))

@@ -41,6 +41,7 @@ import yaml
 from loguru import logger
 
 from ugv_follower.control.ugv_controller import UGVController
+from ugv_follower.utils.camera_preflight import ensure_camera_device_available
 from ugv_follower.utils.config_utils import get_project_root
 
 # ---------------------------------------------------------------------------
@@ -345,6 +346,13 @@ def main() -> None:
 
     # -- Zero pan-tilt -------------------------------------------------------
     _zero_pan_tilt(ugv_port, ugv_baud)
+
+    # -- Camera preflight ----------------------------------------------------
+    try:
+        ensure_camera_device_available(f"/dev/video{device_index}")
+    except RuntimeError as exc:
+        logger.error(str(exc))
+        sys.exit(1)
 
     # -- Open camera ---------------------------------------------------------
     cap = _open_camera(device_index, res_w, res_h)

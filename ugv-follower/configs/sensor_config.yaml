@@ -14,16 +14,27 @@ ugv:
   baud_rate: 115200       # Sub-controller default baud rate
   chassis_main: 2         # 1=RaspRover, 2=UGV Rover 6WD, 3=UGV Beast tracked
   chassis_module: 2       # 0=no module, 1=arm, 2=pan-tilt
-  track_width: 0.3        # Wheel centre-to-centre distance in metres (approx; confirm from spec)
+  track_width: 0.175        # Wheel centre-to-centre distance in metres (approx; confirm from spec)
+
+# Controller-level command shaping — prevents abrupt wheel speed reversals.
+# Leave disabled (or omit entirely) when running calibration scripts.
+# Enable in the autonomous follower pipeline only.
+#
+# ugv_command_shaping:
+#   enabled: true               # Set true only for the follow-me pipeline
+#   update_rate_hz: 50.0        # Shaper loop frequency (50 Hz is fine at 115200 baud)
+#   ramp_rate_per_s: 2.0        # Max wheel speed change per second (m/s per s)
+#   reversal_dwell_s: 0.05      # Hold-at-zero time before reversing (seconds)
+#   zero_crossing_epsilon: 0.01 # Speeds <= this (m/s) treated as zero
 
 # Waveshare RGB (pan-tilt) camera — intrinsic calibration results
 # Populated by calibrate_waveshare_camera.py after running the calibration workflow.
 waveshare_rgb:
   model: "fisheye"                # fisheye or pinhole — set after calibration
-  camera_matrix: [[542.44, 0.0, 672.07], [0.0, 544.64, 379.80], [0.0, 0.0, 1.0]] # 3x3 K matrix (row-major) — set after calibration
-  dist_coeffs: [0.04838097993620094, -0.041844537572354824, 0.012958617562528365, -0.0031300600380237465] # [k1, k2, k3, k4] fisheye distortion vector — set after calibration
-  resolution: [1280, 720]   # [width, height] at calibration time
-  rms_reprojection_error: 0.7737  # RMS error in pixels — set after calibration
+  camera_matrix: [[812.62, 0.0, 1002.92], [0.0, 814.07, 567.80], [0.0, 0.0, 1.0]] # 3x3 K matrix (row-major) — set after calibration
+  dist_coeffs: [0.042287176079693914, -0.03351504621552974, 0.008025571747576593, -0.0022739457747216188] # [k1, k2, k3, k4] fisheye distortion vector — set after calibration
+  resolution: [1920, 1080]  # [width, height] at calibration time
+  rms_reprojection_error: 0.1277  # RMS error in pixels — set after calibration
 
 # Pan-tilt servo curve calibration — command-to-angle mapping
 # Populated by calibrate_pantilt_servo.py (ugv-calibrate-pantilt) after running
@@ -228,3 +239,16 @@ extrinsic:
   calibration_method: angular_offset # angular_offset — set after calibration
   target_distance_m: 2.7            # target distance used during calibration
   n_lidar_points: 414               # LiDAR cluster points used to compute the median
+
+ugv_drive:
+  calibration_surface: smooth concrete
+  effective_track_width_m: 0.339269
+  turn_rate_gain: 0.515815
+  turn_rate_gain_pos: 0.614813
+  turn_rate_gain_neg: 0.40848
+  angular_dead_band_rad_s: 1.25
+  n_samples: 12
+  fit_mae_deg: 8.7365
+  n_total_samples: 14
+  calibrated_at: '2026-04-20T10:46:26'
+  raw_csv: calibration/ugv_drive/20260420T103511.csv
