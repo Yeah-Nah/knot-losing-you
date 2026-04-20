@@ -239,3 +239,16 @@ extrinsic:
   calibration_method: angular_offset # angular_offset — set after calibration
   target_distance_m: 2.7            # target distance used during calibration
   n_lidar_points: 414               # LiDAR cluster points used to compute the median
+
+ugv_drive:
+  calibration_surface: smooth concrete
+  effective_track_width_m: 0.339269
+  turn_rate_gain: 0.515815
+  turn_rate_gain_pos: 0.614813
+  turn_rate_gain_neg: 0.40848
+  angular_dead_band_rad_s: 1.25
+  n_samples: 12
+  fit_mae_deg: 8.7365
+  n_total_samples: 14
+  calibrated_at: '2026-04-20T10:46:26'
+  raw_csv: calibration/ugv_drive/20260420T103511.csv
