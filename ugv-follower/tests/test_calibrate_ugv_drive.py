@@ -34,7 +34,6 @@ from tools.calibration.calibrate_ugv_drive import (
     _load_csv,
     _run_sweep,
     _sign_consistent,
-    _try_reopen_capture,
     _validate_geometry,
     _write_csv,
     _write_results_atomic,
@@ -365,7 +364,9 @@ def test_pixel_to_bearing_deg_pinhole_known_value() -> None:
     """u = cx + fx → x_n = 1 → bearing = atan(1) = 45°."""
     K, _ = _make_K_D_zero_distortion()
     cx, fx = float(K[0, 2]), float(K[0, 0])
-    assert pixel_to_bearing_deg_pinhole(cx + fx, cx, fx) == pytest.approx(45.0, rel=1e-6)
+    assert pixel_to_bearing_deg_pinhole(cx + fx, cx, fx) == pytest.approx(
+        45.0, rel=1e-6
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -611,24 +612,45 @@ def test_analyse_runs_excludes_sign_inconsistent_rows() -> None:
 
     # Good: CCW, positive corrected delta (signs match)
     good_ccw = _build_gain_row(
-        omega=1.0, direction="ccw", duration_s=2.0,
-        b_before=0.0, b_after=10.0, corrected_delta=10.0,
+        omega=1.0,
+        direction="ccw",
+        duration_s=2.0,
+        b_before=0.0,
+        b_after=10.0,
+        corrected_delta=10.0,
         expected_angle=math.degrees(1.0 * 2.0),
-        score_before=0.9, score_after=0.9, qflag=0, t0=t0,
+        score_before=0.9,
+        score_after=0.9,
+        qflag=0,
+        t0=t0,
     )
     # Bad: CCW command but negative corrected delta (sign flip)
     bad_ccw = _build_gain_row(
-        omega=1.0, direction="ccw", duration_s=2.0,
-        b_before=0.0, b_after=-5.0, corrected_delta=-5.0,
+        omega=1.0,
+        direction="ccw",
+        duration_s=2.0,
+        b_before=0.0,
+        b_after=-5.0,
+        corrected_delta=-5.0,
         expected_angle=math.degrees(1.0 * 2.0),
-        score_before=0.9, score_after=0.9, qflag=0, t0=t0,
+        score_before=0.9,
+        score_after=0.9,
+        qflag=0,
+        t0=t0,
     )
     # Good: CW, negative corrected delta (signs match)
     good_cw = _build_gain_row(
-        omega=0.5, direction="cw", duration_s=2.0,
-        b_before=0.0, b_after=-5.0, corrected_delta=-5.0,
+        omega=0.5,
+        direction="cw",
+        duration_s=2.0,
+        b_before=0.0,
+        b_after=-5.0,
+        corrected_delta=-5.0,
         expected_angle=math.degrees(-0.5 * 2.0),
-        score_before=0.9, score_after=0.9, qflag=0, t0=t0,
+        score_before=0.9,
+        score_after=0.9,
+        qflag=0,
+        t0=t0,
     )
 
     result = analyse_runs([good_ccw, bad_ccw, good_cw], config)

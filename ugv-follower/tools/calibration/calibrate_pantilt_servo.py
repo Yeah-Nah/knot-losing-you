@@ -856,13 +856,19 @@ def _load_config(
     sweep_min = float(pt_cfg.get("sweep_min_deg", -45.0))
     sweep_max = float(pt_cfg.get("sweep_max_deg", 45.0))
     sweep_step = float(pt_cfg.get("sweep_step_deg", 5.0))
-    settle_time = float(shared_cfg.get("settle_time_s", pt_cfg.get("settle_time_s", 1.5)))
+    settle_time = float(
+        shared_cfg.get("settle_time_s", pt_cfg.get("settle_time_s", 1.5))
+    )
     frames_to_avg = int(pt_cfg.get("frames_to_average", 10))
     tilt_sp = float(pt_cfg.get("tilt_setpoint_deg", 0.0))
     tmpl_half_w = int(
-        shared_cfg.get("template_half_width_px", pt_cfg.get("template_half_width_px", 60))
+        shared_cfg.get(
+            "template_half_width_px", pt_cfg.get("template_half_width_px", 60)
+        )
     )
-    noise_floor = float(shared_cfg.get("noise_floor_deg", pt_cfg.get("noise_floor_deg", 0.5)))
+    noise_floor = float(
+        shared_cfg.get("noise_floor_deg", pt_cfg.get("noise_floor_deg", 0.5))
+    )
 
     precondition_cycles_raw = int(pt_cfg.get("precondition_cycles", 0))
     if precondition_cycles_raw < 0:
@@ -1926,7 +1932,9 @@ def _run_replay_mode(args: argparse.Namespace, sensor_config_path: Path) -> None
         float(args.noise_floor)
         if args.noise_floor is not None
         else float(
-            shared_cfg_replay.get("noise_floor_deg", pt_cfg_replay.get("noise_floor_deg", 0.5))
+            shared_cfg_replay.get(
+                "noise_floor_deg", pt_cfg_replay.get("noise_floor_deg", 0.5)
+            )
         )
     )
     _fwd_replay = pt_cfg_replay.get("camera_forward_offset_m")

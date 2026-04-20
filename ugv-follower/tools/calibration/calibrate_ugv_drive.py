@@ -864,7 +864,9 @@ def _load_config(
     target_dist = float(ud_cfg.get("target_distance_m", 2.0))
     _validate_geometry(camera_offset, target_dist)
 
-    noise_floor = float(shared_cfg.get("noise_floor_deg", ud_cfg.get("noise_floor_deg", 1.5)))
+    noise_floor = float(
+        shared_cfg.get("noise_floor_deg", ud_cfg.get("noise_floor_deg", 1.5))
+    )
     if args.noise_floor is not None:
         noise_floor = float(args.noise_floor)
 
@@ -899,7 +901,9 @@ def _load_config(
         camera_offset_m=camera_offset,
         target_distance_m=target_dist,
         template_half_width_px=int(
-            shared_cfg.get("template_half_width_px", ud_cfg.get("template_half_width_px", 80))
+            shared_cfg.get(
+                "template_half_width_px", ud_cfg.get("template_half_width_px", 80)
+            )
         ),
         min_match_score=float(ud_cfg.get("min_match_score", 0.65)),
         camera_device=camera_device,
@@ -1431,7 +1435,9 @@ def _run_gain_step(
     qflag = quality_flag(
         score_before, u_before, config.frame_width, config.min_match_score
     ) | quality_flag(score_after, u_after, config.frame_width, config.min_match_score)
-    if abs(corrected) < config.noise_floor_deg or abs(corrected) < _MIN_ROTATION_FRACTION * abs(expected):
+    if abs(corrected) < config.noise_floor_deg or abs(
+        corrected
+    ) < _MIN_ROTATION_FRACTION * abs(expected):
         qflag |= _STALL_FLAG
     label = "CCW" if direction == "ccw" else "CW "
     logger.info(
@@ -1650,13 +1656,21 @@ def _run_sweep(
 
     # Ordered directional blocks: (step_fn, direction, omegas, label).
     # Block boundaries drive the recenter pause locations dynamically.
-    blocks: list[
-        tuple[Callable[..., dict[str, Any]], str, Sequence[float], str]
-    ] = [
-        (_run_gain_step,      "ccw", config.omega_commands_rad_s,        "gain sweep CCW"),
-        (_run_gain_step,      "cw",  config.omega_commands_rad_s,        "gain sweep CW"),
-        (_run_dead_band_step, "ccw", config.dead_band_omega_steps_rad_s, "dead-band sweep CCW"),
-        (_run_dead_band_step, "cw",  config.dead_band_omega_steps_rad_s, "dead-band sweep CW"),
+    blocks: list[tuple[Callable[..., dict[str, Any]], str, Sequence[float], str]] = [
+        (_run_gain_step, "ccw", config.omega_commands_rad_s, "gain sweep CCW"),
+        (_run_gain_step, "cw", config.omega_commands_rad_s, "gain sweep CW"),
+        (
+            _run_dead_band_step,
+            "ccw",
+            config.dead_band_omega_steps_rad_s,
+            "dead-band sweep CCW",
+        ),
+        (
+            _run_dead_band_step,
+            "cw",
+            config.dead_band_omega_steps_rad_s,
+            "dead-band sweep CW",
+        ),
     ]
 
     try:
@@ -2033,7 +2047,9 @@ def _make_handler(
 
         def _handle_reset(self) -> None:
             if not state.try_reset():
-                self._serve_json({"error": "cannot reset while sweep is in progress"}, 409)
+                self._serve_json(
+                    {"error": "cannot reset while sweep is in progress"}, 409
+                )
                 return
             self._serve_json({"status": "reset"})
 
