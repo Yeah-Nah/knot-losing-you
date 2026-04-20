@@ -128,6 +128,76 @@ ugv-calibrate-pantilt --replay calibration/pantilt_servo/<timestamp>.csv --save
 
 ---
 
+### Step 4 — Angular offset calibration (on the Pi)
+
+Measures the signed yaw offset between the LiDAR's 0° forward axis and the pan-tilt
+camera's mechanical zero. Intrinsic calibration (Step 2) must be completed first.
+
+```bash
+ugv-calibrate-angular --distance 2.0
+```
+
+This zeros the pan-tilt and starts an HTTP server on port 8080. From your laptop browser:
+
+- `http://<pi-ip>:8080/stream` — live MJPEG feed with a green guide line at `cx`
+
+Place a flat-faced cardboard box (≈ 20 cm wide) roughly `--distance` metres directly in
+front of the rover. Physically slide it left or right until its face is bisected by the
+green line.
+
+Then interact via HTTP (e.g. `curl http://<pi-ip>:8080/<endpoint>`):
+
+- `http://<pi-ip>:8080/confirm` — start the LiDAR scan
+- `http://<pi-ip>:8080/status` — JSON progress: `{state, ...}`
+- `http://<pi-ip>:8080/abort` — cancel without saving
+- `http://<pi-ip>:8080/save` — write result to `configs/sensor_config.yaml`
+
+On success, `configs/sensor_config.yaml` gains an `extrinsic` section with
+`lidar_to_pantilt_offset_deg`.
+
+### Step 5 — Rover drive calibration (on the Pi)
+
+Measures the rover's actual turn-rate response to commanded angular velocity and
+identifies the angular dead-band. Intrinsic calibration (Step 2) must be completed first.
+
+Before running, check `configs/calibration_config.yaml` and confirm `target_distance_m`
+and other drive calibration parameters suit your setup.
+
+```bash
+ugv-calibrate-drive
+```
+
+This starts an HTTP server on port 8080. From your laptop browser:
+
+- `http://<pi-ip>:8080/stream` — live MJPEG feed with a crosshair guide at `cx`
+
+Place a high-contrast stationary target (e.g. tape cross or printed pattern) approximately
+`target_distance_m` in front of the rover and verify it is visible and centred on the
+crosshair.
+
+Then interact via HTTP (e.g. `curl http://<pi-ip>:8080/<endpoint>`):
+
+- `http://<pi-ip>:8080/confirm` — start the sweep
+- `http://<pi-ip>:8080/status` — JSON progress: `{state, progress_pct, current_step, total_steps}`
+- `http://<pi-ip>:8080/abort` — cancel without saving
+- `http://<pi-ip>:8080/save` — write results to `configs/sensor_config.yaml`
+- `http://<pi-ip>:8080/reset` — reset to WAITING_TARGET from FAILED or COMPLETE
+
+The tool sweeps four directional blocks (gain CCW, gain CW, dead-band CCW, dead-band CW).
+You will be prompted to re-centre the rover between blocks. On success,
+`configs/sensor_config.yaml` gains a `ugv_drive` section with `effective_track_width_m`,
+`turn_rate_gain`, and `angular_dead_band_rad_s`. Raw samples are saved to
+`calibration/ugv_drive/<timestamp>.csv`.
+
+**Offline refit from an existing CSV** (no hardware required):
+
+```bash
+ugv-calibrate-drive --replay calibration/ugv_drive/<timestamp>.csv
+ugv-calibrate-drive --replay calibration/ugv_drive/<timestamp>.csv --save
+```
+
+---
+
 ## Running the Follower
 
 ```bash
