@@ -1263,18 +1263,19 @@ def test_run_sweep_pauses_for_recenter(
 def test_recenter_pause_count_matches_block_count(
     mock_sleep: MagicMock, mock_bearing: MagicMock, mock_capture_template: MagicMock
 ) -> None:
-    """Recenter pause positions are driven by configured block lengths.
+    """Recenter pause positions follow the every-2-steps rule.
 
     With 2 gain commands and 3 dead-band steps the 4 blocks have sizes
-    2, 2, 3, 3 (total 10 steps).  Each block with ≥ 2 steps gets a mid-block
-    pause (after step mid = len // 2) plus the 3 block-boundary pauses, giving:
+    2, 2, 3, 3 (total 10 steps).  An in-block pause fires after every 2
+    completed steps when steps remain in the block, plus 3 block-boundary
+    pauses (between every adjacent block pair), giving:
 
-    gain CCW:      mid pause at step 1, boundary pause at step 2
-    gain CW:       mid pause at step 3, boundary pause at step 4
-    dead-band CCW: mid pause at step 5, boundary pause at step 7
-    dead-band CW:  mid pause at step 8 (no boundary — last block)
+    gain CCW (2):      no in-block pause (2nd step is last); boundary at step 2
+    gain CW (2):       no in-block pause;                    boundary at step 4
+    dead-band CCW (3): in-block pause at step 6;             boundary at step 7
+    dead-band CW (3):  in-block pause at step 9;             no boundary (last)
 
-    Expected pause steps: [1, 2, 3, 4, 5, 7, 8].
+    Expected pause steps: [2, 4, 6, 7, 9].
     """
     config = _make_drive_cal_config(
         omega_commands=(1.0, 2.0),
@@ -1311,7 +1312,7 @@ def test_recenter_pause_count_matches_block_count(
         time.monotonic(),
     )
 
-    assert pause_steps == [1, 2, 3, 4, 5, 7, 8]
+    assert pause_steps == [2, 4, 6, 7, 9]
     assert states_seen[-1] == CalibrationState.COMPLETE.value
 
 

@@ -1746,7 +1746,6 @@ def _run_sweep(
     try:
         for block_idx, (step_fn, direction, omegas, label) in enumerate(blocks):
             logger.info("Starting {}.", label)
-            mid = len(omegas) // 2
             for step_idx, omega in enumerate(omegas):
                 current_step += 1
                 rows.append(
@@ -1764,7 +1763,7 @@ def _run_sweep(
                 )
                 state.update_sweep_progress(current_step, total_steps)
 
-                if step_idx + 1 == mid and mid < len(omegas):
+                if (step_idx + 1) % 2 == 0 and step_idx + 1 < len(omegas):
                     _wait_for_recenter(
                         state,
                         current_step,
@@ -1777,7 +1776,7 @@ def _run_sweep(
                         template = _capture_template_resilient(
                             cap, config.cx, cy, config.template_half_width_px, config
                         )
-                    logger.info("Template recaptured after mid-block recenter.")
+                    logger.info("Template recaptured after in-block recenter.")
 
             if block_idx < len(blocks) - 1:
                 _wait_for_recenter(
