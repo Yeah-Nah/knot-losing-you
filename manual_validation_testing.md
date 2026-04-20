@@ -2,9 +2,9 @@
 
 Purpose: keep a single running record of what has been tested, what has been learned, and what to test next for poor rover yaw calibration performance.
 
-## Current Status (2026-04-19)
+## Current Status (2026-04-20)
 
-### Latest calibration run (run 7, 2026-04-19 10:33 session)
+### Latest stable calibration run (run 7, 2026-04-19 10:33 session)
 - omega_commands_rad_s: [4.5, 5.0, 5.5, 5.0, 4.5], command_duration_s: 0.20
 - dead_band_omega_steps_rad_s: [4.0, 3.0, 2.5]
 - turn_rate_gain: 0.378166
@@ -20,6 +20,18 @@ Run analysis:
 - `analyse_runs` excluded 2 sign-inconsistent gain samples; opposite-direction events are still present.
 - Undistorted matching alone previously did not improve retention; lowering `min_match_score` to 0.45 had the larger impact.
 - Dead-band was not estimated (`null`) because all tested dead-band commands were classified as moved.
+
+### Latest diagnostic run (2026-04-20 contention-isolation session)
+- Test condition: stream OFF; manual `systemctl --user stop pipewire wireplumber` before run.
+- Sweep outcome: completed end-to-end (16 rows) with no camera-dropout failure.
+- Save outcome: analysis failed with only 1 good gain sample, so no usable turn-rate fit was produced.
+
+Run analysis:
+- Reproduced earlier dropout failures with stream OFF before this test, so MJPEG stream load is not the primary crash trigger.
+- During the contention-isolation run, the sweep completed fully, strongly confirming that camera-holder contention is the primary crash root cause.
+- `pipewire` and `wireplumber` still reappeared during the run because `pipewire.socket` can reactivate them after the service is stopped.
+- The remaining problem in this run was data quality, not camera stability: most gain rows were rejected by quality/sign checks, leaving only 1 usable sample.
+- `GET /abort` was separately verified to return HTTP 200 with `{\"status\": \"aborted\"}`; the abort endpoint is functioning.
 
 ### Previous calibration run (run 6, 2026-04-19 06:20 session, aborted)
 - omega_commands_rad_s: [4.5, 5.0, 5.5], command_duration_s: 0.20
@@ -83,7 +95,9 @@ Run analysis:
 ### Trend
 - Run 7 completed without the run 6 camera/device-dropout failure.
 - Usable gain data improved materially (6 samples, MAE 1.58°), primarily after lowering match confidence.
-- Main uncertainty has shifted to quality balance: higher retention vs more borderline/sign-inconsistent samples.
+- Stream-disabled failure reproduction showed that stream resolution/load is not the dominant cause of the freeze/dropout behavior.
+- Contention-isolation completion showed the dominant crash path is camera-device ownership being reclaimed by `pipewire`/`wireplumber`.
+- Main uncertainty has shifted back to two separate issues: camera-holder contention for crash prevention, and tracking/data quality for fit quality.
 - Dead-band threshold remains unresolved in current settings because no stall crossover was observed.
 
 ## Confirmed Findings
@@ -125,9 +139,17 @@ Run analysis:
 - Lifted-wheel tests showed consistent response well below these thresholds.
 - On-ground in-place rotation requires overcoming surface scrub, which shifts the effective dead-band above the lifted value.
 
-### 12) Camera preflight contention causes stream freeze on back-to-back runs
-- `fuser -k` kills pipewire/wireplumber, which can restart and re-grab `/dev/video0` before the next run begins.
-- Waiting 30–60 seconds between runs avoids this.
+### 12) Camera-holder contention is the primary crash root cause
+- Camera-dropout failures reproduced even with the stream OFF, so MJPEG load is not the primary trigger.
+- When the sweep was run under contention isolation, it completed end-to-end without the `errno=19 (No such device)` failure.
+
+### 13) `pipewire`/`wireplumber` can respawn during a run
+- Stopping `pipewire.service` alone is insufficient because `pipewire.socket` can reactivate it.
+- Mid-run `fuser` output showed `pipewire` and `wireplumber` holding `/dev/video0` again after the run had already started.
+
+### 14) The abort endpoint is not the blocker
+- `GET /abort` was verified separately and returned HTTP 200 with `{"status": "aborted"}` during a failed-run test.
+- The earlier inability to abort was not reproduced in the direct curl test.
 
 ## Platform Context (Waveshare UGV Rover)
 
@@ -143,9 +165,10 @@ Why this matters:
 
 ## Working Hypotheses (ranked)
 
-1. **Confidence threshold is now the dominant calibration-quality lever.** Lowering `min_match_score` increases retention but may admit borderline samples.
-2. **Dead-band probe range is too high to find crossover.** Lower omega probes are needed to identify a moved/stall boundary.
-3. **Real drivetrain asymmetry remains under load.** Even with better completion and retention, delivery remains asymmetric.
+1. **Reopen handling still needs holder eviction.** The startup preflight kills existing holders, but the reopen path currently retries `cap.open(...)` without re-running camera preflight.
+2. **Confidence threshold is now the dominant fit-quality lever once camera contention is controlled.** Lowering `min_match_score` increases retention but may admit borderline/sign-inconsistent samples.
+3. **Dead-band probe range is too high to find crossover.** Lower omega probes are needed to identify a moved/stall boundary.
+4. **Real drivetrain asymmetry remains under load.** Even with better completion and retention, delivery remains asymmetric.
 
 ## Completed Tests
 
@@ -167,49 +190,26 @@ Why this matters:
 ### Completed: Near-stall gate and block-agnostic mid-block recenter
 - Outcome: implemented and confirmed in run 5. n_samples increased to 4/16, MAE improved to 4.70°, and dead-band estimate became plausible (3.5 rad/s).
 
-## Next Steps (priority order)
+### Completed: Stream-off crash isolation
+- Outcome: camera-dropout failure still occurred with the stream disabled, so MJPEG stream load is not the primary crash source.
 
-### 1) Re-balance `min_match_score` with undistortion enabled
-Goal: keep improved retention while reducing borderline/sign-inconsistent matches.
+### Completed: Camera-holder contention isolation
+- Outcome: the sweep completed end-to-end when `pipewire`/`wireplumber` interference was suppressed, confirming holder contention as the primary crash root cause.
 
-What to change:
-- Sweep `min_match_score` upward from 0.45 in small steps (e.g. 0.50, then 0.55), keeping other settings fixed.
+## Next Steps
 
-Expected outcome:
-- Preserve most sample-count gains while reducing low-quality accepted samples.
+### Reopen-path preflight fix
+- Status: completed.
+- Outcome: re-running camera preflight in the reopen path fixed the freezing issue.
 
-### 2) Extend dead-band probe lower to force a stall crossover
-Goal: recover a valid `angular_dead_band_rad_s` estimate.
-
-What to change:
-- Add lower dead-band commands (e.g. 2.0, 1.5, 1.0) while keeping settle timing.
-
-Expected outcome:
-- At least one clear moved=False boundary per direction.
-
-### 3) Repeat run 7 settings for repeatability
-Goal: verify gain stability around current value.
-
-What to do:
-- Re-run with the same motion profile after step 1 threshold adjustment.
-
-Expected outcome:
-- Confirm whether `turn_rate_gain` stays in a narrow band across runs.
-
-### 4) Investigate sign-inconsistent high-omega events
-Goal: reduce opposite-direction samples entering gain analysis.
-
-What to investigate:
-- Check correlation with low `score_after` and tighten sign-quality handling accordingly.
-
-Expected outcome:
-- Cleaner gain dataset and fewer post-hoc exclusions.
+Additional next steps are intentionally deferred for now pending a different approach.
 
 ## Open Questions
 
-1. Does battery state materially shift the CW dead-band threshold above 4.5 rad/s?
-2. What `min_match_score` gives the best retention/quality trade-off with undistorted matching enabled?
+1. Does the reopen-path preflight fix eliminate camera-dropout failures without requiring manual service/socket intervention?
+2. What `min_match_score` gives the best retention/quality trade-off with undistorted matching enabled once camera contention is controlled?
 3. At what omega does moved=False first appear in each direction with the extended dead-band probe?
+4. Does battery state materially shift the CW dead-band threshold above 4.5 rad/s?
 
 ## Notes for Future Updates
 

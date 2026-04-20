@@ -7,14 +7,15 @@ RGB fisheye camera and the intrinsic calibration already stored in
 
 Measurement approach
 --------------------
-The rover is commanded to rotate in place (``linear = 0``) while a stationary
-target is tracked in the camera frame via template matching.  Bearing to the
-target before and after each rotation is computed using
-``cv2.fisheye.undistortPoints`` with the stored fisheye intrinsics, giving an
-accurate angle estimate even for large target displacements from the optical
-axis.  A forward-offset correction (same geometry as pan-tilt calibration)
-removes the bias introduced by the camera lens being displaced forward from
-the rover's differential-drive rotation centre.
+The rover is commanded to rotate in place (``linear = 0``).  Before each
+rotation the operator positions the marker, and after settling the operator
+clicks the marker on the MJPEG stream at ``http://<pi-ip>:8080/``.  The
+clicked distorted pixel is undistorted via ``cv2.fisheye.undistortPoints``
+using the stored fisheye intrinsics, giving an accurate angle estimate even
+for large target displacements from the optical axis.  A forward-offset
+correction (same geometry as pan-tilt calibration) removes the bias
+introduced by the camera lens being displaced forward from the rover's
+differential-drive rotation centre.
 
 The sweep runs four directional blocks in order: gain CCW, gain CW,
 dead-band CCW, dead-band CW.  The operator is prompted to re-centre the
@@ -64,22 +65,27 @@ Hardware setup
 Calibration procedure
 ---------------------
 1. Run the script.
-2. Open ``http://<pi-ip>:8080/stream`` in a browser.
+2. Open ``http://<pi-ip>:8080/`` in a browser.
 3. Verify the target is visible and centred on the crosshair at ``cx``.
-4. ``GET /confirm`` to start the sweep.
-5. Poll ``GET /status`` until ``state`` is ``COMPLETE`` (or ``FAILED``).
-6. ``GET /save`` to write results to sensor_config.yaml.
-7. ``GET /abort`` at any time to cancel without saving.
+4. Click the target in the browser when prompted to begin.
+5. After each rotation, click the target again when prompted.
+6. Between directional blocks, re-centre the rover and ``GET /confirm``,
+   then click the target to re-establish bearing.
+7. Poll ``GET /status`` until ``state`` is ``COMPLETE`` (or ``FAILED``).
+8. ``GET /save`` to write results to sensor_config.yaml.
+9. ``GET /abort`` at any time to cancel without saving.
 
 Endpoints
 ---------
+GET /         — HTML UI with MJPEG stream and click-to-measure interface.
 GET /stream   — MJPEG stream with crosshair guide and state overlay.
 GET /status   — JSON: {``state``, ``progress_pct``, ``current_step``,
-                       ``total_steps``, ``error_message``}.
-GET /confirm  — Start the sweep (only valid in WAITING_TARGET).
+                       ``total_steps``, ``error_message``, ``click_prompt``}.
+GET /click?u=X&v=Y — Deliver a marker click (only valid in WAITING_CLICK).
+GET /confirm  — Resume after rover re-centring (only valid in WAITING_RECENTER).
 GET /abort    — Cancel and shut down.
 GET /save     — Write CSV and sensor_config.yaml (only valid in COMPLETE).
-GET /reset    — Reset back to WAITING_TARGET (not valid while SWEEPING).
+GET /reset    — Reset back to WAITING_CLICK (not valid while SWEEPING).
 """
 
 from __future__ import annotations
@@ -110,8 +116,7 @@ from ugv_follower.utils.camera_preflight import ensure_camera_device_available
 from ugv_follower.utils.config_utils import get_project_root
 from ugv_follower.utils.fisheye_utils import (
     load_fisheye_intrinsics,
-    pixel_to_bearing_deg_pinhole,
-    undistort_frame,
+    pixel_to_bearing_deg,
 )
 
 _DEFAULT_SENSOR_CONFIG: Path = get_project_root() / "configs" / "sensor_config.yaml"
@@ -138,15 +143,6 @@ _ASYMMETRY_THRESHOLD: float = 0.08
 _STALL_FLAG: int = 4
 # Minimum fraction of expected rotation that corrected delta must reach to avoid the stall gate.
 _MIN_ROTATION_FRACTION: float = 0.10
-
-# Resilient template capture: retry and reopen parameters.
-_CAPTURE_TEMPLATE_RETRIES: int = 3
-_CAPTURE_TEMPLATE_RETRY_SLEEP_S: float = 0.15
-_CAPTURE_WARMUP_FRAMES: int = 5
-
-# Resilient bearing capture: retry and reopen parameters.
-_BEARING_CAPTURE_RETRIES: int = 2
-_BEARING_CAPTURE_RETRY_SLEEP_S: float = 0.10
 
 # Canonical CSV column order.
 _CSV_COLUMNS: list[str] = [
@@ -182,7 +178,7 @@ _CSV_BOOL_COLS: frozenset[str] = frozenset({"moved"})
 class CalibrationState(str, Enum):
     """State machine values for the calibration workflow."""
 
-    WAITING_TARGET = "WAITING_TARGET"
+    WAITING_CLICK = "WAITING_CLICK"
     SWEEPING = "SWEEPING"
     WAITING_RECENTER = "WAITING_RECENTER"
     COMPLETE = "COMPLETE"
@@ -199,7 +195,7 @@ class CalibrationState(str, Enum):
 class SweepStatus:
     """Snapshot of sweep progress, treated as an immutable value."""
 
-    state: CalibrationState = CalibrationState.WAITING_TARGET
+    state: CalibrationState = CalibrationState.WAITING_CLICK
     progress_pct: float = 0.0
     current_step: int = 0
     total_steps: int = 0
@@ -233,12 +229,9 @@ class DriveCalConfig:
     command_duration_s: float
     settle_time_s: float
     dead_band_omega_steps_rad_s: tuple[float, ...]
-    frames_to_average: int
     noise_floor_deg: float
     camera_offset_m: float
     target_distance_m: float
-    template_half_width_px: int
-    min_match_score: float
     camera_device: str
     calibration_surface: str
 
@@ -258,6 +251,9 @@ class CalibrationStateContainer:
         self._status: SweepStatus = SweepStatus()
         self._annotated_frame: cv2.typing.MatLike | None = None
         self._sweep_rows: list[dict[str, Any]] | None = None
+        self._click_event: threading.Event = threading.Event()
+        self._last_click: tuple[float, float] | None = None
+        self._click_prompt: str = "Click the marker to begin calibration"
 
     def update_frame(self, frame: cv2.typing.MatLike) -> None:
         """Replace the stored annotated frame.  Called from the frame thread."""
@@ -277,12 +273,14 @@ class CalibrationStateContainer:
         """Return a JSON-serialisable snapshot of current state values."""
         with self._lock:
             s = self._status
+            prompt = self._click_prompt
         return {
             "state": s.state.value,
             "progress_pct": round(s.progress_pct, 1),
             "current_step": s.current_step,
             "total_steps": s.total_steps,
             "error_message": s.error_message,
+            "click_prompt": prompt,
         }
 
     def get_snapshot(self) -> SweepStatus:
@@ -297,13 +295,83 @@ class CalibrationStateContainer:
             error_message=s.error_message,
         )
 
-    def try_start_sweep(self) -> bool:
-        """Atomically transition WAITING_TARGET → SWEEPING.  Returns True on success."""
+    def deliver_click(self, u: float, v: float) -> bool:
+        """Store click coordinates and fire the click event.
+
+        Parameters
+        ----------
+        u : float
+            Horizontal distorted pixel coordinate of the operator click.
+        v : float
+            Vertical distorted pixel coordinate of the operator click.
+
+        Returns
+        -------
+        bool
+            ``True`` if the click was accepted; ``False`` if not in
+            ``WAITING_CLICK`` state.
+        """
         with self._lock:
-            if self._status.state != CalibrationState.WAITING_TARGET:
+            if self._status.state != CalibrationState.WAITING_CLICK:
                 return False
-            self._status = SweepStatus(state=CalibrationState.SWEEPING)
-            return True
+            self._last_click = (u, v)
+        self._click_event.set()
+        return True
+
+    def wait_for_click(
+        self,
+        cancel_event: threading.Event,
+        prompt: str,
+        current_step: int,
+        total_steps: int,
+    ) -> tuple[float, float]:
+        """Transition to WAITING_CLICK, block until a click arrives or cancelled.
+
+        Parameters
+        ----------
+        cancel_event : threading.Event
+            Checked periodically; raises ``_SweepCancelled`` if set.
+        prompt : str
+            Human-readable description shown on the browser overlay.
+        current_step : int
+            Completed step count for progress display.
+        total_steps : int
+            Total step count for progress display.
+
+        Returns
+        -------
+        tuple[float, float]
+            ``(u, v)`` distorted pixel coordinates of the operator click.
+
+        Raises
+        ------
+        _SweepCancelled
+            If the cancel event fires while waiting.
+        """
+        self._click_event.clear()
+        pct = 100.0 * current_step / total_steps if total_steps else 0.0
+        with self._lock:
+            self._click_prompt = prompt
+        self.transition_to(
+            SweepStatus(
+                state=CalibrationState.WAITING_CLICK,
+                progress_pct=pct,
+                current_step=current_step,
+                total_steps=total_steps,
+            )
+        )
+        while not self._click_event.wait(timeout=0.5):
+            _check_cancel(cancel_event)
+        _check_cancel(cancel_event)
+        with self._lock:
+            click = self._last_click
+        assert click is not None
+        return click
+
+    def get_last_click(self) -> tuple[float, float] | None:
+        """Return the last accepted click coordinates, or None if not yet clicked."""
+        with self._lock:
+            return self._last_click
 
     def try_start_recenter_resume(self) -> bool:
         """Atomically transition WAITING_RECENTER → SWEEPING, preserving progress.
@@ -342,19 +410,23 @@ class CalibrationStateContainer:
             self._status = new_status
 
     def try_reset(self) -> bool:
-        """Atomically reset to WAITING_TARGET, clearing previous results.
+        """Atomically reset to WAITING_CLICK, clearing previous results.
 
         Returns True on success, False if the sweep thread is still active
-        (SWEEPING or WAITING_RECENTER).
+        (SWEEPING, WAITING_RECENTER, or WAITING_CLICK).
         """
         with self._lock:
             if self._status.state in (
                 CalibrationState.SWEEPING,
                 CalibrationState.WAITING_RECENTER,
+                CalibrationState.WAITING_CLICK,
             ):
                 return False
             self._status = SweepStatus()
             self._sweep_rows = None
+            self._last_click = None
+            self._click_event.clear()
+            self._click_prompt = "Click the marker to begin calibration"
             return True
 
     def set_sweep_rows(self, rows: list[dict[str, Any]]) -> None:
@@ -425,43 +497,28 @@ def correct_for_camera_offset(
 
 
 def quality_flag(
-    match_score: float,
     u_px: float,
     frame_width: int,
-    min_match_score: float,
     edge_margin_px: int = _EDGE_MARGIN_PX,
 ) -> int:
-    """Compute an integer quality flag for a single bearing measurement.
+    """Compute an integer quality flag for a single click bearing measurement.
 
     Parameters
     ----------
-    match_score : float
-        ``cv2.matchTemplate`` (TM_CCOEFF_NORMED) score, 0–1.
     u_px : float
-        Measured horizontal centroid in pixels.
+        Horizontal pixel coordinate of the operator click.
     frame_width : int
         Frame width in pixels.
-    min_match_score : float
-        Score threshold below which ``low_match`` is True.
     edge_margin_px : int
         Pixels from frame edge below which ``near_edge`` is True.
 
     Returns
     -------
     int
-        ``0`` = good, ``1`` = low_match, ``2`` = near_edge, ``3`` = both.
-        Flags are bit-packed so that ``flag_a | flag_b`` combines two
-        independent measurements into a single worst-case flag.
+        ``0`` = good, ``2`` = near_edge.
     """
-    low_match = match_score < min_match_score
     near_edge = u_px < edge_margin_px or u_px > (frame_width - edge_margin_px)
-    if low_match and near_edge:
-        return 3
-    if near_edge:
-        return 2
-    if low_match:
-        return 1
-    return 0
+    return 2 if near_edge else 0
 
 
 def _sign_consistent(corrected_delta_deg: float, expected_angle_deg: float) -> bool:
@@ -900,16 +957,9 @@ def _load_config(
         command_duration_s=command_duration_s,
         settle_time_s=settle_time_s,
         dead_band_omega_steps_rad_s=dead_steps,
-        frames_to_average=int(ud_cfg.get("frames_to_average", 5)),
         noise_floor_deg=noise_floor,
         camera_offset_m=camera_offset,
         target_distance_m=target_dist,
-        template_half_width_px=int(
-            shared_cfg.get(
-                "template_half_width_px", ud_cfg.get("template_half_width_px", 80)
-            )
-        ),
-        min_match_score=float(ud_cfg.get("min_match_score", 0.65)),
         camera_device=camera_device,
         calibration_surface=str(ud_cfg.get("calibration_surface", "unspecified")),
         sensor_config_path=args.sensor_config.resolve(),
@@ -917,310 +967,85 @@ def _load_config(
 
 
 # ---------------------------------------------------------------------------
-# Template matching helpers
+# Click-based bearing helpers
 # ---------------------------------------------------------------------------
 
 
-def _capture_template(
-    cap: cv2.VideoCapture,
-    cx: float,
-    cy: float,
-    half_w: int,
-    K: np.ndarray,
-    D: np.ndarray,
-) -> cv2.typing.MatLike:
-    """Capture one frame, undistort it, and extract a square template centred at (cx, cy).
+def _bearing_from_distorted_click(u: float, v: float, K: np.ndarray, D: np.ndarray) -> float:
+    """Convert a distorted fisheye pixel click to horizontal bearing in degrees.
+
+    Calls ``pixel_to_bearing_deg`` which undistorts the point via
+    ``cv2.fisheye.undistortPoints`` and returns ``atan(x_n)`` in degrees.
 
     Parameters
     ----------
-    cap : cv2.VideoCapture
-        Opened camera capture device.
-    cx : float
-        Horizontal centre for the template crop (principal point x).
-    cy : float
-        Vertical centre for the template crop (principal point y).
-    half_w : int
-        Half-width of the square template in pixels.
+    u : float
+        Horizontal distorted pixel coordinate of the operator click.
+    v : float
+        Vertical distorted pixel coordinate of the operator click.
     K : np.ndarray
-        3×3 fisheye camera matrix used to undistort the captured frame.
+        3×3 fisheye camera matrix.
     D : np.ndarray
         Fisheye distortion coefficients shaped ``(4, 1)``.
 
     Returns
     -------
-    cv2.typing.MatLike
-        The cropped template patch from the undistorted frame.
-
-    Raises
-    ------
-    RuntimeError
-        If no frame can be read from the camera.
+    float
+        Horizontal bearing in degrees (positive = right of optical axis).
     """
-    ok, frame = cap.read()
-    if not ok or frame is None:
-        raise RuntimeError("Failed to capture frame for template extraction.")
-    frame = undistort_frame(frame, K, D)
-    h, w = frame.shape[:2]
-    cx_i = int(round(cx))
-    cy_i = int(round(cy))
-    y1 = max(0, cy_i - half_w)
-    y2 = min(h, cy_i + half_w)
-    x1 = max(0, cx_i - half_w)
-    x2 = min(w, cx_i + half_w)
-    return frame[y1:y2, x1:x2].copy()
+    return pixel_to_bearing_deg(u, v, K, D)
 
 
-def _try_reopen_capture(
-    cap: cv2.VideoCapture,
-    device: str,
-    width: int,
-    height: int,
-) -> None:
-    """Release and reopen a V4L2 VideoCapture in-place to recover from a device dropout.
-
-    Parameters
-    ----------
-    cap : cv2.VideoCapture
-        The capture object to reopen.  Modified in-place.
-    device : str
-        V4L2 device path (e.g. ``"/dev/video0"``).
-    width : int
-        Frame width to restore after reopen.
-    height : int
-        Frame height to restore after reopen.
-
-    Raises
-    ------
-    RuntimeError
-        If the device cannot be reopened.
-    """
-    logger.warning("Reopening camera device {} after dropout.", device)
-    cap.release()
-    time.sleep(0.5)
-    try:
-        ensure_camera_device_available(device)
-    except RuntimeError as exc:
-        raise RuntimeError(f"Failed to reopen camera device {device}.") from exc
-    cap.open(device, cv2.CAP_V4L2)
-    if not cap.isOpened():
-        raise RuntimeError(f"Failed to reopen camera device {device}.")
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
-    cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 3)
-    for _ in range(_CAPTURE_WARMUP_FRAMES):
-        cap.read()
-    logger.info("Camera device {} reopened successfully.", device)
-
-
-def _capture_template_resilient(
-    cap: cv2.VideoCapture,
-    cx: float,
-    cy: float,
-    half_w: int,
+def _collect_click_bearing(
+    state: CalibrationStateContainer,
+    cancel_event: threading.Event,
     config: DriveCalConfig,
-) -> cv2.typing.MatLike:
-    """Capture a calibration template with retry and one reopen attempt on transient failure.
+    prompt: str,
+    current_step: int,
+    total_steps: int,
+) -> float:
+    """Wait for an operator click and return the resulting bearing in degrees.
 
-    Attempts ``_capture_template`` up to ``_CAPTURE_TEMPLATE_RETRIES`` times,
-    sleeping ``_CAPTURE_TEMPLATE_RETRY_SLEEP_S`` between each.  If all retries
-    are exhausted, releases and reopens the capture device via
-    ``_try_reopen_capture``, then makes one final attempt.  Raises on
-    persistent failure so the sweep fails cleanly.
-
-    Must be called while holding the ``cap_lock`` that protects *cap* from
-    concurrent access by the frame thread.
+    Transitions state to ``WAITING_CLICK``, blocks until a click is delivered
+    via ``state.deliver_click``, then transitions back to ``SWEEPING``.
 
     Parameters
     ----------
-    cap : cv2.VideoCapture
-        Open capture device.  May be reopened in-place on transient failure.
-    cx : float
-        Horizontal centre for the template crop (principal point x).
-    cy : float
-        Vertical centre for the template crop.
-    half_w : int
-        Half-width of the square template in pixels.
+    state : CalibrationStateContainer
+        Shared state container; handles WAITING_CLICK transition and event.
+    cancel_event : threading.Event
+        Checked while waiting; raises ``_SweepCancelled`` if set.
     config : DriveCalConfig
-        Calibration configuration (provides device path and resolution).
+        Provides ``K`` and ``D`` for bearing computation.
+    prompt : str
+        Human-readable description shown on the browser overlay.
+    current_step : int
+        Completed step count for progress display.
+    total_steps : int
+        Total step count for progress display.
 
     Returns
     -------
-    cv2.typing.MatLike
-        The cropped template patch.
+    float
+        Horizontal bearing in degrees derived from the operator click.
 
     Raises
     ------
-    RuntimeError
-        If the frame cannot be captured after all retries and one reopen.
+    _SweepCancelled
+        If the cancel event fires while waiting for the click.
     """
-    last_exc: RuntimeError | None = None
-    for attempt in range(1, _CAPTURE_TEMPLATE_RETRIES + 1):
-        try:
-            return _capture_template(cap, cx, cy, half_w, config.K, config.D)
-        except RuntimeError as exc:
-            last_exc = exc
-            logger.warning(
-                "Template capture failed (attempt {}/{}): {}",
-                attempt,
-                _CAPTURE_TEMPLATE_RETRIES,
-                exc,
-            )
-            if attempt < _CAPTURE_TEMPLATE_RETRIES:
-                time.sleep(_CAPTURE_TEMPLATE_RETRY_SLEEP_S)
-    logger.error(
-        "All {} template capture attempts failed — attempting device reopen.",
-        _CAPTURE_TEMPLATE_RETRIES,
-    )
-    _try_reopen_capture(
-        cap, config.camera_device, config.frame_width, config.frame_height
-    )
-    try:
-        return _capture_template(cap, cx, cy, half_w, config.K, config.D)
-    except RuntimeError as exc:
-        logger.error("Template capture still failed after reopen: {}", exc)
-        raise RuntimeError(
-            "Failed to capture template after retry and device reopen."
-        ) from last_exc
-
-
-def _match_template_uv(
-    frame: cv2.typing.MatLike,
-    template: cv2.typing.MatLike,
-) -> tuple[float, float, float]:
-    """Run TM_CCOEFF_NORMED template matching and return centroid and score.
-
-    Parameters
-    ----------
-    frame : cv2.typing.MatLike
-        Full camera frame.
-    template : cv2.typing.MatLike
-        Template patch as captured by ``_capture_template``.
-
-    Returns
-    -------
-    (centroid_u, centroid_v, match_score) : tuple[float, float, float]
-        ``centroid_u`` is the horizontal centre of the best match location.
-        ``centroid_v`` is the vertical centre.
-        ``match_score`` is the normalised correlation coefficient (0–1).
-    """
-    result = cv2.matchTemplate(frame, template, cv2.TM_CCOEFF_NORMED)
-    _, max_val, _, max_loc = cv2.minMaxLoc(result)
-    centroid_u = max_loc[0] + template.shape[1] / 2.0
-    centroid_v = max_loc[1] + template.shape[0] / 2.0
-    return centroid_u, centroid_v, float(max_val)
-
-
-def _capture_bearing_measurement(
-    cap: cv2.VideoCapture,
-    template: cv2.typing.MatLike,
-    frames_to_average: int,
-    K: np.ndarray,
-    D: np.ndarray,
-    cap_lock: threading.Lock,
-    camera_device: str,
-    frame_width: int,
-    frame_height: int,
-) -> tuple[float, float, float]:
-    """Capture frames, template-match, and return a robust bearing estimate.
-
-    Tries up to ``_BEARING_CAPTURE_RETRIES`` capture passes. If all passes fail,
-    reopens the camera once and makes one final capture pass.
-
-    Parameters
-    ----------
-    cap : cv2.VideoCapture
-        Open camera capture device.
-    template : cv2.typing.MatLike
-        Template image as captured by ``_capture_template``.
-    frames_to_average : int
-        Number of frames to collect and median-average.
-    K : np.ndarray
-        3×3 fisheye camera matrix — used to undistort each frame and to
-        extract ``cx`` and ``fx`` for the pinhole bearing formula.
-    D : np.ndarray
-        Fisheye distortion coefficients shaped ``(4, 1)`` — used to undistort
-        each frame.
-    cap_lock : threading.Lock
-        Shared lock serialising camera access with the frame-display thread.
-    camera_device : str
-        V4L2 camera device path used if reopen is required.
-    frame_width : int
-        Capture frame width applied after reopening the camera.
-    frame_height : int
-        Capture frame height applied after reopening the camera.
-
-    Returns
-    -------
-    tuple[float, float, float]
-        ``(median_bearing_deg, median_u_px, median_match_score)``.
-
-    Raises
-    ------
-    RuntimeError
-        If no frames can be read after retry and one reopen.
-    """
-
-    def _capture_bearing_measurement_once() -> tuple[float, float, float]:
-        """Run one bearing-capture pass and return median bearing, centroid, and score."""
-        cx = float(K[0, 2])
-        fx = float(K[0, 0])
-        bearings: list[float] = []
-        u_list: list[float] = []
-        scores: list[float] = []
-
-        with cap_lock:
-            for _ in range(frames_to_average):
-                ok, frame = cap.read()
-                if not ok or frame is None:
-                    logger.warning(
-                        "cap.read() failed during bearing measurement — skipping frame."
-                    )
-                    continue
-                frame = undistort_frame(frame, K, D)
-                u, _v, score = _match_template_uv(frame, template)
-                bearing = pixel_to_bearing_deg_pinhole(u, cx, fx)
-                bearings.append(bearing)
-                u_list.append(u)
-                scores.append(score)
-
-        if not bearings:
-            raise RuntimeError("No frames could be read during bearing measurement.")
-
-        return (
-            float(np.median(bearings)),
-            float(np.median(u_list)),
-            float(np.median(scores)),
+    u, v = state.wait_for_click(cancel_event, prompt, current_step, total_steps)
+    bearing = _bearing_from_distorted_click(u, v, config.K, config.D)
+    pct = 100.0 * current_step / total_steps if total_steps else 0.0
+    state.transition_to(
+        SweepStatus(
+            state=CalibrationState.SWEEPING,
+            progress_pct=pct,
+            current_step=current_step,
+            total_steps=total_steps,
         )
-
-    last_exc: RuntimeError | None = None
-    for attempt in range(1, _BEARING_CAPTURE_RETRIES + 1):
-        try:
-            return _capture_bearing_measurement_once()
-        except RuntimeError as exc:
-            last_exc = exc
-            logger.warning(
-                "Bearing measurement failed (attempt {}/{}): {}",
-                attempt,
-                _BEARING_CAPTURE_RETRIES,
-                exc,
-            )
-            if attempt < _BEARING_CAPTURE_RETRIES:
-                time.sleep(_BEARING_CAPTURE_RETRY_SLEEP_S)
-
-    logger.error(
-        "All {} bearing measurement attempts failed — attempting device reopen.",
-        _BEARING_CAPTURE_RETRIES,
     )
-    with cap_lock:
-        _try_reopen_capture(cap, camera_device, frame_width, frame_height)
-
-    try:
-        return _capture_bearing_measurement_once()
-    except RuntimeError as exc:
-        logger.error("Bearing measurement still failed after reopen: {}", exc)
-        raise RuntimeError(
-            "Failed bearing measurement after retry and device reopen."
-        ) from (last_exc or exc)
+    return bearing
 
 
 # ---------------------------------------------------------------------------
@@ -1284,8 +1109,6 @@ def _build_gain_row(
     b_after: float,
     corrected_delta: float,
     expected_angle: float,
-    score_before: float,
-    score_after: float,
     qflag: int,
     t0: float,
 ) -> dict[str, Any]:
@@ -1302,8 +1125,8 @@ def _build_gain_row(
         "corrected_delta_deg": round(corrected_delta, 6),
         "expected_angle_deg": round(expected_angle, 6),
         "moved": "",
-        "match_score_before": round(score_before, 6),
-        "match_score_after": round(score_after, 6),
+        "match_score_before": -1.0,
+        "match_score_after": -1.0,
         "quality_flag": qflag,
     }
 
@@ -1315,8 +1138,6 @@ def _build_dead_band_row(
     b_before: float,
     b_after: float,
     moved: bool,
-    score_before: float,
-    score_after: float,
     qflag: int,
     t0: float,
 ) -> dict[str, Any]:
@@ -1333,8 +1154,8 @@ def _build_dead_band_row(
         "corrected_delta_deg": "",
         "expected_angle_deg": "",
         "moved": "1" if moved else "0",
-        "match_score_before": round(score_before, 6),
-        "match_score_after": round(score_after, 6),
+        "match_score_before": -1.0,
+        "match_score_after": -1.0,
         "quality_flag": qflag,
     }
 
@@ -1369,14 +1190,10 @@ def _execute_rotation(
     omega_signed: float,
     duration_s: float,
     settle_s: float,
-    cap: cv2.VideoCapture,
-    template: cv2.typing.MatLike,
-    config: DriveCalConfig,
     ugv: UGVController,
-    cap_lock: threading.Lock,
     cancel_event: threading.Event,
-) -> tuple[float, float, float, float, float, float]:
-    """Measure bearing, rotate, settle, and measure again.
+) -> None:
+    """Command a rotation, wait for the command duration, stop, and settle.
 
     Parameters
     ----------
@@ -1385,73 +1202,38 @@ def _execute_rotation(
     duration_s : float
         How long to drive the rotation command (seconds).
     settle_s : float
-        How long to wait after stopping before the post-rotation measurement.
-    cap : cv2.VideoCapture
-        Video capture device.
-    template : cv2.typing.MatLike
-        Template image for bearing measurement.
-    config : DriveCalConfig
-        Calibration configuration (intrinsics, frame dimensions, etc.).
+        How long to wait after stopping before measurement.
     ugv : UGVController
         UGV hardware interface.
-    cap_lock : threading.Lock
-        Lock protecting *cap* from concurrent access.
     cancel_event : threading.Event
         Shared cancellation signal.
-
-    Returns
-    -------
-    tuple[float, float, float, float, float, float]
-        ``(b_before, u_before, score_before, b_after, u_after, score_after)``
 
     Raises
     ------
     _SweepCancelled
         If *cancel_event* is set after stopping or after settling.
     """
-    b_before, u_before, score_before = _capture_bearing_measurement(
-        cap,
-        template,
-        config.frames_to_average,
-        config.K,
-        config.D,
-        cap_lock,
-        config.camera_device,
-        config.frame_width,
-        config.frame_height,
-    )
     ugv.move(0.0, omega_signed)
     time.sleep(duration_s)
     ugv.stop()
     _check_cancel(cancel_event)
     time.sleep(settle_s)
     _check_cancel(cancel_event)
-    b_after, u_after, score_after = _capture_bearing_measurement(
-        cap,
-        template,
-        config.frames_to_average,
-        config.K,
-        config.D,
-        cap_lock,
-        config.camera_device,
-        config.frame_width,
-        config.frame_height,
-    )
-    return b_before, u_before, score_before, b_after, u_after, score_after
 
 
 def _run_gain_step(
     omega: float,
     direction: str,
-    cap: cv2.VideoCapture,
     ugv: UGVController,
     config: DriveCalConfig,
-    template: cv2.typing.MatLike,
-    cap_lock: threading.Lock,
+    state: CalibrationStateContainer,
     cancel_event: threading.Event,
+    bearing_before: float,
+    current_step: int,
+    total_steps: int,
     t0: float,
-) -> dict[str, Any]:
-    """Execute one CCW or CW gain measurement run and return a row dict.
+) -> tuple[dict[str, Any], float]:
+    """Execute one CCW or CW gain measurement run and return a row and bearing_after.
 
     Parameters
     ----------
@@ -1459,25 +1241,28 @@ def _run_gain_step(
         Unsigned angular velocity (rad/s); negated internally for CW.
     direction : str
         ``"ccw"`` or ``"cw"``.
-    cap : cv2.VideoCapture
-        Video capture device.
     ugv : UGVController
         UGV hardware interface.
     config : DriveCalConfig
         Calibration configuration.
-    template : cv2.typing.MatLike
-        Template image for bearing measurement.
-    cap_lock : threading.Lock
-        Lock protecting *cap* from concurrent access.
+    state : CalibrationStateContainer
+        Shared state container; used to wait for operator click.
     cancel_event : threading.Event
         Shared cancellation signal.
+    bearing_before : float
+        Bearing in degrees before this rotation (from previous step or initial click).
+    current_step : int
+        Completed step count for progress display.
+    total_steps : int
+        Total step count across all blocks.
     t0 : float
         ``time.monotonic()`` reference at sweep start, used for timestamps.
 
     Returns
     -------
-    dict[str, Any]
-        Gain sweep CSV row (see ``_build_gain_row``).
+    tuple[dict[str, Any], float]
+        ``(row_dict, bearing_after_deg)`` — row for the CSV and the bearing
+        after rotation, which becomes ``bearing_before`` for the next step.
 
     Raises
     ------
@@ -1486,62 +1271,63 @@ def _run_gain_step(
     """
     _check_cancel(cancel_event)
     omega_signed = omega if direction == "ccw" else -omega
-    b_before, u_before, score_before, b_after, u_after, score_after = _execute_rotation(
-        omega_signed,
-        config.command_duration_s,
-        config.settle_time_s,
-        cap,
-        template,
-        config,
-        ugv,
-        cap_lock,
-        cancel_event,
+    _execute_rotation(
+        omega_signed, config.command_duration_s, config.settle_time_s, ugv, cancel_event
     )
-    delta = b_after - b_before
+    label = "CCW" if direction == "ccw" else "CW"
+    b_after = _collect_click_bearing(
+        state,
+        cancel_event,
+        config,
+        f"Click marker after {label} rotation ({current_step}/{total_steps})",
+        current_step,
+        total_steps,
+    )
+    delta = b_after - bearing_before
     corrected = correct_for_camera_offset(
         delta, config.camera_offset_m, config.target_distance_m
     )
     expected = math.degrees(omega_signed * config.command_duration_s)
-    qflag = quality_flag(
-        score_before, u_before, config.frame_width, config.min_match_score
-    ) | quality_flag(score_after, u_after, config.frame_width, config.min_match_score)
+    last_click = state.get_last_click()
+    u_after = last_click[0] if last_click is not None else config.cx
+    qflag = quality_flag(u_after, config.frame_width)
     if abs(corrected) < config.noise_floor_deg or abs(
         corrected
     ) < _MIN_ROTATION_FRACTION * abs(expected):
         qflag |= _STALL_FLAG
-    label = "CCW" if direction == "ccw" else "CW "
     logger.info(
         f"Gain {label} {omega:.2f} rad/s: Δ={delta:+.2f}°  "
-        f"corrected={corrected:+.2f}°  expected={expected:+.2f}°  flag={qflag}  "
-        f"score_before={score_before:.3f}  score_after={score_after:.3f}"
+        f"corrected={corrected:+.2f}°  expected={expected:+.2f}°  flag={qflag}"
     )
-    return _build_gain_row(
-        omega=omega,
-        direction=direction,
-        duration_s=config.command_duration_s,
-        b_before=b_before,
-        b_after=b_after,
-        corrected_delta=corrected,
-        expected_angle=expected,
-        score_before=score_before,
-        score_after=score_after,
-        qflag=qflag,
-        t0=t0,
+    return (
+        _build_gain_row(
+            omega=omega,
+            direction=direction,
+            duration_s=config.command_duration_s,
+            b_before=bearing_before,
+            b_after=b_after,
+            corrected_delta=corrected,
+            expected_angle=expected,
+            qflag=qflag,
+            t0=t0,
+        ),
+        b_after,
     )
 
 
 def _run_dead_band_step(
     omega_d: float,
     direction: str,
-    cap: cv2.VideoCapture,
     ugv: UGVController,
     config: DriveCalConfig,
-    template: cv2.typing.MatLike,
-    cap_lock: threading.Lock,
+    state: CalibrationStateContainer,
     cancel_event: threading.Event,
+    bearing_before: float,
+    current_step: int,
+    total_steps: int,
     t0: float,
-) -> dict[str, Any]:
-    """Execute one CCW or CW dead-band probe and return a row dict.
+) -> tuple[dict[str, Any], float]:
+    """Execute one CCW or CW dead-band probe and return a row and bearing_after.
 
     Parameters
     ----------
@@ -1549,25 +1335,27 @@ def _run_dead_band_step(
         Unsigned angular velocity step (rad/s); negated internally for CW.
     direction : str
         ``"ccw"`` or ``"cw"``.
-    cap : cv2.VideoCapture
-        Video capture device.
     ugv : UGVController
         UGV hardware interface.
     config : DriveCalConfig
         Calibration configuration.
-    template : cv2.typing.MatLike
-        Template image for bearing measurement.
-    cap_lock : threading.Lock
-        Lock protecting *cap* from concurrent access.
+    state : CalibrationStateContainer
+        Shared state container; used to wait for operator click.
     cancel_event : threading.Event
         Shared cancellation signal.
+    bearing_before : float
+        Bearing in degrees before this rotation (from previous step or recenter click).
+    current_step : int
+        Completed step count for progress display.
+    total_steps : int
+        Total step count across all blocks.
     t0 : float
         ``time.monotonic()`` reference at sweep start, used for timestamps.
 
     Returns
     -------
-    dict[str, Any]
-        Dead-band CSV row (see ``_build_dead_band_row``).
+    tuple[dict[str, Any], float]
+        ``(row_dict, bearing_after_deg)``.
 
     Raises
     ------
@@ -1576,38 +1364,38 @@ def _run_dead_band_step(
     """
     _check_cancel(cancel_event)
     omega_signed = omega_d if direction == "ccw" else -omega_d
-    b_before, u_before, score_before, b_after, u_after, score_after = _execute_rotation(
-        omega_signed,
-        config.command_duration_s,
-        config.settle_time_s,
-        cap,
-        template,
-        config,
-        ugv,
-        cap_lock,
+    _execute_rotation(
+        omega_signed, config.command_duration_s, config.settle_time_s, ugv, cancel_event
+    )
+    label = "CCW" if direction == "ccw" else "CW"
+    b_after = _collect_click_bearing(
+        state,
         cancel_event,
+        config,
+        f"Click marker after dead-band {label} probe ({current_step}/{total_steps})",
+        current_step,
+        total_steps,
     )
-    delta = b_after - b_before
+    delta = b_after - bearing_before
     did_move = abs(delta) > config.noise_floor_deg
-    qflag = quality_flag(
-        score_before, u_before, config.frame_width, config.min_match_score
-    ) | quality_flag(score_after, u_after, config.frame_width, config.min_match_score)
-    label = "CCW" if direction == "ccw" else "CW "
+    last_click = state.get_last_click()
+    u_after = last_click[0] if last_click is not None else config.cx
+    qflag = quality_flag(u_after, config.frame_width)
     logger.info(
-        f"Dead-band {label} {omega_d:.2f} rad/s: Δ={delta:+.2f}°  moved={did_move}  "
-        f"score_before={score_before:.3f}  score_after={score_after:.3f}"
+        f"Dead-band {label} {omega_d:.2f} rad/s: Δ={delta:+.2f}°  moved={did_move}"
     )
-    return _build_dead_band_row(
-        omega=omega_d,
-        direction=direction,
-        duration_s=config.command_duration_s,
-        b_before=b_before,
-        b_after=b_after,
-        moved=did_move,
-        score_before=score_before,
-        score_after=score_after,
-        qflag=qflag,
-        t0=t0,
+    return (
+        _build_dead_band_row(
+            omega=omega_d,
+            direction=direction,
+            duration_s=config.command_duration_s,
+            b_before=bearing_before,
+            b_after=b_after,
+            moved=did_move,
+            qflag=qflag,
+            t0=t0,
+        ),
+        b_after,
     )
 
 
@@ -1670,39 +1458,31 @@ def _wait_for_recenter(
 
 
 def _run_sweep(
-    cap: cv2.VideoCapture,
     ugv: UGVController,
     config: DriveCalConfig,
-    template: cv2.typing.MatLike,
     state: CalibrationStateContainer,
-    cap_lock: threading.Lock,
     cancel_event: threading.Event,
     recenter_event: threading.Event,
     t0: float,
 ) -> None:
     """Execute the calibration sweep, then transition to COMPLETE or FAILED.
 
-    Intended to run in a daemon thread.  For each commanded step:
-
-    - Measure the target bearing before the rotation.
-    - Command the UGV to rotate for ``command_duration_s`` seconds.
-    - Wait ``settle_time_s`` after stopping.
-    - Measure the bearing again and record the difference.
-
-    The sweep runs four directional blocks in order:
+    Intended to run in a daemon thread.  The sweep runs four directional blocks:
 
     1. gain sweep CCW
     2. gain sweep CW
     3. dead-band sweep CCW
     4. dead-band sweep CW
 
+    At the start, and after each recenter pause, the operator clicks the marker
+    to establish ``bearing_before``.  After each rotation the operator clicks
+    again for ``bearing_after``, which is then carried forward as
+    ``bearing_before`` for the next step.
+
     After each completed block except the last the state transitions to
     ``WAITING_RECENTER`` and the thread blocks until the operator calls
-    ``GET /confirm`` (which sets ``recenter_event``).  This lets the
-    operator manually re-centre the rover on the calibration target between
-    every directional block.
-
-    Dead-band sweep: decreasing ω values; records whether rotation occurred.
+    ``GET /confirm`` (which sets ``recenter_event``), then transitions to
+    ``WAITING_CLICK`` for a fresh ``bearing_before`` click.
 
     On completion: calls ``state.set_sweep_rows`` then transitions to COMPLETE.
     On cancellation: returns without transitioning (``/abort`` handles ABORTED).
@@ -1710,6 +1490,8 @@ def _run_sweep(
 
     Parameters
     ----------
+    cancel_event : threading.Event
+        Shared cancellation signal; also set by ``cancel_sweep()`` to unblock.
     recenter_event : threading.Event
         Set by the operator via ``GET /confirm`` to resume after re-centring.
         Also set by ``cancel_sweep()`` so that ``/abort`` unblocks the wait.
@@ -1722,76 +1504,74 @@ def _run_sweep(
     )
     current_step = 0
     rows: list[dict[str, Any]] = []
-    cy = config.frame_height / 2.0
 
     # Ordered directional blocks: (step_fn, direction, omegas, label).
-    # Block boundaries drive the recenter pause locations dynamically.
-    blocks: list[tuple[Callable[..., dict[str, Any]], str, Sequence[float], str]] = [
+    blocks: list[tuple[Callable[..., tuple[dict[str, Any], float]], str, Sequence[float], str]] = [
         (_run_gain_step, "ccw", config.omega_commands_rad_s, "gain sweep CCW"),
         (_run_gain_step, "cw", config.omega_commands_rad_s, "gain sweep CW"),
-        (
-            _run_dead_band_step,
-            "ccw",
-            config.dead_band_omega_steps_rad_s,
-            "dead-band sweep CCW",
-        ),
-        (
-            _run_dead_band_step,
-            "cw",
-            config.dead_band_omega_steps_rad_s,
-            "dead-band sweep CW",
-        ),
+        (_run_dead_band_step, "ccw", config.dead_band_omega_steps_rad_s, "dead-band sweep CCW"),
+        (_run_dead_band_step, "cw", config.dead_band_omega_steps_rad_s, "dead-band sweep CW"),
     ]
 
     try:
+        # Initial click to establish bearing_before for the first block.
+        bearing_before = _collect_click_bearing(
+            state,
+            cancel_event,
+            config,
+            "Click the marker to begin calibration",
+            0,
+            total_steps,
+        )
+
         for block_idx, (step_fn, direction, omegas, label) in enumerate(blocks):
             logger.info("Starting {}.", label)
             for step_idx, omega in enumerate(omegas):
                 current_step += 1
-                rows.append(
-                    step_fn(
-                        omega,
-                        direction,
-                        cap,
-                        ugv,
-                        config,
-                        template,
-                        cap_lock,
-                        cancel_event,
-                        t0,
-                    )
+                row, bearing_after = step_fn(
+                    omega,
+                    direction,
+                    ugv,
+                    config,
+                    state,
+                    cancel_event,
+                    bearing_before,
+                    current_step,
+                    total_steps,
+                    t0,
                 )
+                rows.append(row)
+                bearing_before = bearing_after
                 state.update_sweep_progress(current_step, total_steps)
 
                 if (step_idx + 1) % 2 == 0 and step_idx + 1 < len(omegas):
                     _wait_for_recenter(
+                        state, current_step, total_steps, recenter_event, cancel_event, label
+                    )
+                    bearing_before = _collect_click_bearing(
                         state,
+                        cancel_event,
+                        config,
+                        f"Re-centre done — click marker to continue {label}",
                         current_step,
                         total_steps,
-                        recenter_event,
-                        cancel_event,
-                        label,
                     )
-                    with cap_lock:
-                        template = _capture_template_resilient(
-                            cap, config.cx, cy, config.template_half_width_px, config
-                        )
-                    logger.info("Template recaptured after in-block recenter.")
+                    logger.info("Bearing re-established after in-block recenter.")
 
             if block_idx < len(blocks) - 1:
+                next_label = blocks[block_idx + 1][3]
                 _wait_for_recenter(
+                    state, current_step, total_steps, recenter_event, cancel_event, next_label
+                )
+                bearing_before = _collect_click_bearing(
                     state,
+                    cancel_event,
+                    config,
+                    f"Click marker to begin {next_label}",
                     current_step,
                     total_steps,
-                    recenter_event,
-                    cancel_event,
-                    blocks[block_idx + 1][3],
                 )
-                with cap_lock:
-                    template = _capture_template_resilient(
-                        cap, config.cx, cy, config.template_half_width_px, config
-                    )
-                logger.info("Template recaptured after recenter.")
+                logger.info("Bearing established for {}.", next_label)
 
         state.set_sweep_rows(rows)
         state.transition_to(
@@ -1884,57 +1664,32 @@ class CalibrationOrchestrator:
         self,
         config: DriveCalConfig,
         ugv: UGVController,
-        cap: cv2.VideoCapture,
         state: CalibrationStateContainer,
-        cap_lock: threading.Lock,
     ) -> None:
         self._config = config
         self._ugv = ugv
-        self._cap = cap
         self._state = state
-        self._cap_lock = cap_lock
         self._cancel_event: threading.Event = threading.Event()
         self._recenter_event: threading.Event = threading.Event()
         self._csv_path: Path | None = None
         self._saved_result: dict[str, Any] | None = None
 
-    def confirm_target(self) -> None:
-        """Transition WAITING_TARGET → SWEEPING, capture template, spawn sweep thread.
+    def start_sweep(self) -> None:
+        """Spawn the sweep thread.  Call once at server startup.
 
-        Raises
-        ------
-        RuntimeError
-            If not currently in WAITING_TARGET state.
+        The sweep thread begins in ``WAITING_CLICK`` state, waiting for the
+        operator to click the marker before any rotation is commanded.
         """
-        if not self._state.try_start_sweep():
-            raise RuntimeError("not in WAITING_TARGET state")
-
-        logger.info("Capturing template at current camera position...")
-        h = self._config.frame_height
-        cy = float(h) / 2.0
-        with self._cap_lock:
-            template = _capture_template_resilient(
-                self._cap,
-                self._config.cx,
-                cy,
-                self._config.template_half_width_px,
-                self._config,
-            )
-
         self._cancel_event.clear()
         self._recenter_event.clear()
         self._csv_path = _make_csv_path()
         t0 = time.monotonic()
-
         threading.Thread(
             target=_run_sweep,
             args=(
-                self._cap,
                 self._ugv,
                 self._config,
-                template,
                 self._state,
-                self._cap_lock,
                 self._cancel_event,
                 self._recenter_event,
                 t0,
@@ -2019,10 +1774,14 @@ def _make_handler(
             pass
 
         def do_GET(self) -> None:  # noqa: N802
-            if self.path == "/stream":
+            if self.path == "/":
+                self._serve_index()
+            elif self.path == "/stream":
                 self._serve_stream()
             elif self.path == "/status":
                 self._serve_json(state.get_status())
+            elif self.path.startswith("/click"):
+                self._handle_click()
             elif self.path == "/confirm":
                 self._handle_confirm()
             elif self.path == "/abort":
@@ -2068,15 +1827,63 @@ def _make_handler(
             except (BrokenPipeError, ConnectionResetError):
                 pass
 
-        def _handle_confirm(self) -> None:
-            # /confirm handles both initial start (WAITING_TARGET) and
-            # mid-sweep recenter resume (WAITING_RECENTER).
-            current = state.get_status()["state"]
+        def _serve_index(self) -> None:
+            html = (
+                b"<!DOCTYPE html>"
+                b"<html><head><title>UGV Drive Calibration</title></head>"
+                b"<body style='background:#111;color:#eee;font-family:monospace;text-align:center'>"
+                b"<h2>UGV Drive Calibration</h2>"
+                b"<div id='prompt' style='color:yellow;font-size:1.2em;margin:8px'></div>"
+                b"<img id='stream' src='/stream'"
+                b" style='cursor:crosshair;max-width:100%;border:2px solid #555'"
+                b" onclick='handleClick(event)'>"
+                b"<p style='color:#888;font-size:0.85em'>"
+                b"GET /confirm to resume after re-centring &nbsp;|&nbsp; "
+                b"GET /save when complete &nbsp;|&nbsp; GET /abort to cancel</p>"
+                b"<script>"
+                b"var img=document.getElementById('stream');"
+                b"var prompt=document.getElementById('prompt');"
+                b"function handleClick(e){"
+                b"var rect=img.getBoundingClientRect();"
+                b"var sx=img.naturalWidth/rect.width;"
+                b"var sy=img.naturalHeight/rect.height;"
+                b"var u=((e.clientX-rect.left)*sx).toFixed(1);"
+                b"var v=((e.clientY-rect.top)*sy).toFixed(1);"
+                b"fetch('/click?u='+u+'&v='+v);}"
+                b"function poll(){"
+                b"fetch('/status').then(r=>r.json()).then(d=>{"
+                b"prompt.textContent=d.click_prompt||d.state;"
+                b"}).catch(()=>{});"
+                b"setTimeout(poll,500);}"
+                b"poll();"
+                b"</script>"
+                b"</body></html>"
+            )
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(html)))
+            self.end_headers()
+            self.wfile.write(html)
+
+        def _handle_click(self) -> None:
+            from urllib.parse import parse_qs, urlparse  # noqa: PLC0415
+
+            qs = parse_qs(urlparse(self.path).query)
             try:
-                if current == CalibrationState.WAITING_RECENTER.value:
-                    orchestrator.resume_recenter()
-                else:
-                    orchestrator.confirm_target()
+                u = float(qs["u"][0])
+                v = float(qs["v"][0])
+            except (KeyError, ValueError, IndexError):
+                self._serve_json({"error": "u and v query parameters required"}, 400)
+                return
+            if not state.deliver_click(u, v):
+                self._serve_json({"error": "not in WAITING_CLICK state"}, 409)
+                return
+            self._serve_json({"status": "click_received"})
+
+        def _handle_confirm(self) -> None:
+            # /confirm resumes the sweep after a WAITING_RECENTER pause.
+            try:
+                orchestrator.resume_recenter()
             except RuntimeError as exc:
                 self._serve_json({"error": str(exc)}, 409)
                 return
@@ -2135,8 +1942,9 @@ def _get_status_text(
     status: dict[str, Any],
 ) -> tuple[str, tuple[int, int, int], float] | None:
     """Return overlay text, BGR colour, and font scale for the current state."""
-    if current_state == CalibrationState.WAITING_TARGET.value:
-        return "Centre target on crosshair, then GET /confirm", (0, 255, 0), 0.7
+    if current_state == CalibrationState.WAITING_CLICK.value:
+        prompt = status.get("click_prompt", "Click the marker")
+        return prompt[:80], (0, 255, 0), 0.7
     if current_state == CalibrationState.SWEEPING.value:
         step = status["current_step"]
         total = status["total_steps"]
@@ -2161,7 +1969,6 @@ def _get_status_text(
 def _run_frame(
     cap: cv2.VideoCapture,
     cx: float,
-    template_half_width_px: int,
     state: CalibrationStateContainer,
     cap_lock: threading.Lock,
     stop_event: threading.Event,
@@ -2191,17 +1998,15 @@ def _run_frame(
         else:
             last_good_frame = frame
 
-        h, w = frame.shape[:2]
-        cy_row = int(round(h / 2.0))
+        h = frame.shape[0]
         annotated = frame.copy()
         cv2.line(annotated, (cx_col, 0), (cx_col, h - 1), (0, 255, 0), 2)
 
-        x1 = max(0, cx_col - template_half_width_px)
-        x2 = min(w - 1, cx_col + template_half_width_px)
-        y1 = max(0, cy_row - template_half_width_px)
-        y2 = min(h - 1, cy_row + template_half_width_px)
-        cv2.rectangle(annotated, (x1, y1), (x2, y2), (0, 255, 255), 2)
-        cv2.circle(annotated, (cx_col, cy_row), 4, (0, 255, 255), -1)
+        last_click = state.get_last_click()
+        if last_click is not None:
+            u_c = int(round(last_click[0]))
+            v_c = int(round(last_click[1]))
+            cv2.drawMarker(annotated, (u_c, v_c), (0, 165, 255), cv2.MARKER_CROSS, 20, 2)
 
         status = state.get_status()
         overlay = _get_status_text(status["state"], status)
@@ -2479,33 +2284,27 @@ def main() -> None:
 
         frame_thread = threading.Thread(
             target=_run_frame,
-            args=(
-                cap,
-                config.cx,
-                config.template_half_width_px,
-                state,
-                cap_lock,
-                stop_event,
-            ),
+            args=(cap, config.cx, state, cap_lock, stop_event),
             daemon=True,
         )
         frame_thread.start()
         logger.info("Frame thread started.")
 
-        orchestrator = CalibrationOrchestrator(config, ugv, cap, state, cap_lock)
+        orchestrator = CalibrationOrchestrator(config, ugv, state)
         server = ThreadingHTTPServer(
             ("0.0.0.0", _STREAM_PORT),
             _make_handler(state, server_ref, orchestrator),
         )
         server_ref[0] = server
+        orchestrator.start_sweep()
 
         logger.info(
             f"HTTP server running on port {_STREAM_PORT}. "
-            f"Open http://<pi-ip>:{_STREAM_PORT}/stream in your browser."
+            f"Open http://<pi-ip>:{_STREAM_PORT}/ in your browser."
         )
         logger.info(
-            "Endpoints: /stream (MJPEG), /status (JSON), "
-            "/confirm (start sweep), /abort, /save, /reset"
+            "Endpoints: / (UI), /stream (MJPEG), /status (JSON), "
+            "/click?u=X&v=Y, /confirm (resume after recenter), /abort, /save, /reset"
         )
 
         try:

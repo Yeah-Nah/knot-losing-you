@@ -25,11 +25,11 @@ from tools.calibration.calibrate_ugv_drive import (
     DriveCalConfig,
     SweepStatus,
     _SweepCancelled,
+    _bearing_from_distorted_click,
     _build_dead_band_row,
     _build_gain_row,
-    _capture_bearing_measurement,
-    _capture_template_resilient,
     _check_cancel,
+    _collect_click_bearing,
     _get_status_text,
     _load_config,
     _load_csv,
@@ -61,8 +61,8 @@ from ugv_follower.utils.fisheye_utils import (
 def _make_K_D_zero_distortion() -> tuple[np.ndarray, np.ndarray]:
     """Return a simple camera matrix and zero distortion coefficients.
 
-    With D=zeros, cv2.fisheye.undistortPoints behaves like the pinhole model:
-    x_n = (u - cx) / fx, y_n = (v - cy) / fy.
+    With D=zeros, cv2.fisheye.undistortPoints uses the equidistant model:
+    theta = (u - cx) / fx, x_n = tan(theta) — not the pinhole x_n = (u-cx)/fx.
     """
     K = np.array([[500.0, 0.0, 320.0], [0.0, 500.0, 240.0], [0.0, 0.0, 1.0]])
     D = np.zeros((4, 1), dtype=np.float64)
@@ -108,10 +108,8 @@ def _make_minimal_cal_cfg(
         "ugv_drive": {
             "omega_commands_rad_s": [0.5, 1.0],
             "dead_band_omega_steps_rad_s": [0.2, 0.1],
-            "frames_to_average": 3,
             "camera_offset_m": camera_offset_m,
             "target_distance_m": target_distance_m,
-            "min_match_score": 0.6,
             "calibration_surface": "test floor",
         },
     }
@@ -153,12 +151,9 @@ def _make_drive_cal_config(
         command_duration_s=command_duration_s,
         settle_time_s=settle_time_s,
         dead_band_omega_steps_rad_s=dead_band_steps,
-        frames_to_average=1,
         noise_floor_deg=noise_floor_deg,
         camera_offset_m=camera_offset_m,
         target_distance_m=target_distance_m,
-        template_half_width_px=20,
-        min_match_score=0.6,
         camera_device="/dev/video0",
         calibration_surface="test floor",
         sensor_config_path=Path("/tmp/sensor.yaml"),
@@ -256,13 +251,13 @@ def test_pixel_to_normalised_right_of_centre() -> None:
 
 
 def test_pixel_to_normalised_known_value_zero_distortion() -> None:
-    """With D=zeros, undistortion matches the pinhole model: x_n = (u - cx) / fx."""
+    """With D=zeros, equidistant model gives x_n = tan((u - cx) / fx)."""
     K, D = _make_K_D_zero_distortion()
     cx, cy = float(K[0, 2]), float(K[1, 2])
     fx = float(K[0, 0])
     offset = 200.0
     x_n, _y_n = pixel_to_normalised(cx + offset, cy, K, D)
-    assert x_n == pytest.approx(offset / fx, rel=1e-4)
+    assert x_n == pytest.approx(math.tan(offset / fx), rel=1e-4)
 
 
 # ---------------------------------------------------------------------------
@@ -294,12 +289,12 @@ def test_pixel_to_bearing_deg_left_of_centre_is_negative() -> None:
 
 
 def test_pixel_to_bearing_deg_known_value_zero_distortion() -> None:
-    """With D=zeros and x_n=1 (u = cx + fx), bearing should be atan(1) = 45°."""
+    """With D=zeros and u = cx + fx, bearing = atan(tan(1 rad)) = 1 rad = 57.3°."""
     K, D = _make_K_D_zero_distortion()
     cx, cy = float(K[0, 2]), float(K[1, 2])
     fx = float(K[0, 0])
     bearing = pixel_to_bearing_deg(cx + fx, cy, K, D)
-    assert bearing == pytest.approx(45.0, rel=1e-4)
+    assert bearing == pytest.approx(math.degrees(1.0), rel=1e-4)
 
 
 def test_pixel_to_bearing_deg_antisymmetric() -> None:
@@ -448,31 +443,25 @@ def test_validate_geometry_offset_ge_distance() -> None:
 
 
 def test_quality_flag_good() -> None:
-    """High match score, centroid well within frame → flag 0."""
-    assert quality_flag(0.9, 320.0, 640, min_match_score=0.65) == 0
+    """Centroid well within frame → flag 0."""
+    assert quality_flag(320.0, 640) == 0
 
 
-def test_quality_flag_low_match() -> None:
-    """Match score below threshold → flag 1."""
-    assert quality_flag(0.5, 320.0, 640, min_match_score=0.65) == 1
+def test_quality_flag_near_edge_left() -> None:
+    """Centroid within edge_margin_px of left boundary → flag 2."""
+    assert quality_flag(5.0, 640) == 2
 
 
-def test_quality_flag_near_edge() -> None:
-    """Centroid within edge_margin_px of frame boundary → flag 2."""
-    assert quality_flag(0.9, 5.0, 640, min_match_score=0.65) == 2
-    assert quality_flag(0.9, 635.0, 640, min_match_score=0.65) == 2
-
-
-def test_quality_flag_both() -> None:
-    """Low score AND near edge → flag 3."""
-    assert quality_flag(0.3, 5.0, 640, min_match_score=0.65) == 3
+def test_quality_flag_near_edge_right() -> None:
+    """Centroid within edge_margin_px of right boundary → flag 2."""
+    assert quality_flag(635.0, 640) == 2
 
 
 def test_quality_flag_bitor_combines_two_measurements() -> None:
-    """Bitwise OR of before/after flags: low_match | near_edge = 3."""
-    flag_before = quality_flag(0.4, 320.0, 640, min_match_score=0.65)  # 1 (low_match)
-    flag_after = quality_flag(0.9, 5.0, 640, min_match_score=0.65)  # 2 (near_edge)
-    assert (flag_before | flag_after) == 3
+    """Bitwise OR of before/after flags: good | near_edge = 2."""
+    flag_before = quality_flag(320.0, 640)  # 0 (good)
+    flag_after = quality_flag(5.0, 640)  # 2 (near_edge)
+    assert (flag_before | flag_after) == 2
 
 
 # ---------------------------------------------------------------------------
@@ -620,8 +609,6 @@ def test_analyse_runs_excludes_sign_inconsistent_rows() -> None:
         b_after=10.0,
         corrected_delta=10.0,
         expected_angle=math.degrees(1.0 * 2.0),
-        score_before=0.9,
-        score_after=0.9,
         qflag=0,
         t0=t0,
     )
@@ -634,8 +621,6 @@ def test_analyse_runs_excludes_sign_inconsistent_rows() -> None:
         b_after=-5.0,
         corrected_delta=-5.0,
         expected_angle=math.degrees(1.0 * 2.0),
-        score_before=0.9,
-        score_after=0.9,
         qflag=0,
         t0=t0,
     )
@@ -648,8 +633,6 @@ def test_analyse_runs_excludes_sign_inconsistent_rows() -> None:
         b_after=-5.0,
         corrected_delta=-5.0,
         expected_angle=math.degrees(-0.5 * 2.0),
-        score_before=0.9,
-        score_after=0.9,
         qflag=0,
         t0=t0,
     )
@@ -721,8 +704,6 @@ def test_analyse_runs_dead_band_detected_with_string_moved_values() -> None:
             b_before=0.0,
             b_after=4.0,
             moved=True,
-            score_before=0.9,
-            score_after=0.9,
             qflag=0,
             t0=t0,
         ),
@@ -733,8 +714,6 @@ def test_analyse_runs_dead_band_detected_with_string_moved_values() -> None:
             b_before=0.0,
             b_after=0.2,
             moved=False,
-            score_before=0.9,
-            score_after=0.9,
             qflag=0,
             t0=t0,
         ),
@@ -745,8 +724,6 @@ def test_analyse_runs_dead_band_detected_with_string_moved_values() -> None:
             b_before=0.0,
             b_after=-4.0,
             moved=True,
-            score_before=0.9,
-            score_after=0.9,
             qflag=0,
             t0=t0,
         ),
@@ -757,8 +734,6 @@ def test_analyse_runs_dead_band_detected_with_string_moved_values() -> None:
             b_before=0.0,
             b_after=-0.2,
             moved=False,
-            score_before=0.9,
-            score_after=0.9,
             qflag=0,
             t0=t0,
         ),
@@ -791,8 +766,6 @@ def _make_sample_rows() -> list[dict[str, Any]]:
             b_after=58.6,
             corrected_delta=55.4,
             expected_angle=57.3,
-            score_before=0.91,
-            score_after=0.88,
             qflag=0,
             t0=t0,
         ),
@@ -804,8 +777,6 @@ def _make_sample_rows() -> list[dict[str, Any]]:
             b_after=1.3,
             corrected_delta=-55.2,
             expected_angle=-57.3,
-            score_before=0.89,
-            score_after=0.92,
             qflag=0,
             t0=t0,
         ),
@@ -816,8 +787,6 @@ def _make_sample_rows() -> list[dict[str, Any]]:
             b_before=0.0,
             b_after=3.5,
             moved=True,
-            score_before=0.87,
-            score_after=0.85,
             qflag=0,
             t0=t0,
         ),
@@ -828,8 +797,6 @@ def _make_sample_rows() -> list[dict[str, Any]]:
             b_before=0.0,
             b_after=0.3,
             moved=False,
-            score_before=0.86,
-            score_after=0.84,
             qflag=0,
             t0=t0,
         ),
@@ -870,7 +837,7 @@ def test_csv_round_trip_values_preserved(tmp_path: Path) -> None:
     loaded = _load_csv(csv_path)
 
     assert loaded[0]["bearing_before_deg"] == pytest.approx(1.23, rel=1e-4)
-    assert loaded[0]["match_score_before"] == pytest.approx(0.91, rel=1e-4)
+    assert loaded[0]["match_score_before"] == pytest.approx(-1.0, rel=1e-4)
     assert loaded[0]["corrected_delta_deg"] == pytest.approx(55.4, rel=1e-4)
 
 
@@ -956,17 +923,10 @@ def test_load_config_loads_omega_commands(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-@patch(
-    "tools.calibration.calibrate_ugv_drive._capture_template",
-    return_value=np.zeros((40, 40, 3), dtype=np.uint8),
-)
-@patch(
-    "tools.calibration.calibrate_ugv_drive._capture_bearing_measurement",
-    return_value=(5.0, 320.0, 0.90),
-)
+@patch("tools.calibration.calibrate_ugv_drive._collect_click_bearing", return_value=5.0)
 @patch("tools.calibration.calibrate_ugv_drive.time.sleep")
 def test_run_sweep_row_count(
-    mock_sleep: MagicMock, mock_bearing: MagicMock, mock_capture_template: MagicMock
+    mock_sleep: MagicMock, mock_click_bearing: MagicMock
 ) -> None:
     """2 omega commands + 2 dead-band steps → 4 gain rows + 4 dead-band rows = 8 total."""
     config = _make_drive_cal_config(
@@ -974,7 +934,6 @@ def test_run_sweep_row_count(
         dead_band_steps=(0.2, 0.1),
     )
     state = CalibrationStateContainer()
-    state.try_start_sweep()
     ugv_mock = MagicMock()
 
     recenter_event = threading.Event()
@@ -982,12 +941,9 @@ def test_run_sweep_row_count(
         state, recenter_event, []
     )
     _run_sweep(
-        MagicMock(),  # cap — not used because _capture_bearing_measurement is mocked
         ugv_mock,
         config,
-        np.zeros((40, 40, 3), dtype=np.uint8),
         state,
-        threading.Lock(),
         threading.Event(),
         recenter_event,
         time.monotonic(),
@@ -1003,17 +959,10 @@ def test_run_sweep_row_count(
     assert len(dead_rows) == 4  # 2 dead-band steps × CCW + CW
 
 
-@patch(
-    "tools.calibration.calibrate_ugv_drive._capture_template",
-    return_value=np.zeros((40, 40, 3), dtype=np.uint8),
-)
-@patch(
-    "tools.calibration.calibrate_ugv_drive._capture_bearing_measurement",
-    return_value=(5.0, 320.0, 0.90),
-)
+@patch("tools.calibration.calibrate_ugv_drive._collect_click_bearing", return_value=5.0)
 @patch("tools.calibration.calibrate_ugv_drive.time.sleep")
 def test_run_sweep_ugv_move_and_stop_calls(
-    mock_sleep: MagicMock, mock_bearing: MagicMock, mock_capture_template: MagicMock
+    mock_sleep: MagicMock, mock_click_bearing: MagicMock
 ) -> None:
     """Each rotation run issues exactly one ugv.move and one ugv.stop."""
     config = _make_drive_cal_config(
@@ -1021,7 +970,6 @@ def test_run_sweep_ugv_move_and_stop_calls(
         dead_band_steps=(0.2,),
     )
     state = CalibrationStateContainer()
-    state.try_start_sweep()
     ugv_mock = MagicMock()
 
     recenter_event = threading.Event()
@@ -1029,12 +977,9 @@ def test_run_sweep_ugv_move_and_stop_calls(
         state, recenter_event, []
     )
     _run_sweep(
-        MagicMock(),
         ugv_mock,
         config,
-        np.zeros((40, 40, 3), dtype=np.uint8),
         state,
-        threading.Lock(),
         threading.Event(),
         recenter_event,
         time.monotonic(),
@@ -1047,22 +992,14 @@ def test_run_sweep_ugv_move_and_stop_calls(
     assert ugv_mock.stop.call_count == 4
 
 
-@patch(
-    "tools.calibration.calibrate_ugv_drive._capture_template",
-    return_value=np.zeros((40, 40, 3), dtype=np.uint8),
-)
-@patch(
-    "tools.calibration.calibrate_ugv_drive._capture_bearing_measurement",
-    return_value=(5.0, 320.0, 0.90),
-)
+@patch("tools.calibration.calibrate_ugv_drive._collect_click_bearing", return_value=5.0)
 @patch("tools.calibration.calibrate_ugv_drive.time.sleep")
 def test_run_sweep_ccw_and_cw_signs(
-    mock_sleep: MagicMock, mock_bearing: MagicMock, mock_capture_template: MagicMock
+    mock_sleep: MagicMock, mock_click_bearing: MagicMock
 ) -> None:
     """CCW run uses +omega; CW run uses -omega."""
     config = _make_drive_cal_config(omega_commands=(0.7,), dead_band_steps=())
     state = CalibrationStateContainer()
-    state.try_start_sweep()
     ugv_mock = MagicMock()
 
     recenter_event = threading.Event()
@@ -1070,12 +1007,9 @@ def test_run_sweep_ccw_and_cw_signs(
         state, recenter_event, []
     )
     _run_sweep(
-        MagicMock(),
         ugv_mock,
         config,
-        np.zeros((40, 40, 3), dtype=np.uint8),
         state,
-        threading.Lock(),
         threading.Event(),
         recenter_event,
         time.monotonic(),
@@ -1087,17 +1021,10 @@ def test_run_sweep_ccw_and_cw_signs(
     assert move_args[1] == (0.0, pytest.approx(-0.7))
 
 
-@patch(
-    "tools.calibration.calibrate_ugv_drive._capture_template",
-    return_value=np.zeros((40, 40, 3), dtype=np.uint8),
-)
-@patch(
-    "tools.calibration.calibrate_ugv_drive._capture_bearing_measurement",
-    return_value=(5.0, 320.0, 0.90),
-)
+@patch("tools.calibration.calibrate_ugv_drive._collect_click_bearing", return_value=5.0)
 @patch("tools.calibration.calibrate_ugv_drive.time.sleep")
 def test_run_sweep_gain_block_ordering(
-    mock_sleep: MagicMock, mock_bearing: MagicMock, mock_capture_template: MagicMock
+    mock_sleep: MagicMock, mock_click_bearing: MagicMock
 ) -> None:
     """All CCW gain runs complete before any CW gain run starts.
 
@@ -1109,7 +1036,6 @@ def test_run_sweep_gain_block_ordering(
         dead_band_steps=(),
     )
     state = CalibrationStateContainer()
-    state.try_start_sweep()
     ugv_mock = MagicMock()
 
     recenter_event = threading.Event()
@@ -1117,12 +1043,9 @@ def test_run_sweep_gain_block_ordering(
         state, recenter_event, []
     )
     _run_sweep(
-        MagicMock(),
         ugv_mock,
         config,
-        np.zeros((40, 40, 3), dtype=np.uint8),
         state,
-        threading.Lock(),
         threading.Event(),
         recenter_event,
         time.monotonic(),
@@ -1204,17 +1127,10 @@ def _make_auto_unblock_transition(
     return _capturing
 
 
-@patch(
-    "tools.calibration.calibrate_ugv_drive._capture_template",
-    return_value=np.zeros((40, 40, 3), dtype=np.uint8),
-)
-@patch(
-    "tools.calibration.calibrate_ugv_drive._capture_bearing_measurement",
-    return_value=(5.0, 320.0, 0.90),
-)
+@patch("tools.calibration.calibrate_ugv_drive._collect_click_bearing", return_value=5.0)
 @patch("tools.calibration.calibrate_ugv_drive.time.sleep")
 def test_run_sweep_pauses_for_recenter(
-    mock_sleep: MagicMock, mock_bearing: MagicMock, mock_capture_template: MagicMock
+    mock_sleep: MagicMock, mock_click_bearing: MagicMock
 ) -> None:
     """_run_sweep transitions to WAITING_RECENTER between every directional block.
 
@@ -1227,7 +1143,6 @@ def test_run_sweep_pauses_for_recenter(
         dead_band_steps=(0.2,),
     )
     state = CalibrationStateContainer()
-    state.try_start_sweep()
 
     recenter_event = threading.Event()
     states_seen: list[str] = []
@@ -1237,11 +1152,8 @@ def test_run_sweep_pauses_for_recenter(
 
     _run_sweep(
         MagicMock(),
-        MagicMock(),
         config,
-        np.zeros((40, 40, 3), dtype=np.uint8),
         state,
-        threading.Lock(),
         threading.Event(),
         recenter_event,
         time.monotonic(),
@@ -1251,17 +1163,10 @@ def test_run_sweep_pauses_for_recenter(
     assert states_seen[-1] == CalibrationState.COMPLETE.value
 
 
-@patch(
-    "tools.calibration.calibrate_ugv_drive._capture_template",
-    return_value=np.zeros((40, 40, 3), dtype=np.uint8),
-)
-@patch(
-    "tools.calibration.calibrate_ugv_drive._capture_bearing_measurement",
-    return_value=(5.0, 320.0, 0.90),
-)
+@patch("tools.calibration.calibrate_ugv_drive._collect_click_bearing", return_value=5.0)
 @patch("tools.calibration.calibrate_ugv_drive.time.sleep")
 def test_recenter_pause_count_matches_block_count(
-    mock_sleep: MagicMock, mock_bearing: MagicMock, mock_capture_template: MagicMock
+    mock_sleep: MagicMock, mock_click_bearing: MagicMock
 ) -> None:
     """Recenter pause positions follow the every-2-steps rule.
 
@@ -1282,7 +1187,6 @@ def test_recenter_pause_count_matches_block_count(
         dead_band_steps=(0.5, 1.0, 1.5),
     )
     state = CalibrationStateContainer()
-    state.try_start_sweep()
 
     recenter_event = threading.Event()
     states_seen: list[str] = []
@@ -1302,11 +1206,8 @@ def test_recenter_pause_count_matches_block_count(
 
     _run_sweep(
         MagicMock(),
-        MagicMock(),
         config,
-        np.zeros((40, 40, 3), dtype=np.uint8),
         state,
-        threading.Lock(),
         threading.Event(),
         recenter_event,
         time.monotonic(),
@@ -1316,17 +1217,10 @@ def test_recenter_pause_count_matches_block_count(
     assert states_seen[-1] == CalibrationState.COMPLETE.value
 
 
-@patch(
-    "tools.calibration.calibrate_ugv_drive._capture_template",
-    return_value=np.zeros((40, 40, 3), dtype=np.uint8),
-)
-@patch(
-    "tools.calibration.calibrate_ugv_drive._capture_bearing_measurement",
-    return_value=(5.0, 320.0, 0.90),
-)
+@patch("tools.calibration.calibrate_ugv_drive._collect_click_bearing", return_value=5.0)
 @patch("tools.calibration.calibrate_ugv_drive.time.sleep")
 def test_recenter_event_cleared_between_pauses(
-    mock_sleep: MagicMock, mock_bearing: MagicMock, mock_capture_template: MagicMock
+    mock_sleep: MagicMock, mock_click_bearing: MagicMock
 ) -> None:
     """A pre-set recenter_event does not allow any pause to be skipped.
 
@@ -1339,7 +1233,6 @@ def test_recenter_event_cleared_between_pauses(
         dead_band_steps=(0.2,),
     )
     state = CalibrationStateContainer()
-    state.try_start_sweep()
 
     recenter_event = threading.Event()
     recenter_event.set()  # pre-set: would skip pauses if clear() were absent
@@ -1351,11 +1244,8 @@ def test_recenter_event_cleared_between_pauses(
 
     _run_sweep(
         MagicMock(),
-        MagicMock(),
         config,
-        np.zeros((40, 40, 3), dtype=np.uint8),
         state,
-        threading.Lock(),
         threading.Event(),
         recenter_event,
         time.monotonic(),
@@ -1389,7 +1279,7 @@ def test_try_start_recenter_resume_transitions_state() -> None:
 
 def test_try_start_recenter_resume_fails_in_wrong_state() -> None:
     """try_start_recenter_resume returns False when not in WAITING_RECENTER."""
-    state = CalibrationStateContainer()  # starts in WAITING_TARGET
+    state = CalibrationStateContainer()  # starts in WAITING_CLICK
     assert state.try_start_recenter_resume() is False
 
 
@@ -1406,9 +1296,7 @@ def test_cancel_sweep_sets_recenter_event() -> None:
     orchestrator = CalibrationOrchestrator(
         config=_make_drive_cal_config(),
         ugv=MagicMock(),
-        cap=MagicMock(),
         state=state,
-        cap_lock=threading.Lock(),
     )
 
     orchestrator.cancel_sweep()
@@ -1417,66 +1305,16 @@ def test_cancel_sweep_sets_recenter_event() -> None:
     assert orchestrator._recenter_event.is_set()
 
 
-@patch(
-    "tools.calibration.calibrate_ugv_drive._capture_template",
-    return_value=np.zeros((40, 40, 3), dtype=np.uint8),
-)
-@patch(
-    "tools.calibration.calibrate_ugv_drive._capture_bearing_measurement",
-    return_value=(5.0, 320.0, 0.90),
-)
-@patch("tools.calibration.calibrate_ugv_drive.time.sleep")
-def test_run_sweep_recaptures_template_after_each_recenter(
-    mock_sleep: MagicMock,
-    mock_bearing: MagicMock,
-    mock_capture_template: MagicMock,
-) -> None:
-    """Template is recaptured once after each of the 3 recenter pauses."""
-    config = _make_drive_cal_config(
-        omega_commands=(0.5,),
-        dead_band_steps=(0.2,),
-    )
-    state = CalibrationStateContainer()
-    state.try_start_sweep()
-
-    recenter_event = threading.Event()
-    state.transition_to = _make_auto_unblock_transition(  # type: ignore[method-assign]
-        state, recenter_event, []
-    )
-
-    _run_sweep(
-        MagicMock(),
-        MagicMock(),
-        config,
-        np.zeros((40, 40, 3), dtype=np.uint8),
-        state,
-        threading.Lock(),
-        threading.Event(),
-        recenter_event,
-        time.monotonic(),
-    )
-
-    # 4 blocks → 3 recenter pauses → 3 recaptures
-    assert mock_capture_template.call_count == 3
-
-
-@patch(
-    "tools.calibration.calibrate_ugv_drive._capture_template",
-    return_value=np.zeros((40, 40, 3), dtype=np.uint8),
-)
-@patch(
-    "tools.calibration.calibrate_ugv_drive._capture_bearing_measurement",
-    return_value=(5.0, 320.0, 0.90),
-)
+@patch("tools.calibration.calibrate_ugv_drive._collect_click_bearing", return_value=5.0)
 @patch("tools.calibration.calibrate_ugv_drive.time.sleep")
 def test_run_sweep_stall_gate_sets_flag(
-    mock_sleep: MagicMock, mock_bearing: MagicMock, mock_capture_template: MagicMock
+    mock_sleep: MagicMock, mock_click_bearing: MagicMock
 ) -> None:
     """Gain steps with zero bearing change have the stall flag (bit 2) set.
 
-    When _capture_bearing_measurement returns the same bearing before and
-    after a rotation command, delta = 0 — below any noise_floor_deg — so
-    the stall gate must set quality_flag bit 2 on every gain row.
+    When _collect_click_bearing always returns 5.0 (same bearing before and
+    after rotation), delta = 0 — below any noise_floor_deg — so the stall
+    gate must set quality_flag bit 2 on every gain row.
     """
     config = _make_drive_cal_config(
         omega_commands=(1.0,),
@@ -1484,7 +1322,6 @@ def test_run_sweep_stall_gate_sets_flag(
         noise_floor_deg=2.0,
     )
     state = CalibrationStateContainer()
-    state.try_start_sweep()
 
     recenter_event = threading.Event()
     state.transition_to = _make_auto_unblock_transition(  # type: ignore[method-assign]
@@ -1493,11 +1330,8 @@ def test_run_sweep_stall_gate_sets_flag(
 
     _run_sweep(
         MagicMock(),
-        MagicMock(),
         config,
-        np.zeros((40, 40, 3), dtype=np.uint8),
         state,
-        threading.Lock(),
         threading.Event(),
         recenter_event,
         time.monotonic(),
@@ -1529,192 +1363,60 @@ def test_get_status_text_waiting_recenter() -> None:
 
 
 # ---------------------------------------------------------------------------
-# _capture_bearing_measurement resilience
+# _bearing_from_distorted_click
 # ---------------------------------------------------------------------------
 
 
-@patch("tools.calibration.calibrate_ugv_drive._try_reopen_capture")
-@patch("tools.calibration.calibrate_ugv_drive.pixel_to_bearing_deg_pinhole")
-@patch("tools.calibration.calibrate_ugv_drive._match_template_uv")
-@patch("tools.calibration.calibrate_ugv_drive.undistort_frame")
-def test_capture_bearing_measurement_succeeds_without_reopen(
-    mock_undistort: MagicMock,
-    mock_match: MagicMock,
-    mock_bearing: MagicMock,
-    mock_reopen: MagicMock,
-) -> None:
-    """A partial read failure still succeeds when one frame is captured."""
-    frame = np.zeros((16, 16, 3), dtype=np.uint8)
-    cap = MagicMock()
-    cap.read.side_effect = [(False, None), (True, frame)]
-
-    mock_undistort.side_effect = lambda f, *_args: f
-    mock_match.return_value = (123.0, 45.0, 0.91)
-    mock_bearing.return_value = 7.5
-
+def test_bearing_from_distorted_click_centre_is_zero() -> None:
+    """Principal point click → bearing of exactly 0°."""
     K, D = _make_K_D_zero_distortion()
-    result = _capture_bearing_measurement(
-        cap,
-        np.zeros((8, 8, 3), dtype=np.uint8),
-        2,
-        K,
-        D,
-        threading.Lock(),
-        "/dev/video0",
-        640,
-        480,
+    assert _bearing_from_distorted_click(320.0, 240.0, K, D) == pytest.approx(
+        0.0, abs=1e-6
     )
 
-    assert result == pytest.approx((7.5, 123.0, 0.91), rel=1e-6)
-    mock_reopen.assert_not_called()
 
-
-@patch("tools.calibration.calibrate_ugv_drive.time.sleep")
-@patch("tools.calibration.calibrate_ugv_drive._try_reopen_capture")
-@patch("tools.calibration.calibrate_ugv_drive.pixel_to_bearing_deg_pinhole")
-@patch("tools.calibration.calibrate_ugv_drive._match_template_uv")
-@patch("tools.calibration.calibrate_ugv_drive.undistort_frame")
-def test_capture_bearing_measurement_recovers_after_reopen(
-    mock_undistort: MagicMock,
-    mock_match: MagicMock,
-    mock_bearing: MagicMock,
-    mock_reopen: MagicMock,
-    _mock_sleep: MagicMock,
-) -> None:
-    """If all retries fail, one reopen attempt can recover measurement."""
-    frame = np.zeros((16, 16, 3), dtype=np.uint8)
-    cap = MagicMock()
-    cap.read.side_effect = [
-        (False, None),
-        (False, None),
-        (False, None),
-        (False, None),
-        (True, frame),
-        (False, None),
-    ]
-
-    mock_undistort.side_effect = lambda f, *_args: f
-    mock_match.return_value = (200.0, 60.0, 0.88)
-    mock_bearing.return_value = -3.25
-
+def test_bearing_from_distorted_click_right_of_centre_positive() -> None:
+    """Click to the right of optical axis → positive bearing."""
     K, D = _make_K_D_zero_distortion()
-    result = _capture_bearing_measurement(
-        cap,
-        np.zeros((8, 8, 3), dtype=np.uint8),
-        2,
-        K,
-        D,
-        threading.Lock(),
-        "/dev/video0",
-        640,
-        480,
-    )
-
-    assert result == pytest.approx((-3.25, 200.0, 0.88), rel=1e-6)
-    mock_reopen.assert_called_once_with(cap, "/dev/video0", 640, 480)
+    assert _bearing_from_distorted_click(420.0, 240.0, K, D) > 0.0
 
 
-@patch("tools.calibration.calibrate_ugv_drive.time.sleep")
-@patch("tools.calibration.calibrate_ugv_drive._try_reopen_capture")
-def test_capture_bearing_measurement_raises_after_reopen_failure(
-    mock_reopen: MagicMock,
-    _mock_sleep: MagicMock,
-) -> None:
-    """Raises RuntimeError when capture still fails after the reopen attempt."""
-    cap = MagicMock()
-    cap.read.return_value = (False, None)
+def test_bearing_from_distorted_click_left_of_centre_negative() -> None:
+    """Click to the left of optical axis → negative bearing."""
     K, D = _make_K_D_zero_distortion()
-
-    with pytest.raises(RuntimeError, match="retry and device reopen"):
-        _capture_bearing_measurement(
-            cap,
-            np.zeros((8, 8, 3), dtype=np.uint8),
-            2,
-            K,
-            D,
-            threading.Lock(),
-            "/dev/video0",
-            640,
-            480,
-        )
-
-    mock_reopen.assert_called_once_with(cap, "/dev/video0", 640, 480)
+    assert _bearing_from_distorted_click(220.0, 240.0, K, D) < 0.0
 
 
 # ---------------------------------------------------------------------------
-# _capture_template_resilient and _try_reopen_capture
+# _get_status_text — WAITING_CLICK
 # ---------------------------------------------------------------------------
 
 
-@patch("tools.calibration.calibrate_ugv_drive.time.sleep")
-@patch("tools.calibration.calibrate_ugv_drive._capture_template")
-def test_capture_template_resilient_succeeds_on_first_try(
-    mock_capture: MagicMock,
-    mock_sleep: MagicMock,
-) -> None:
-    """Returns immediately when _capture_template succeeds on the first call."""
-    expected = np.zeros((40, 40, 3), dtype=np.uint8)
-    mock_capture.return_value = expected
-    config = _make_drive_cal_config()
-    result = _capture_template_resilient(MagicMock(), 320.0, 240.0, 20, config)
-    assert result is expected
-    mock_capture.assert_called_once()
-    mock_sleep.assert_not_called()
+def test_get_status_text_waiting_click() -> None:
+    """_get_status_text returns the click_prompt text for WAITING_CLICK."""
+    status = {
+        "state": CalibrationState.WAITING_CLICK.value,
+        "click_prompt": "Click the marker to begin calibration",
+        "current_step": 0,
+        "total_steps": 8,
+        "progress_pct": 0.0,
+        "error_message": None,
+    }
+    result = _get_status_text(CalibrationState.WAITING_CLICK.value, status)
+    assert result is not None
+    text, colour, _scale = result
+    assert "Click" in text
+    assert colour == (0, 255, 0)
 
 
-@patch("tools.calibration.calibrate_ugv_drive.time.sleep")
-@patch("tools.calibration.calibrate_ugv_drive._capture_template")
-def test_capture_template_resilient_retries_on_transient_failure(
-    mock_capture: MagicMock,
-    mock_sleep: MagicMock,
-) -> None:
-    """Retries up to _CAPTURE_TEMPLATE_RETRIES times before succeeding."""
-    expected = np.zeros((40, 40, 3), dtype=np.uint8)
-    mock_capture.side_effect = [
-        RuntimeError("dropout"),
-        RuntimeError("dropout"),
-        expected,
-    ]
-    config = _make_drive_cal_config()
-    result = _capture_template_resilient(MagicMock(), 320.0, 240.0, 20, config)
-    assert result is expected
-    assert mock_capture.call_count == 3
+# ---------------------------------------------------------------------------
+# try_reset blocked in WAITING_CLICK
+# ---------------------------------------------------------------------------
 
 
-@patch("tools.calibration.calibrate_ugv_drive._try_reopen_capture")
-@patch("tools.calibration.calibrate_ugv_drive.time.sleep")
-@patch("tools.calibration.calibrate_ugv_drive._capture_template")
-def test_capture_template_resilient_reopens_after_all_retries_fail(
-    mock_capture: MagicMock,
-    mock_sleep: MagicMock,
-    mock_reopen: MagicMock,
-) -> None:
-    """Calls _try_reopen_capture and succeeds on the post-reopen attempt."""
-    expected = np.zeros((40, 40, 3), dtype=np.uint8)
-    mock_capture.side_effect = [
-        RuntimeError("dropout"),
-        RuntimeError("dropout"),
-        RuntimeError("dropout"),
-        expected,
-    ]
-    config = _make_drive_cal_config()
-    result = _capture_template_resilient(MagicMock(), 320.0, 240.0, 20, config)
-    assert result is expected
-    mock_reopen.assert_called_once()
-    assert mock_capture.call_count == 4
-
-
-@patch("tools.calibration.calibrate_ugv_drive._try_reopen_capture")
-@patch("tools.calibration.calibrate_ugv_drive.time.sleep")
-@patch("tools.calibration.calibrate_ugv_drive._capture_template")
-def test_capture_template_resilient_raises_after_reopen_failure(
-    mock_capture: MagicMock,
-    mock_sleep: MagicMock,
-    mock_reopen: MagicMock,
-) -> None:
-    """Raises RuntimeError when capture still fails after reopen."""
-    mock_capture.side_effect = RuntimeError("persistent dropout")
-    config = _make_drive_cal_config()
-    with pytest.raises(RuntimeError, match="retry and device reopen"):
-        _capture_template_resilient(MagicMock(), 320.0, 240.0, 20, config)
-    mock_reopen.assert_called_once()
+def test_try_reset_blocked_in_waiting_click() -> None:
+    """try_reset returns False when state is WAITING_CLICK (sweep thread active)."""
+    state = CalibrationStateContainer()
+    # Default initial state is WAITING_CLICK
+    assert state.get_snapshot().state == CalibrationState.WAITING_CLICK
+    assert state.try_reset() is False
