@@ -30,7 +30,7 @@ No sea legs required.
 
 ---
 
-## Phase 2 — Sensor Calibration
+## Phase 2 — Sensor Calibration ✅
 
 > Characterise all sensors and actuators offline before any runtime code depends on their outputs.
 > Each item produces measured parameters stored in `sensor_config.yaml` — no changes to existing
