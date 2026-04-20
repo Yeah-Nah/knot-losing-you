@@ -18,7 +18,7 @@ ugv:
 shared:
   template_half_width_px: 60   # Half-width (pixels) of the square template crop
   noise_floor_deg: 0.5         # Minimum measured angle magnitude (degrees) considered real motion
-  camera_device: "/dev/video0"  # V4L2 device path for the Waveshare RGB camera
+  camera_device: "/dev/v4l/by-id/usb-Xitech_USB_Camera_20250606105-video-index0"  # V4L2 device path for the Waveshare RGB camera
   command_duration_s: 0.20     # Rotation command duration (seconds)
   settle_time_s: 3.0           # Wait after stop before measuring (seconds)
 
