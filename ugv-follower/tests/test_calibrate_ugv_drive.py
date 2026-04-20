@@ -30,7 +30,6 @@ from tools.calibration.calibrate_ugv_drive import (
     _build_dead_band_row,
     _build_gain_row,
     _check_cancel,
-    _collect_click_bearing,
     _get_status_text,
     _load_config,
     _load_csv,

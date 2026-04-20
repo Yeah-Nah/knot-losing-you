@@ -975,7 +975,9 @@ def _load_config(
 # ---------------------------------------------------------------------------
 
 
-def _bearing_from_distorted_click(u: float, v: float, K: np.ndarray, D: np.ndarray) -> float:
+def _bearing_from_distorted_click(
+    u: float, v: float, K: np.ndarray, D: np.ndarray
+) -> float:
     """Convert a distorted fisheye pixel click to horizontal bearing in degrees.
 
     Calls ``pixel_to_bearing_deg`` which undistorts the point via
@@ -1552,11 +1554,23 @@ def _run_sweep(
     rows: list[dict[str, Any]] = []
 
     # Ordered directional blocks: (step_fn, direction, omegas, label).
-    blocks: list[tuple[Callable[..., tuple[dict[str, Any], float]], str, Sequence[float], str]] = [
+    blocks: list[
+        tuple[Callable[..., tuple[dict[str, Any], float]], str, Sequence[float], str]
+    ] = [
         (_run_gain_step, "ccw", config.omega_commands_rad_s, "gain sweep CCW"),
         (_run_gain_step, "cw", config.omega_commands_rad_s, "gain sweep CW"),
-        (_run_dead_band_step, "ccw", config.dead_band_omega_steps_rad_s, "dead-band sweep CCW"),
-        (_run_dead_band_step, "cw", config.dead_band_omega_steps_rad_s, "dead-band sweep CW"),
+        (
+            _run_dead_band_step,
+            "ccw",
+            config.dead_band_omega_steps_rad_s,
+            "dead-band sweep CCW",
+        ),
+        (
+            _run_dead_band_step,
+            "cw",
+            config.dead_band_omega_steps_rad_s,
+            "dead-band sweep CW",
+        ),
     ]
 
     try:
@@ -2066,7 +2080,9 @@ def _run_frame(
         if last_click is not None:
             u_c = int(round(last_click[0]))
             v_c = int(round(last_click[1]))
-            cv2.drawMarker(annotated, (u_c, v_c), (0, 165, 255), cv2.MARKER_CROSS, 20, 2)
+            cv2.drawMarker(
+                annotated, (u_c, v_c), (0, 165, 255), cv2.MARKER_CROSS, 20, 2
+            )
 
         status = state.get_status()
         overlay = _get_status_text(status["state"], status)
@@ -2127,9 +2143,7 @@ def _run_replay(
 
     print("\n=== Rover Drive Calibration — Replay Summary ===")
     print(f"Total rows      : {model.get('n_total_samples')}")
-    print(
-        f"Good gain samples: {model.get('n_samples')}/{model.get('n_total_samples')}"
-    )
+    print(f"Good gain samples: {model.get('n_samples')}/{model.get('n_total_samples')}")
 
     if model.get("error"):
         print(f"Analysis failed : {model['error']}")
