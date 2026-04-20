@@ -217,6 +217,16 @@ class Settings:
         return float(v) if v is not None else None
 
     @property
+    def ugv_control_track_width_m(self) -> float:
+        """Track width used by control (calibrated effective if present, else nominal)."""
+        effective_track_width = self.ugv_drive_effective_track_width_m
+        return (
+            effective_track_width
+            if effective_track_width is not None
+            else self.ugv_track_width
+        )
+
+    @property
     def ugv_drive_turn_rate_gain(self) -> float | None:
         """Turn rate gain k = ω_actual / ω_commanded (dimensionless), or None.
 

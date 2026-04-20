@@ -42,7 +42,7 @@ class Pipeline:
             baud_rate=settings.ugv_baud_rate,
             chassis_main=settings.ugv_chassis_main,
             chassis_module=settings.ugv_chassis_module,
-            track_width=settings.ugv_track_width,
+            track_width=settings.ugv_control_track_width_m,
             shaping_enabled=settings.ugv_shaping_enabled,
             update_rate_hz=settings.ugv_shaping_update_rate_hz,
             ramp_rate_per_s=settings.ugv_shaping_ramp_rate_per_s,

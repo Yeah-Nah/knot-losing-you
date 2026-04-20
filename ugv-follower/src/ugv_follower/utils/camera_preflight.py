@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 import re
 import shutil
+import stat
 import subprocess
 import time
 
@@ -138,6 +139,39 @@ def _release_device(device_path: str, release_command: list[str]) -> None:
         )
 
 
+def _require_character_device(device_path: str) -> None:
+    """Validate that *device_path* exists and is a character device node.
+
+    Parameters
+    ----------
+    device_path : str
+        Device file path (for example, ``/dev/video0``).
+
+    Raises
+    ------
+    RuntimeError
+        If the path is missing, inaccessible, or not a character device.
+    """
+    try:
+        st = os.stat(device_path)
+    except FileNotFoundError as exc:
+        raise RuntimeError(
+            f"Camera device node not found: {device_path}. "
+            "Check camera connection and configured device path."
+        ) from exc
+    except PermissionError as exc:
+        raise RuntimeError(
+            f"Cannot access camera device node: {device_path} (permission denied)."
+        ) from exc
+    except OSError as exc:
+        raise RuntimeError(
+            f"Failed to access camera device node {device_path}: {exc}"
+        ) from exc
+
+    if not stat.S_ISCHR(st.st_mode):
+        raise RuntimeError(f"Camera path is not a character device: {device_path}")
+
+
 def ensure_camera_device_available(
     device_path: str,
     *,
@@ -168,6 +202,8 @@ def ensure_camera_device_available(
     if os.name != "posix":
         logger.debug("Camera preflight skipped on non-posix OS.")
         return
+
+    _require_character_device(device_path)
 
     holders = _find_device_holders(device_path)
     if not holders:
