@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
+import cv2
 import numpy as np
 import pytest
 import yaml
@@ -35,6 +36,7 @@ from tools.calibration.calibrate_ugv_drive import (
     _load_csv,
     _run_sweep,
     _sign_consistent,
+    _try_reopen_capture,
     _validate_geometry,
     _write_csv,
     _write_results_atomic,
@@ -1421,3 +1423,42 @@ def test_try_reset_blocked_in_waiting_click() -> None:
     # Default initial state is WAITING_CLICK
     assert state.get_snapshot().state == CalibrationState.WAITING_CLICK
     assert state.try_reset() is False
+
+
+# ---------------------------------------------------------------------------
+# _try_reopen_capture
+# ---------------------------------------------------------------------------
+
+
+@patch("tools.calibration.calibrate_ugv_drive.time.sleep")
+@patch("tools.calibration.calibrate_ugv_drive.ensure_camera_device_available")
+def test_try_reopen_capture_success(
+    mock_preflight: MagicMock, mock_sleep: MagicMock
+) -> None:
+    """Reopen performs preflight, opens device, and reapplies capture settings."""
+    cap = MagicMock()
+    cap.isOpened.return_value = True
+
+    _try_reopen_capture(cap, "/dev/video0", 1920, 1080)
+
+    cap.release.assert_called_once()
+    mock_preflight.assert_called_once_with("/dev/video0")
+    cap.open.assert_called_once_with("/dev/video0", cv2.CAP_V4L2)
+    cap.set.assert_any_call(cv2.CAP_PROP_FRAME_WIDTH, 1920)
+    cap.set.assert_any_call(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
+    cap.set.assert_any_call(cv2.CAP_PROP_AUTO_EXPOSURE, 3)
+
+
+@patch("tools.calibration.calibrate_ugv_drive.time.sleep")
+@patch("tools.calibration.calibrate_ugv_drive.ensure_camera_device_available")
+def test_try_reopen_capture_preflight_failure_raises(
+    mock_preflight: MagicMock, mock_sleep: MagicMock
+) -> None:
+    """Preflight failure is surfaced as a reopen RuntimeError with chaining."""
+    cap = MagicMock()
+    mock_preflight.side_effect = RuntimeError("busy")
+
+    with pytest.raises(RuntimeError, match="Failed to reopen camera device"):
+        _try_reopen_capture(cap, "/dev/video0", 1920, 1080)
+
+    cap.open.assert_not_called()

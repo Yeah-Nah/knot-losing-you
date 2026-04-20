@@ -125,6 +125,7 @@ _CSV_DIR: Path = get_project_root() / "calibration" / "ugv_drive"
 
 _STREAM_PORT: int = 8080
 _JPEG_QUALITY: int = 80
+_FRAME_REOPEN_FAILURE_THRESHOLD: int = 5
 
 # Pixels from frame edge below which a centroid is flagged as near-edge.
 _EDGE_MARGIN_PX: int = 20
@@ -997,6 +998,48 @@ def _bearing_from_distorted_click(u: float, v: float, K: np.ndarray, D: np.ndarr
         Horizontal bearing in degrees (positive = right of optical axis).
     """
     return pixel_to_bearing_deg(u, v, K, D)
+
+
+def _try_reopen_capture(
+    cap: cv2.VideoCapture,
+    device: str,
+    width: int,
+    height: int,
+) -> None:
+    """Release and reopen a V4L2 VideoCapture in-place after read failures.
+
+    Parameters
+    ----------
+    cap : cv2.VideoCapture
+        The capture object to reopen. Modified in-place.
+    device : str
+        V4L2 device path (e.g. ``"/dev/video0"``).
+    width : int
+        Frame width to restore after reopen.
+    height : int
+        Frame height to restore after reopen.
+
+    Raises
+    ------
+    RuntimeError
+        If camera preflight or reopen fails.
+    """
+    logger.warning("Reopening camera device {} after frame-read failures.", device)
+    cap.release()
+    time.sleep(0.5)
+
+    try:
+        ensure_camera_device_available(device)
+    except RuntimeError as exc:
+        raise RuntimeError(f"Failed to reopen camera device {device}.") from exc
+
+    cap.open(device, cv2.CAP_V4L2)
+    if not cap.isOpened():
+        raise RuntimeError(f"Failed to reopen camera device {device}.")
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+    cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 3)
+    logger.info("Camera device {} reopened successfully.", device)
 
 
 def _collect_click_bearing(
@@ -1973,6 +2016,9 @@ def _run_frame(
     cap: cv2.VideoCapture,
     cx: float,
     cy: float,
+    camera_device: str,
+    frame_width: int,
+    frame_height: int,
     state: CalibrationStateContainer,
     cap_lock: threading.Lock,
     stop_event: threading.Event,
@@ -1985,6 +2031,7 @@ def _run_frame(
     cx_col = int(round(cx))
     cy_row = int(round(cy))
     last_good_frame: cv2.typing.MatLike | None = None
+    consecutive_read_failures = 0
     while not stop_event.is_set():
         acquired = cap_lock.acquire(blocking=False)
         if not acquired:
@@ -1996,11 +2043,23 @@ def _run_frame(
             cap_lock.release()
 
         if not ok or frame is None:
+            consecutive_read_failures += 1
+            if consecutive_read_failures >= _FRAME_REOPEN_FAILURE_THRESHOLD:
+                try:
+                    with cap_lock:
+                        _try_reopen_capture(
+                            cap, camera_device, frame_width, frame_height
+                        )
+                    consecutive_read_failures = 0
+                    continue
+                except RuntimeError as exc:
+                    logger.warning("Frame thread camera reopen failed: {}", exc)
             if last_good_frame is None:
                 time.sleep(0.05)
                 continue
             frame = last_good_frame
         else:
+            consecutive_read_failures = 0
             last_good_frame = frame
 
         h = frame.shape[0]
@@ -2293,7 +2352,17 @@ def main() -> None:
 
         frame_thread = threading.Thread(
             target=_run_frame,
-            args=(cap, config.cx, config.cy, state, cap_lock, stop_event),
+            args=(
+                cap,
+                config.cx,
+                config.cy,
+                config.camera_device,
+                config.frame_width,
+                config.frame_height,
+                state,
+                cap_lock,
+                stop_event,
+            ),
             daemon=True,
         )
         frame_thread.start()
