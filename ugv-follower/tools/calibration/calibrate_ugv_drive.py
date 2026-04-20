@@ -997,6 +997,10 @@ def _try_reopen_capture(
     logger.warning("Reopening camera device {} after dropout.", device)
     cap.release()
     time.sleep(0.5)
+    try:
+        ensure_camera_device_available(device)
+    except RuntimeError as exc:
+        raise RuntimeError(f"Failed to reopen camera device {device}.") from exc
     cap.open(device, cv2.CAP_V4L2)
     if not cap.isOpened():
         raise RuntimeError(f"Failed to reopen camera device {device}.")
