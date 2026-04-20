@@ -7,7 +7,7 @@ checkerboard:
 
 camera:
   device_index: 0        # cv2.VideoCapture device index for the Waveshare RGB camera
-  resolution: [1280, 720]  # Capture resolution [width, height]
+  resolution: [1920, 1080]  # Capture resolution [width, height]
   stream_fps: 25         # MJPEG stream frame rate served to the browser
 
 ugv:
