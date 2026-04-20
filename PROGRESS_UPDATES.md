@@ -23,6 +23,30 @@ Short description of what was done and why.
 
 # Phase 2: Sensor Calibration
 
+## Entry 6: UGV Drive Calibration Finally Complete
+*Date: April 20, 2026*
+
+Finally FINALLY got the rover drive calibration working end-to-end and locked down the parameters needed for reliable yaw-rate control. This turned into a much bigger job than expected because the rover's servo motors were inconsistent from run to run, which made the whole thing a pain in the butt and forced a lot of work on sweep structure, recentering, camera robustness, and command shaping before the measurements were trustworthy. 🥲😭
+
+**What was done:**
+- Built and iterated on `calibrate_ugv_drive.py` into a browser-driven calibration workflow that measures real turn response, dead-band, and drive gains, then writes the results into `sensor_config.yaml`
+- Reworked the sweep procedure several times to handle unreliable motor behaviour, including directional CW/CCW passes, recenter pauses, mid-block recentering, manual moved-centre confirmation, and better stall/retry handling
+- Hardened the camera measurement path with preflight checks, retry/reopen logic, and fisheye/undistortion support so calibration could survive dropouts and still produce usable bearing measurements
+- Added command shaping plus controller/config updates so the calibrated drive behaviour can be applied more smoothly at runtime, not just measured offline
+- Wrote the supporting theory and validation docs for rover drive calibration, control strategy, and the latest manual testing results
+
+**Key Achievements:**
+- UGV drive calibration is now finally sorted, with track width, surface-specific tuning, dead-band, and angular velocity gain parameters stored in config for downstream follower control
+- Reached a calibration workflow that is resilient enough to use on the real rover despite the servo motor inconsistencies
+- Added broad automated test coverage for the drive calibration and command shaping paths, reducing the risk of breaking the workflow during future control work
+- Removes one of the last major actuator unknowns before the full follower loop in Phase 3
+
+Updated the stream to have a better centre marker:
+
+<img src="other/images/Screenshot 2026-04-19 155054.png" alt="Testing Camera Connection" width="500">
+
+---
+
 ## Entry 5: Pan-Tilt Servo Curve Calibration Complete
 *Date: April 1, 2026*
 
