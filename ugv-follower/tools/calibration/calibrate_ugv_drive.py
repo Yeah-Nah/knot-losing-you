@@ -216,6 +216,7 @@ class DriveCalConfig:
     frame_width: int
     frame_height: int
     cx: float  # principal point x — used for crosshair overlay
+    cy: float  # principal point y — used for crosshair overlay
 
     # From sensor_config.yaml — ugv
     ugv_port: str
@@ -701,7 +702,7 @@ def analyse_runs(
         )
     ]
     n_good = len(gain_good)
-    n_total = len(rows)
+    n_total = len([r for r in rows if r.get("run_type") == _GAIN_RUN])
 
     if n_good < 2:
         logger.error(
@@ -896,6 +897,7 @@ def _load_config(
     res = ws_cfg.get("resolution", [1280, 720])
     frame_width, frame_height = int(res[0]), int(res[1])
     cx = float(K[0, 2])
+    cy = float(K[1, 2])
 
     # --- UGV hardware ---
     ugv_cfg: dict[str, Any] = sensor_cfg["ugv"]
@@ -948,6 +950,7 @@ def _load_config(
         frame_width=frame_width,
         frame_height=frame_height,
         cx=cx,
+        cy=cy,
         ugv_port=str(ugv_cfg["port"]),
         ugv_baud_rate=int(ugv_cfg["baud_rate"]),
         ugv_chassis_main=int(ugv_cfg["chassis_main"]),
@@ -1969,6 +1972,7 @@ def _get_status_text(
 def _run_frame(
     cap: cv2.VideoCapture,
     cx: float,
+    cy: float,
     state: CalibrationStateContainer,
     cap_lock: threading.Lock,
     stop_event: threading.Event,
@@ -1979,6 +1983,7 @@ def _run_frame(
     lock exclusively during frame collection without starving this thread.
     """
     cx_col = int(round(cx))
+    cy_row = int(round(cy))
     last_good_frame: cv2.typing.MatLike | None = None
     while not stop_event.is_set():
         acquired = cap_lock.acquire(blocking=False)
@@ -1999,8 +2004,10 @@ def _run_frame(
             last_good_frame = frame
 
         h = frame.shape[0]
+        w = frame.shape[1]
         annotated = frame.copy()
         cv2.line(annotated, (cx_col, 0), (cx_col, h - 1), (0, 255, 0), 2)
+        cv2.line(annotated, (0, cy_row), (w - 1, cy_row), (0, 255, 0), 2)
 
         last_click = state.get_last_click()
         if last_click is not None:
@@ -2025,7 +2032,7 @@ def _run_frame(
 
         cv2.putText(
             annotated,
-            f"cx = {cx:.1f} px",
+            f"cx = {cx:.1f} px, cy = {cy:.1f} px",
             (10, 65),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.6,
@@ -2067,7 +2074,9 @@ def _run_replay(
 
     print("\n=== Rover Drive Calibration — Replay Summary ===")
     print(f"Total rows      : {model.get('n_total_samples')}")
-    print(f"Good gain samples: {model.get('n_samples')}")
+    print(
+        f"Good gain samples: {model.get('n_samples')}/{model.get('n_total_samples')}"
+    )
 
     if model.get("error"):
         print(f"Analysis failed : {model['error']}")
@@ -2284,7 +2293,7 @@ def main() -> None:
 
         frame_thread = threading.Thread(
             target=_run_frame,
-            args=(cap, config.cx, state, cap_lock, stop_event),
+            args=(cap, config.cx, config.cy, state, cap_lock, stop_event),
             daemon=True,
         )
         frame_thread.start()

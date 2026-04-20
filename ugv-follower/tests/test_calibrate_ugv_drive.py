@@ -142,6 +142,7 @@ def _make_drive_cal_config(
         frame_width=640,
         frame_height=480,
         cx=320.0,
+        cy=240.0,
         ugv_port="/dev/null",
         ugv_baud_rate=115200,
         ugv_chassis_main=2,
