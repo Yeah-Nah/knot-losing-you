@@ -19,8 +19,8 @@ differential-drive rotation centre.
 
 The sweep runs four directional blocks in order: gain CCW, gain CW,
 dead-band CCW, dead-band CW.  The operator is prompted to re-centre the
-rover between every block, avoiding directional instability from sign
-reversals and accumulated drift.
+rover after every measurement step, avoiding directional instability and
+accumulated drift.
 
 Results written to ``sensor_config.yaml`` under the ``ugv_drive`` key:
 
@@ -69,7 +69,7 @@ Calibration procedure
 3. Verify the target is visible and centred on the crosshair at ``cx``.
 4. Click the target in the browser when prompted to begin.
 5. After each rotation, click the target again when prompted.
-6. Between directional blocks, re-centre the rover and ``GET /confirm``,
+6. After every measurement step, re-centre the rover and ``GET /confirm``,
    then click the target to re-establish bearing.
 7. Poll ``GET /status`` until ``state`` is ``COMPLETE`` (or ``FAILED``).
 8. ``GET /save`` to write results to sensor_config.yaml.
@@ -1525,8 +1525,8 @@ def _run_sweep(
     again for ``bearing_after``, which is then carried forward as
     ``bearing_before`` for the next step.
 
-    After each completed block except the last the state transitions to
-    ``WAITING_RECENTER`` and the thread blocks until the operator calls
+    After each completed measurement step except the last the state transitions
+    to ``WAITING_RECENTER`` and the thread blocks until the operator calls
     ``GET /confirm`` (which sets ``recenter_event``), then transitions to
     ``WAITING_CLICK`` for a fresh ``bearing_before`` click.
 
@@ -1590,34 +1590,28 @@ def _run_sweep(
                 bearing_before = bearing_after
                 state.update_sweep_progress(current_step, total_steps)
 
-                if (step_idx + 1) % 2 == 0 and step_idx + 1 < len(omegas):
+                if current_step < total_steps:
+                    if step_idx + 1 < len(omegas):
+                        next_label = label
+                    else:
+                        next_label = blocks[block_idx + 1][3]
                     _wait_for_recenter(
-                        state, current_step, total_steps, recenter_event, cancel_event, label
+                        state,
+                        current_step,
+                        total_steps,
+                        recenter_event,
+                        cancel_event,
+                        next_label,
                     )
                     bearing_before = _collect_click_bearing(
                         state,
                         cancel_event,
                         config,
-                        f"Re-centre done — click marker to continue {label}",
+                        f"Click marker to begin {next_label}",
                         current_step,
                         total_steps,
                     )
-                    logger.info("Bearing re-established after in-block recenter.")
-
-            if block_idx < len(blocks) - 1:
-                next_label = blocks[block_idx + 1][3]
-                _wait_for_recenter(
-                    state, current_step, total_steps, recenter_event, cancel_event, next_label
-                )
-                bearing_before = _collect_click_bearing(
-                    state,
-                    cancel_event,
-                    config,
-                    f"Click marker to begin {next_label}",
-                    current_step,
-                    total_steps,
-                )
-                logger.info("Bearing established for {}.", next_label)
+                    logger.info("Bearing re-established for {}.", next_label)
 
         state.set_sweep_rows(rows)
         state.transition_to(
@@ -1760,7 +1754,7 @@ class CalibrationOrchestrator:
         if not self._state.try_start_recenter_resume():
             raise RuntimeError("not in WAITING_RECENTER state")
         self._recenter_event.set()
-        logger.info("Operator confirmed recenter — continuing to dead-band sweep.")
+        logger.info("Operator confirmed recenter — continuing to next sweep step.")
 
     def save_results(self) -> tuple[Path, dict[str, Any]]:
         """Write CSV and sensor_config.yaml from the completed sweep.

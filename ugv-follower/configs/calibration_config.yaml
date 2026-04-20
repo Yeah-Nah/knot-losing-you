@@ -47,7 +47,7 @@ ugv_drive:
 
   # Dead-band probe — commands applied in decreasing order until stall is detected.
   # Uses shared.command_duration_s and shared.settle_time_s.
-  dead_band_omega_steps_rad_s: [3.0, 2.5, 2.0, 1.5]
+  dead_band_omega_steps_rad_s: [2.0, 1.5, 1, 0.5]
 
   # Measurement
   frames_to_average: 7                 # Frames to median-average at each bearing measurement

@@ -1135,10 +1135,10 @@ def _make_auto_unblock_transition(
 def test_run_sweep_pauses_for_recenter(
     mock_sleep: MagicMock, mock_click_bearing: MagicMock
 ) -> None:
-    """_run_sweep transitions to WAITING_RECENTER between every directional block.
+    """_run_sweep transitions to WAITING_RECENTER after every step except the last.
 
-    With 4 blocks (gain CCW, gain CW, dead-band CCW, dead-band CW) there must
-    be exactly 3 recenter pauses.  The auto-unblock helper simulates the
+    With 1 gain omega and 1 dead-band omega there are 4 total steps, so there
+    must be exactly 3 recenter pauses.  The auto-unblock helper simulates the
     operator pressing ``GET /confirm`` after each pause.
     """
     config = _make_drive_cal_config(
@@ -1171,19 +1171,11 @@ def test_run_sweep_pauses_for_recenter(
 def test_recenter_pause_count_matches_block_count(
     mock_sleep: MagicMock, mock_click_bearing: MagicMock
 ) -> None:
-    """Recenter pause positions follow the every-2-steps rule.
+    """Recenter pause positions follow the after-every-step rule.
 
     With 2 gain commands and 3 dead-band steps the 4 blocks have sizes
-    2, 2, 3, 3 (total 10 steps).  An in-block pause fires after every 2
-    completed steps when steps remain in the block, plus 3 block-boundary
-    pauses (between every adjacent block pair), giving:
-
-    gain CCW (2):      no in-block pause (2nd step is last); boundary at step 2
-    gain CW (2):       no in-block pause;                    boundary at step 4
-    dead-band CCW (3): in-block pause at step 6;             boundary at step 7
-    dead-band CW (3):  in-block pause at step 9;             no boundary (last)
-
-    Expected pause steps: [2, 4, 6, 7, 9].
+    2, 2, 3, 3 (total 10 steps).  Every completed step except the final
+    one must pause for recenter, so expected pause steps are [1..9].
     """
     config = _make_drive_cal_config(
         omega_commands=(1.0, 2.0),
@@ -1216,7 +1208,7 @@ def test_recenter_pause_count_matches_block_count(
         time.monotonic(),
     )
 
-    assert pause_steps == [2, 4, 6, 7, 9]
+    assert pause_steps == [1, 2, 3, 4, 5, 6, 7, 8, 9]
     assert states_seen[-1] == CalibrationState.COMPLETE.value
 
 
@@ -1229,7 +1221,7 @@ def test_recenter_event_cleared_between_pauses(
 
     ``_wait_for_recenter`` clears the event before entering
     ``WAITING_RECENTER``, so even if the event is already set at the start
-    of a pause all 3 pauses must still be entered.
+    of each pause all 3 pauses must still be entered.
     """
     config = _make_drive_cal_config(
         omega_commands=(0.5,),
