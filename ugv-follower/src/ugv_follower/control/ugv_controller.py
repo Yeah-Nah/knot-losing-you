@@ -137,9 +137,11 @@ class UGVController:
         logger.info("Disconnecting UGV...")
         if self._serial is not None and self._serial.is_open:
             self.stop()
-            if self._shaper is not None:
-                self._shaper.stop()
-            self._serial.close()
+        if self._shaper is not None:
+            self._shaper.stop()
+        if self._serial is not None:
+            if self._serial.is_open:
+                self._serial.close()
             self._serial = None
         logger.info("UGV disconnected.")
 

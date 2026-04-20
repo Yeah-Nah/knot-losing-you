@@ -150,7 +150,7 @@ This is an identification experiment, not the final follower control architectur
 
 Phase 3 is planned as a cascaded closed-loop system:
 
-1. Inner visual loop keeps the target near image center by driving pan.
+1. Inner visual loop keeps the target near image centre by driving pan.
 2. Outer rover loop maps pan-angle error to chassis angular velocity command.
 3. Rover motion changes the observed pan error, closing the loop.
 
