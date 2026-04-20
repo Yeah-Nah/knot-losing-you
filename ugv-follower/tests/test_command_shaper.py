@@ -12,7 +12,8 @@ from __future__ import annotations
 
 import threading
 import time
-from unittest.mock import MagicMock, patch
+from typing import Callable
+from unittest.mock import patch
 
 import pytest
 
@@ -37,7 +38,10 @@ def _step(
     dwell_on_zero: int = _DWELL_ON_ZERO,
 ) -> tuple[float, int]:
     """Thin wrapper around _step_wheel with convenient defaults."""
-    return _step_wheel(current, target, dwell, max_step, epsilon, dwell_on_zero)
+    new_current, new_dwell = _step_wheel(
+        current, target, dwell, max_step, epsilon, dwell_on_zero
+    )
+    return float(new_current), int(new_dwell)
 
 
 # ---------------------------------------------------------------------------
@@ -159,7 +163,7 @@ class TestCommandShaperThreading:
 
     def _make_shaper(
         self,
-        send_fn,
+        send_fn: Callable[[float, float], None],
         update_rate_hz: float = 200.0,
         ramp_rate_per_s: float = 4.0,
         reversal_dwell_s: float = 0.0,
@@ -229,7 +233,7 @@ class TestCommandShaperThreading:
         shaper.stop()
 
         with lock:
-            all_lefts = [l for l, _ in outputs]
+            all_lefts = [left for left, _ in outputs]
 
         for i in range(1, len(all_lefts)):
             prev, curr = all_lefts[i - 1], all_lefts[i]
@@ -238,7 +242,7 @@ class TestCommandShaperThreading:
 
     def test_already_running_raises(self) -> None:
         """Starting an already-running shaper raises RuntimeError."""
-        shaper = CommandShaper(send_fn=lambda l, r: None)
+        shaper = CommandShaper(send_fn=lambda left, right: None)
         shaper.start()
         try:
             with pytest.raises(RuntimeError, match="already running"):
@@ -248,7 +252,7 @@ class TestCommandShaperThreading:
 
     def test_stop_before_start_is_safe(self) -> None:
         """Calling stop() without ever calling start() does not raise."""
-        shaper = CommandShaper(send_fn=lambda l, r: None)
+        shaper = CommandShaper(send_fn=lambda left, right: None)
         shaper.stop()  # must not raise
 
 
@@ -310,12 +314,12 @@ class TestImmediateStop:
         with lock:
             # Find the last non-zero output; everything after must be (0, 0).
             last_nonzero = -1
-            for i, (l, r) in enumerate(outputs):
-                if abs(l) > 0.02 or abs(r) > 0.02:
+            for i, (left, right) in enumerate(outputs):
+                if abs(left) > 0.02 or abs(right) > 0.02:
                     last_nonzero = i
-            for l, r in outputs[last_nonzero + 1 :]:
-                assert abs(l) < 0.02
-                assert abs(r) < 0.02
+            for left, right in outputs[last_nonzero + 1 :]:
+                assert abs(left) < 0.02
+                assert abs(right) < 0.02
 
 
 # ---------------------------------------------------------------------------
@@ -327,29 +331,28 @@ class TestUGVControllerShaping:
     """UGVController shaping on/off behaviour without real hardware."""
 
     def _make_controller(
-        self, shaping_enabled: bool = False, **kwargs
+        self, shaping_enabled: bool = False, update_rate_hz: float = 50.0
     ) -> UGVController:
         return UGVController(
-            port="/dev/null", shaping_enabled=shaping_enabled, **kwargs
+            port="/dev/null",
+            shaping_enabled=shaping_enabled,
+            update_rate_hz=update_rate_hz,
         )
 
     def test_shaping_disabled_move_sends_immediately(self) -> None:
         """With shaping off, move() calls _send_wheel_speeds synchronously."""
-        sent: list[dict] = []
-
         with patch("ugv_follower.control.ugv_controller.serial.Serial") as mock_serial:
             mock_serial.return_value.is_open = True
             ctrl = self._make_controller(shaping_enabled=False)
             ctrl._serial = mock_serial.return_value
 
-            original_send = ctrl._send
-            captured: list[dict] = []
+            captured: list[dict[str, object]] = []
 
-            def capturing_send(cmd: dict) -> None:
+            def capturing_send(cmd: dict[str, object]) -> None:
                 captured.append(cmd)
 
-            ctrl._send = capturing_send  # type: ignore[method-assign]
-            ctrl.move(linear=0.5, angular=0.0)
+            with patch.object(ctrl, "_send", side_effect=capturing_send):
+                ctrl.move(linear=0.5, angular=0.0)
 
         assert len(captured) == 1
         assert captured[0]["T"] == 1
@@ -363,7 +366,7 @@ class TestUGVControllerShaping:
             ctrl = self._make_controller(shaping_enabled=True, update_rate_hz=10.0)
             ctrl._serial = mock_serial.return_value
 
-            write_calls: list = []
+            write_calls: list[bytes] = []
             mock_serial.return_value.write.side_effect = write_calls.append
 
             assert ctrl._shaper is not None
@@ -389,11 +392,9 @@ class TestUGVControllerShaping:
             ctrl._serial = mock_serial.return_value
 
             assert ctrl._shaper is not None
-            ctrl._shaper.immediate_stop = MagicMock()  # type: ignore[method-assign]
-
-            ctrl.stop()
-
-            ctrl._shaper.immediate_stop.assert_called_once()
+            with patch.object(ctrl._shaper, "immediate_stop") as immediate_stop:
+                ctrl.stop()
+                immediate_stop.assert_called_once()
 
     def test_shaping_disabled_stop_sends_zero_directly(self) -> None:
         """stop() with shaping off writes {T:1, L:0, R:0} directly."""
@@ -402,10 +403,9 @@ class TestUGVControllerShaping:
             ctrl = self._make_controller(shaping_enabled=False)
             ctrl._serial = mock_serial.return_value
 
-            captured: list[dict] = []
-            ctrl._send = captured.append  # type: ignore[method-assign]
-
-            ctrl.stop()
+            captured: list[dict[str, object]] = []
+            with patch.object(ctrl, "_send", side_effect=captured.append):
+                ctrl.stop()
 
         assert any(
             cmd.get("T") == 1 and cmd.get("L") == 0 and cmd.get("R") == 0

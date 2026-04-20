@@ -163,7 +163,7 @@ def _make_drive_cal_config(
 
 
 def _make_gain_rows(
-    omegas: list[float] = None,
+    omegas: list[float] | None = None,
     k_actual: float = 1.0,
     duration_s: float = 2.0,
     quality: int = 0,
@@ -198,8 +198,8 @@ def _make_gain_rows(
 
 
 def _make_dead_band_rows(
-    omegas: list[float] = None,
-    moved_flags: list[bool] = None,
+    omegas: list[float] | None = None,
+    moved_flags: list[bool] | None = None,
 ) -> list[dict[str, Any]]:
     """Build synthetic dead_band rows for analysis tests."""
     if omegas is None:

@@ -999,7 +999,7 @@ def _bearing_from_distorted_click(
     float
         Horizontal bearing in degrees (positive = right of optical axis).
     """
-    return pixel_to_bearing_deg(u, v, K, D)
+    return float(pixel_to_bearing_deg(u, v, K, D))
 
 
 def _try_reopen_capture(
