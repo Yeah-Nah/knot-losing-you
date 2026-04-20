@@ -144,6 +144,10 @@ _CAPTURE_TEMPLATE_RETRIES: int = 3
 _CAPTURE_TEMPLATE_RETRY_SLEEP_S: float = 0.15
 _CAPTURE_WARMUP_FRAMES: int = 5
 
+# Resilient bearing capture: retry and reopen parameters.
+_BEARING_CAPTURE_RETRIES: int = 2
+_BEARING_CAPTURE_RETRY_SLEEP_S: float = 0.10
+
 # Canonical CSV column order.
 _CSV_COLUMNS: list[str] = [
     "timestamp_s",
@@ -990,7 +994,7 @@ def _try_reopen_capture(
     RuntimeError
         If the device cannot be reopened.
     """
-    logger.warning("Reopening camera device %s after dropout.", device)
+    logger.warning("Reopening camera device {} after dropout.", device)
     cap.release()
     time.sleep(0.5)
     cap.open(device, cv2.CAP_V4L2)
@@ -1001,7 +1005,7 @@ def _try_reopen_capture(
     cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 3)
     for _ in range(_CAPTURE_WARMUP_FRAMES):
         cap.read()
-    logger.info("Camera device %s reopened successfully.", device)
+    logger.info("Camera device {} reopened successfully.", device)
 
 
 def _capture_template_resilient(
@@ -1052,7 +1056,7 @@ def _capture_template_resilient(
         except RuntimeError as exc:
             last_exc = exc
             logger.warning(
-                "Template capture failed (attempt %d/%d): %s",
+                "Template capture failed (attempt {}/{}): {}",
                 attempt,
                 _CAPTURE_TEMPLATE_RETRIES,
                 exc,
@@ -1060,7 +1064,7 @@ def _capture_template_resilient(
             if attempt < _CAPTURE_TEMPLATE_RETRIES:
                 time.sleep(_CAPTURE_TEMPLATE_RETRY_SLEEP_S)
     logger.error(
-        "All %d template capture attempts failed — attempting device reopen.",
+        "All {} template capture attempts failed — attempting device reopen.",
         _CAPTURE_TEMPLATE_RETRIES,
     )
     _try_reopen_capture(
@@ -1069,7 +1073,7 @@ def _capture_template_resilient(
     try:
         return _capture_template(cap, cx, cy, half_w, config.K, config.D)
     except RuntimeError as exc:
-        logger.error("Template capture still failed after reopen: %s", exc)
+        logger.error("Template capture still failed after reopen: {}", exc)
         raise RuntimeError(
             "Failed to capture template after retry and device reopen."
         ) from last_exc
@@ -1109,10 +1113,14 @@ def _capture_bearing_measurement(
     K: np.ndarray,
     D: np.ndarray,
     cap_lock: threading.Lock,
+    camera_device: str,
+    frame_width: int,
+    frame_height: int,
 ) -> tuple[float, float, float]:
     """Capture frames, template-match, and return a robust bearing estimate.
 
-    Acquires ``cap_lock`` exclusively for the duration of frame collection.
+    Tries up to ``_BEARING_CAPTURE_RETRIES`` capture passes. If all passes fail,
+    reopens the camera once and makes one final capture pass.
 
     Parameters
     ----------
@@ -1130,43 +1138,85 @@ def _capture_bearing_measurement(
         each frame.
     cap_lock : threading.Lock
         Shared lock serialising camera access with the frame-display thread.
+    camera_device : str
+        V4L2 camera device path used if reopen is required.
+    frame_width : int
+        Capture frame width applied after reopening the camera.
+    frame_height : int
+        Capture frame height applied after reopening the camera.
 
     Returns
     -------
-    (median_bearing_deg, median_u_px, median_match_score) : tuple
-        Median values over the captured frames.
+    tuple[float, float, float]
+        ``(median_bearing_deg, median_u_px, median_match_score)``.
 
     Raises
     ------
     RuntimeError
-        If no frames can be read from the camera.
+        If no frames can be read after retry and one reopen.
     """
-    cx = float(K[0, 2])
-    fx = float(K[0, 0])
-    bearings: list[float] = []
-    u_list: list[float] = []
-    scores: list[float] = []
-    with cap_lock:
-        for _ in range(frames_to_average):
-            ok, frame = cap.read()
-            if not ok or frame is None:
-                logger.warning(
-                    "cap.read() failed during bearing measurement — skipping frame."
-                )
-                continue
-            frame = undistort_frame(frame, K, D)
-            u, v, score = _match_template_uv(frame, template)
-            bearing = pixel_to_bearing_deg_pinhole(u, cx, fx)
-            bearings.append(bearing)
-            u_list.append(u)
-            scores.append(score)
-    if not bearings:
-        raise RuntimeError("No frames could be read during bearing measurement.")
-    return (
-        float(np.median(bearings)),
-        float(np.median(u_list)),
-        float(np.median(scores)),
+
+    def _capture_bearing_measurement_once() -> tuple[float, float, float]:
+        """Run one bearing-capture pass and return median bearing, centroid, and score."""
+        cx = float(K[0, 2])
+        fx = float(K[0, 0])
+        bearings: list[float] = []
+        u_list: list[float] = []
+        scores: list[float] = []
+
+        with cap_lock:
+            for _ in range(frames_to_average):
+                ok, frame = cap.read()
+                if not ok or frame is None:
+                    logger.warning(
+                        "cap.read() failed during bearing measurement — skipping frame."
+                    )
+                    continue
+                frame = undistort_frame(frame, K, D)
+                u, _v, score = _match_template_uv(frame, template)
+                bearing = pixel_to_bearing_deg_pinhole(u, cx, fx)
+                bearings.append(bearing)
+                u_list.append(u)
+                scores.append(score)
+
+        if not bearings:
+            raise RuntimeError("No frames could be read during bearing measurement.")
+
+        return (
+            float(np.median(bearings)),
+            float(np.median(u_list)),
+            float(np.median(scores)),
+        )
+
+    last_exc: RuntimeError | None = None
+    for attempt in range(1, _BEARING_CAPTURE_RETRIES + 1):
+        try:
+            return _capture_bearing_measurement_once()
+        except RuntimeError as exc:
+            last_exc = exc
+            logger.warning(
+                "Bearing measurement failed (attempt {}/{}): {}",
+                attempt,
+                _BEARING_CAPTURE_RETRIES,
+                exc,
+            )
+            if attempt < _BEARING_CAPTURE_RETRIES:
+                time.sleep(_BEARING_CAPTURE_RETRY_SLEEP_S)
+
+    logger.error(
+        "All {} bearing measurement attempts failed — attempting device reopen.",
+        _BEARING_CAPTURE_RETRIES,
     )
+    with cap_lock:
+        _try_reopen_capture(cap, camera_device, frame_width, frame_height)
+
+    try:
+        return _capture_bearing_measurement_once()
+    except RuntimeError as exc:
+        logger.error("Bearing measurement still failed after reopen: {}", exc)
+        raise RuntimeError(
+            "Failed bearing measurement after retry and device reopen."
+        ) from (last_exc or exc)
 
 
 # ---------------------------------------------------------------------------
@@ -1356,7 +1406,15 @@ def _execute_rotation(
         If *cancel_event* is set after stopping or after settling.
     """
     b_before, u_before, score_before = _capture_bearing_measurement(
-        cap, template, config.frames_to_average, config.K, config.D, cap_lock
+        cap,
+        template,
+        config.frames_to_average,
+        config.K,
+        config.D,
+        cap_lock,
+        config.camera_device,
+        config.frame_width,
+        config.frame_height,
     )
     ugv.move(0.0, omega_signed)
     time.sleep(duration_s)
@@ -1365,7 +1423,15 @@ def _execute_rotation(
     time.sleep(settle_s)
     _check_cancel(cancel_event)
     b_after, u_after, score_after = _capture_bearing_measurement(
-        cap, template, config.frames_to_average, config.K, config.D, cap_lock
+        cap,
+        template,
+        config.frames_to_average,
+        config.K,
+        config.D,
+        cap_lock,
+        config.camera_device,
+        config.frame_width,
+        config.frame_height,
     )
     return b_before, u_before, score_before, b_after, u_after, score_after
 

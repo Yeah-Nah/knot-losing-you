@@ -27,6 +27,7 @@ from tools.calibration.calibrate_ugv_drive import (
     _SweepCancelled,
     _build_dead_band_row,
     _build_gain_row,
+    _capture_bearing_measurement,
     _capture_template_resilient,
     _check_cancel,
     _get_status_text,
@@ -1524,6 +1525,119 @@ def test_get_status_text_waiting_recenter() -> None:
     assert "/confirm" in text
     assert "3/10" in text
     assert colour == (0, 255, 255)  # yellow in BGR
+
+
+# ---------------------------------------------------------------------------
+# _capture_bearing_measurement resilience
+# ---------------------------------------------------------------------------
+
+
+@patch("tools.calibration.calibrate_ugv_drive._try_reopen_capture")
+@patch("tools.calibration.calibrate_ugv_drive.pixel_to_bearing_deg_pinhole")
+@patch("tools.calibration.calibrate_ugv_drive._match_template_uv")
+@patch("tools.calibration.calibrate_ugv_drive.undistort_frame")
+def test_capture_bearing_measurement_succeeds_without_reopen(
+    mock_undistort: MagicMock,
+    mock_match: MagicMock,
+    mock_bearing: MagicMock,
+    mock_reopen: MagicMock,
+) -> None:
+    """A partial read failure still succeeds when one frame is captured."""
+    frame = np.zeros((16, 16, 3), dtype=np.uint8)
+    cap = MagicMock()
+    cap.read.side_effect = [(False, None), (True, frame)]
+
+    mock_undistort.side_effect = lambda f, *_args: f
+    mock_match.return_value = (123.0, 45.0, 0.91)
+    mock_bearing.return_value = 7.5
+
+    K, D = _make_K_D_zero_distortion()
+    result = _capture_bearing_measurement(
+        cap,
+        np.zeros((8, 8, 3), dtype=np.uint8),
+        2,
+        K,
+        D,
+        threading.Lock(),
+        "/dev/video0",
+        640,
+        480,
+    )
+
+    assert result == pytest.approx((7.5, 123.0, 0.91), rel=1e-6)
+    mock_reopen.assert_not_called()
+
+
+@patch("tools.calibration.calibrate_ugv_drive.time.sleep")
+@patch("tools.calibration.calibrate_ugv_drive._try_reopen_capture")
+@patch("tools.calibration.calibrate_ugv_drive.pixel_to_bearing_deg_pinhole")
+@patch("tools.calibration.calibrate_ugv_drive._match_template_uv")
+@patch("tools.calibration.calibrate_ugv_drive.undistort_frame")
+def test_capture_bearing_measurement_recovers_after_reopen(
+    mock_undistort: MagicMock,
+    mock_match: MagicMock,
+    mock_bearing: MagicMock,
+    mock_reopen: MagicMock,
+    _mock_sleep: MagicMock,
+) -> None:
+    """If all retries fail, one reopen attempt can recover measurement."""
+    frame = np.zeros((16, 16, 3), dtype=np.uint8)
+    cap = MagicMock()
+    cap.read.side_effect = [
+        (False, None),
+        (False, None),
+        (False, None),
+        (False, None),
+        (True, frame),
+        (False, None),
+    ]
+
+    mock_undistort.side_effect = lambda f, *_args: f
+    mock_match.return_value = (200.0, 60.0, 0.88)
+    mock_bearing.return_value = -3.25
+
+    K, D = _make_K_D_zero_distortion()
+    result = _capture_bearing_measurement(
+        cap,
+        np.zeros((8, 8, 3), dtype=np.uint8),
+        2,
+        K,
+        D,
+        threading.Lock(),
+        "/dev/video0",
+        640,
+        480,
+    )
+
+    assert result == pytest.approx((-3.25, 200.0, 0.88), rel=1e-6)
+    mock_reopen.assert_called_once_with(cap, "/dev/video0", 640, 480)
+
+
+@patch("tools.calibration.calibrate_ugv_drive.time.sleep")
+@patch("tools.calibration.calibrate_ugv_drive._try_reopen_capture")
+def test_capture_bearing_measurement_raises_after_reopen_failure(
+    mock_reopen: MagicMock,
+    _mock_sleep: MagicMock,
+) -> None:
+    """Raises RuntimeError when capture still fails after the reopen attempt."""
+    cap = MagicMock()
+    cap.read.return_value = (False, None)
+    K, D = _make_K_D_zero_distortion()
+
+    with pytest.raises(RuntimeError, match="retry and device reopen"):
+        _capture_bearing_measurement(
+            cap,
+            np.zeros((8, 8, 3), dtype=np.uint8),
+            2,
+            K,
+            D,
+            threading.Lock(),
+            "/dev/video0",
+            640,
+            480,
+        )
+
+    mock_reopen.assert_called_once_with(cap, "/dev/video0", 640, 480)
 
 
 # ---------------------------------------------------------------------------
