@@ -274,12 +274,12 @@ All test scripts are run from `ugv-follower/` on the Pi.
 # Check battery level
 ugv-check-battery
 
-# Test OAK-D Lite camera — prints frame stats (use --no-display for headless)
-python -m tests.test_camera_access
+# Test OAK-D Lite camera — prints frame stats
+ugv-check-camera
 
 # Test LiDAR connection — prints incoming packet breakdown
-python -m tests.test_lidar_access
+ugv-check-lidar
 
 # Test motor control — drives forward 0.2 m over 1 s
-python -m tests.test_ugv_controller
+ugv-check-controller
 ```

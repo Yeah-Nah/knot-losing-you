@@ -4,10 +4,13 @@ Run this with the rover elevated so the wheels are clear of the ground.
 
 Usage
 -----
-    python -m tests.test_ugv_controller
+    ugv-check-controller
 
     # Override the default port (Pi 4B uses /dev/serial0):
-    python -m tests.test_ugv_controller --port /dev/serial0
+    ugv-check-controller --port /dev/serial0
+
+    # Module form also works:
+    python -m tools.check_ugv_controller
 """
 
 from __future__ import annotations

@@ -6,16 +6,29 @@ for the autonomous UGV follower.
 
 from __future__ import annotations
 
+from enum import StrEnum
 from typing import TYPE_CHECKING
 
 from loguru import logger
 
+from .control.motion_command import (
+    MotionCommand,
+    MotionCommandSource,
+    apply_motion_command,
+)
 from .control.ugv_controller import UGVController
 from .perception.camera_access import CameraAccess
 from .perception.lidar_access import LidarAccess
 
 if TYPE_CHECKING:
     from .settings import Settings
+
+
+class PipelineMode(StrEnum):
+    """Minimal control modes for Phase 3A-lite."""
+
+    AUTONOMOUS = "autonomous"
+    MANUAL = "manual"
 
 
 class Pipeline:
@@ -29,6 +42,12 @@ class Pipeline:
 
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
+        self._mode = PipelineMode.AUTONOMOUS
+        self._mode_transition_stop_pending = False
+        self._estop_active = False
+        self._loop_period_s = 0.1
+        self._thin_run_tick = 0
+        self._thin_run_complete = False
         self._camera = CameraAccess(
             fps=settings.camera_fps,
             resolution=settings.camera_resolution,
@@ -106,11 +125,112 @@ class Pipeline:
         )
 
         logger.success("All sensors operational ✓")
-        logger.info("Press Ctrl+C to exit.")
+        logger.info("Thin 3A-lite run started. Press Ctrl+C to exit.")
 
-        # Keep alive so the operator can observe the log output.
+        # Thin 3A-lite run: exercise the safe command path on real hardware.
         while True:
-            time.sleep(1)
+            self._advance_thin_run_scenario()
+            cmd = self._decide_command()
+            cmd = self._apply_mode_transition_stop(cmd)
+            cmd = self._apply_estop_override(cmd)
+            self._log_motion_command(cmd)
+            self._apply_motion_command(cmd)
+            time.sleep(self._loop_period_s)
+
+    def _decide_command(self) -> MotionCommand:
+        """Sole decision point for chassis motion commands.
+
+        All Phase 3 logic (detection, LiDAR ranging, mode selection) will be
+        added here. For now returns a zero-velocity hold until sensors and
+        control loops are wired in.
+        """
+        if self._mode == PipelineMode.MANUAL:
+            return MotionCommand.zero(
+                source=MotionCommandSource.MANUAL,
+                reason="hold_manual_mode",
+            )
+        return MotionCommand.zero(
+            source=MotionCommandSource.AUTONOMOUS,
+            reason="hold_autonomous_mode",
+        )
+
+    def set_mode(self, new_mode: PipelineMode) -> None:
+        """Switch control mode and force a zero command on transition."""
+        if new_mode == self._mode:
+            return
+        old_mode = self._mode
+        self._mode = new_mode
+        self._mode_transition_stop_pending = True
+        logger.info(f"Mode changed: {old_mode.value} -> {new_mode.value}")
+
+    def _apply_mode_transition_stop(self, command: MotionCommand) -> MotionCommand:
+        """Emit a mandatory zero command once after every mode transition."""
+        if self._mode_transition_stop_pending:
+            self._mode_transition_stop_pending = False
+            if self._mode == PipelineMode.MANUAL:
+                return MotionCommand.zero(
+                    source=MotionCommandSource.MANUAL,
+                    reason="mode_transition_stop",
+                )
+            return MotionCommand.zero(
+                source=MotionCommandSource.AUTONOMOUS,
+                reason="mode_transition_stop",
+            )
+        return command
+
+    def _apply_motion_command(self, command: MotionCommand) -> None:
+        """Apply one normalized motion command to the controller."""
+        apply_motion_command(self._ugv, command)
+
+    def request_estop(self) -> None:
+        """Latch emergency-stop override until explicitly cleared."""
+        self._estop_active = True
+        logger.warning("Emergency-stop requested; motion commands now overridden.")
+
+    def clear_estop(self) -> None:
+        """Clear emergency-stop override latch."""
+        self._estop_active = False
+        logger.info("Emergency-stop cleared.")
+
+    def _apply_estop_override(self, command: MotionCommand) -> MotionCommand:
+        """Override all motion commands when emergency-stop is active."""
+        if self._estop_active:
+            return MotionCommand.zero(
+                source=MotionCommandSource.ESTOP,
+                reason="estop_override",
+            )
+        return command
+
+    def _advance_thin_run_scenario(self) -> None:
+        """Exercise one safe mode/estop sequence during the thin real run."""
+        if self._thin_run_complete:
+            return
+
+        self._thin_run_tick += 1
+
+        if self._thin_run_tick == 5:
+            self.set_mode(PipelineMode.MANUAL)
+        elif self._thin_run_tick == 10:
+            self.request_estop()
+        elif self._thin_run_tick == 15:
+            self.clear_estop()
+        elif self._thin_run_tick == 16:
+            self.set_mode(PipelineMode.AUTONOMOUS)
+        elif self._thin_run_tick == 20:
+            self._thin_run_complete = True
+            logger.info("Thin 3A-lite scenario complete; continuing steady-state hold.")
+
+    def _log_motion_command(self, command: MotionCommand) -> None:
+        """Log the emitted command so thin-run edge cases are visible."""
+        logger.info(
+            "cmd mode={} estop={} source={} linear_m_s={:.3f} angular_rad_s={:.3f} reason={}",
+            self._mode.value,
+            self._estop_active,
+            command.source.value,
+            command.linear_m_s,
+            command.angular_rad_s,
+            command.reason or "unspecified",
+        )
 
     def _shutdown(self) -> None:
         """Release all hardware resources on exit."""

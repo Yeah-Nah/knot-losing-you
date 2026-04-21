@@ -63,6 +63,9 @@ include = ["ugv_follower*", "tools*"]
 [project.scripts]
 ugv-run = "tools.run_follower:main"
 ugv-check-battery = "tools.check_battery:main"
+ugv-check-camera = "tools.check_camera_access:main"
+ugv-check-lidar = "tools.check_lidar_access:main"
+ugv-check-controller = "tools.check_ugv_controller:main"
 ugv-calibrate-angular = "tools.calibration.calibrate_angular_offset:main"
 ugv-calibrate-camera = "tools.calibration.calibrate_waveshare_camera:main"
 ugv-calibrate-pantilt = "tools.calibration.calibrate_pantilt_servo:main"
