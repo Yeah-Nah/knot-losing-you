@@ -68,6 +68,19 @@ No sea legs required.
 > Detect and track the target; convert sensor data to robot-frame control signals; drive the rover.
 > Reads Phase 2 calibration parameters from config — no hardcoded sensor values anywhere.
 
+> **3A-lite checkpoint (recommended before deeper Phase 3 integration):**
+> The goal is to lock one safe command path, not to fully design the final architecture.
+
+- [ ] **3A-lite — define one motion command shape**: standardise the final drive command payload
+  (e.g., `linear_m_s`, `angular_rad_s`, `source`, `timestamp`)
+- [ ] **3A-lite — single command decision point**: ensure only one pipeline point chooses the final
+  motion command before calling `UGVController`
+- [ ] **3A-lite — safety-first override rule**: emergency stop preempts all other motion commands
+- [ ] **3A-lite — minimal mode model**: implement only `AUTONOMOUS` and `MANUAL`, with a mandatory
+  zero-velocity command on every mode transition
+- [ ] **3A-lite — one thin end-to-end run, then tune**: run with real sensors/inputs, log edge
+  cases, then refine thresholds and payload fields before continuing the rest of Phase 3
+
 - [x] YOLO detection with configurable target class (set via `model_config.yaml classes`; default: `0` = person)
 - [x] Support custom trained model via `model_config.yaml` (drop-in replacement — e.g. jacket detector trained externally)
 - [ ] **Coordinate system conversion — LiDAR**: convert polar scan returns $(r, \theta)$ →
