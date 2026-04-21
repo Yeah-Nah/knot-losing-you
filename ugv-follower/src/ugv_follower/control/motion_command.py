@@ -10,10 +10,13 @@ import math
 import time
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import TYPE_CHECKING
+from typing import Protocol
 
-if TYPE_CHECKING:
-    from .ugv_controller import UGVController
+
+class MotionController(Protocol):
+    """Minimal controller interface required by apply_motion_command."""
+
+    def move(self, linear: float, angular: float) -> None: ...
 
 
 class MotionCommandSource(StrEnum):
@@ -79,7 +82,7 @@ class MotionCommand:
             raise ValueError("timestamp_s must be finite and > 0")
 
 
-def apply_motion_command(controller: UGVController, command: MotionCommand) -> None:
+def apply_motion_command(controller: MotionController, command: MotionCommand) -> None:
     """Single downstream adapter from normalized command to controller API."""
     command.validate()
     controller.move(linear=command.linear_m_s, angular=command.angular_rad_s)

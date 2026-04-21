@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import math
 import time
+from collections.abc import Callable, Sequence
+from typing import TypeVar, cast
 
 import pytest
 
@@ -11,6 +13,12 @@ from ugv_follower.control.motion_command import (
     MotionCommand,
     MotionCommandSource,
     apply_motion_command,
+)
+
+_F = TypeVar("_F", bound=Callable[..., object])
+parametrize = cast(
+    Callable[[str, Sequence[object]], Callable[[_F], _F]],
+    pytest.mark.parametrize,
 )
 
 
@@ -42,7 +50,7 @@ def test_validate_accepts_finite_values() -> None:
     cmd.validate()  # must not raise
 
 
-@pytest.mark.parametrize("bad_linear", [math.inf, -math.inf, math.nan])
+@parametrize("bad_linear", [math.inf, -math.inf, math.nan])
 def test_validate_rejects_non_finite_linear(bad_linear: float) -> None:
     cmd = MotionCommand(
         linear_m_s=bad_linear,
@@ -55,7 +63,7 @@ def test_validate_rejects_non_finite_linear(bad_linear: float) -> None:
         cmd.validate()
 
 
-@pytest.mark.parametrize("bad_angular", [math.inf, -math.inf, math.nan])
+@parametrize("bad_angular", [math.inf, -math.inf, math.nan])
 def test_validate_rejects_non_finite_angular(bad_angular: float) -> None:
     cmd = MotionCommand(
         linear_m_s=0.1,
@@ -68,7 +76,7 @@ def test_validate_rejects_non_finite_angular(bad_angular: float) -> None:
         cmd.validate()
 
 
-@pytest.mark.parametrize("bad_timestamp", [0.0, -1.0, math.inf, -math.inf, math.nan])
+@parametrize("bad_timestamp", [0.0, -1.0, math.inf, -math.inf, math.nan])
 def test_validate_rejects_invalid_timestamp(bad_timestamp: float) -> None:
     cmd = MotionCommand(
         linear_m_s=0.1,
