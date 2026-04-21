@@ -77,3 +77,7 @@ def main() -> None:
     finally:
         camera.stop()
         logger.success("stop ✓")
+
+
+if __name__ == "__main__":
+    main()
