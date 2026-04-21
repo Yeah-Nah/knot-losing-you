@@ -118,3 +118,37 @@ def test_decide_command_returns_valid_motion_command() -> None:
 
     assert isinstance(cmd, MotionCommand)
     cmd.validate()  # must be valid by construction
+
+
+def test_apply_estop_override_passthrough_when_inactive() -> None:
+    from ugv_follower.pipeline import Pipeline
+
+    pipeline = object.__new__(Pipeline)  # skip __init__, no hardware needed
+    pipeline._estop_active = False
+    cmd = MotionCommand(
+        linear_m_s=0.2,
+        angular_rad_s=0.1,
+        source=MotionCommandSource.AUTONOMOUS,
+        timestamp_s=time.monotonic(),
+    )
+
+    out = pipeline._apply_estop_override(cmd)
+    assert out == cmd
+
+
+def test_apply_estop_override_forces_zero_when_active() -> None:
+    from ugv_follower.pipeline import Pipeline
+
+    pipeline = object.__new__(Pipeline)  # skip __init__, no hardware needed
+    pipeline._estop_active = True
+    cmd = MotionCommand(
+        linear_m_s=0.2,
+        angular_rad_s=0.1,
+        source=MotionCommandSource.AUTONOMOUS,
+        timestamp_s=time.monotonic(),
+    )
+
+    out = pipeline._apply_estop_override(cmd)
+    assert out.linear_m_s == 0.0
+    assert out.angular_rad_s == 0.0
+    assert out.source == MotionCommandSource.ESTOP

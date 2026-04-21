@@ -34,6 +34,7 @@ class Pipeline:
 
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
+        self._estop_active = False
         self._camera = CameraAccess(
             fps=settings.camera_fps,
             resolution=settings.camera_resolution,
@@ -117,6 +118,7 @@ class Pipeline:
         while True:
             # Phase 3A-lite Step 2: one decision point feeds one apply call.
             cmd = self._decide_command()
+            cmd = self._apply_estop_override(cmd)
             self._apply_motion_command(cmd)
             time.sleep(1)
 
@@ -132,6 +134,22 @@ class Pipeline:
     def _apply_motion_command(self, command: MotionCommand) -> None:
         """Apply one normalized motion command to the controller."""
         apply_motion_command(self._ugv, command)
+
+    def request_estop(self) -> None:
+        """Latch emergency-stop override until explicitly cleared."""
+        self._estop_active = True
+        logger.warning("Emergency-stop requested; motion commands now overridden.")
+
+    def clear_estop(self) -> None:
+        """Clear emergency-stop override latch."""
+        self._estop_active = False
+        logger.info("Emergency-stop cleared.")
+
+    def _apply_estop_override(self, command: MotionCommand) -> MotionCommand:
+        """Override all motion commands when emergency-stop is active."""
+        if self._estop_active:
+            return MotionCommand.zero(source=MotionCommandSource.ESTOP)
+        return command
 
     def _shutdown(self) -> None:
         """Release all hardware resources on exit."""
