@@ -111,9 +111,10 @@ def test_apply_motion_command_rejects_invalid_command() -> None:
 
 
 def test_decide_command_returns_valid_motion_command() -> None:
-    from ugv_follower.pipeline import Pipeline
+    from ugv_follower.pipeline import Pipeline, PipelineMode
 
     pipeline = object.__new__(Pipeline)  # skip __init__, no hardware needed
+    pipeline._mode = PipelineMode.AUTONOMOUS
     cmd = pipeline._decide_command()
 
     assert isinstance(cmd, MotionCommand)
@@ -152,3 +153,36 @@ def test_apply_estop_override_forces_zero_when_active() -> None:
     assert out.linear_m_s == 0.0
     assert out.angular_rad_s == 0.0
     assert out.source == MotionCommandSource.ESTOP
+
+
+def test_decide_command_reflects_manual_mode() -> None:
+    from ugv_follower.pipeline import Pipeline, PipelineMode
+
+    pipeline = object.__new__(Pipeline)  # skip __init__, no hardware needed
+    pipeline._mode = PipelineMode.MANUAL
+    cmd = pipeline._decide_command()
+
+    assert cmd.source == MotionCommandSource.MANUAL
+
+
+def test_mode_transition_forces_single_zero_command() -> None:
+    from ugv_follower.pipeline import Pipeline, PipelineMode
+
+    pipeline = object.__new__(Pipeline)  # skip __init__, no hardware needed
+    pipeline._mode = PipelineMode.AUTONOMOUS
+    pipeline._mode_transition_stop_pending = False
+    cmd = MotionCommand(
+        linear_m_s=0.4,
+        angular_rad_s=0.2,
+        source=MotionCommandSource.MANUAL,
+        timestamp_s=time.monotonic(),
+    )
+
+    pipeline.set_mode(PipelineMode.MANUAL)
+    first = pipeline._apply_mode_transition_stop(cmd)
+    second = pipeline._apply_mode_transition_stop(cmd)
+
+    assert first.linear_m_s == 0.0
+    assert first.angular_rad_s == 0.0
+    assert first.source == MotionCommandSource.MANUAL
+    assert second == cmd

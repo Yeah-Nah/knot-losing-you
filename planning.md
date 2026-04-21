@@ -76,7 +76,7 @@ No sea legs required.
 - [x] **3A-lite — single command decision point**: ensure only one pipeline point chooses the final
   motion command before calling `UGVController`
 - [x] **3A-lite — safety-first override rule**: emergency stop preempts all other motion commands
-- [ ] **3A-lite — minimal mode model**: implement only `AUTONOMOUS` and `MANUAL`, with a mandatory
+- [x] **3A-lite — minimal mode model**: implement only `AUTONOMOUS` and `MANUAL`, with a mandatory
   zero-velocity command on every mode transition
 - [ ] **3A-lite — one thin end-to-end run, then tune**: run with real sensors/inputs, log edge
   cases, then refine thresholds and payload fields before continuing the rest of Phase 3

@@ -6,6 +6,7 @@ for the autonomous UGV follower.
 
 from __future__ import annotations
 
+from enum import StrEnum
 from typing import TYPE_CHECKING
 
 from loguru import logger
@@ -23,6 +24,13 @@ if TYPE_CHECKING:
     from .settings import Settings
 
 
+class PipelineMode(StrEnum):
+    """Minimal control modes for Phase 3A-lite."""
+
+    AUTONOMOUS = "autonomous"
+    MANUAL = "manual"
+
+
 class Pipeline:
     """Orchestrates perception, inference, and UGV control.
 
@@ -34,6 +42,8 @@ class Pipeline:
 
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
+        self._mode = PipelineMode.AUTONOMOUS
+        self._mode_transition_stop_pending = False
         self._estop_active = False
         self._camera = CameraAccess(
             fps=settings.camera_fps,
@@ -118,6 +128,7 @@ class Pipeline:
         while True:
             # Phase 3A-lite Step 2: one decision point feeds one apply call.
             cmd = self._decide_command()
+            cmd = self._apply_mode_transition_stop(cmd)
             cmd = self._apply_estop_override(cmd)
             self._apply_motion_command(cmd)
             time.sleep(1)
@@ -129,7 +140,27 @@ class Pipeline:
         added here. For now returns a zero-velocity hold until sensors and
         control loops are wired in.
         """
+        if self._mode == PipelineMode.MANUAL:
+            return MotionCommand.zero(source=MotionCommandSource.MANUAL)
         return MotionCommand.zero(source=MotionCommandSource.AUTONOMOUS)
+
+    def set_mode(self, new_mode: PipelineMode) -> None:
+        """Switch control mode and force a zero command on transition."""
+        if new_mode == self._mode:
+            return
+        old_mode = self._mode
+        self._mode = new_mode
+        self._mode_transition_stop_pending = True
+        logger.info(f"Mode changed: {old_mode.value} -> {new_mode.value}")
+
+    def _apply_mode_transition_stop(self, command: MotionCommand) -> MotionCommand:
+        """Emit a mandatory zero command once after every mode transition."""
+        if self._mode_transition_stop_pending:
+            self._mode_transition_stop_pending = False
+            if self._mode == PipelineMode.MANUAL:
+                return MotionCommand.zero(source=MotionCommandSource.MANUAL)
+            return MotionCommand.zero(source=MotionCommandSource.AUTONOMOUS)
+        return command
 
     def _apply_motion_command(self, command: MotionCommand) -> None:
         """Apply one normalized motion command to the controller."""
