@@ -4,8 +4,11 @@ Prints distance and angle readings to the console.  No display needed.
 
 Usage
 -----
-    python -m tests.test_lidar_access
-    python -m tests.test_lidar_access --port /dev/ttyUSB0 --count 10
+    ugv-check-lidar
+    ugv-check-lidar --port /dev/ttyUSB0 --count 10
+
+    # Module form also works:
+    python -m tools.check_lidar_access
 """
 
 from __future__ import annotations

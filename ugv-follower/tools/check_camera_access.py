@@ -1,17 +1,15 @@
-"""Step 2 validation script: open OAK-D colour feed in a live window.
+"""Step 2 validation script: open OAK-D colour feed in headless mode.
 
-Run with X forwarding enabled (ssh -X pi@<ip>) so the window can display
-on your dev machine.
+Test that there is a connection to the camera and that frames can
+be retrieved at a reasonable rate. This is a smoke test for the
+CameraAccess class, which is critical for the autonomous pipeline.
 
 Usage
 -----
-    python -m tests.test_camera_access
+    ugv-check-camera
 
-    # Lower resolution for faster X-forwarding:
-    python -m tests.test_camera_access --scale 0.25
-
-    # Headless: print frame stats only, no window (useful if display is unavailable):
-    python -m tests.test_camera_access --no-display
+    # Module form also works:
+    python -m tools.check_camera_access
 """
 
 from __future__ import annotations
