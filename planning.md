@@ -73,7 +73,7 @@ No sea legs required.
 
 - [x] **3A-lite — define one motion command shape**: standardise the final drive command payload
   (e.g., `linear_m_s`, `angular_rad_s`, `source`, `timestamp`)
-- [ ] **3A-lite — single command decision point**: ensure only one pipeline point chooses the final
+- [x] **3A-lite — single command decision point**: ensure only one pipeline point chooses the final
   motion command before calling `UGVController`
 - [ ] **3A-lite — safety-first override rule**: emergency stop preempts all other motion commands
 - [ ] **3A-lite — minimal mode model**: implement only `AUTONOMOUS` and `MANUAL`, with a mandatory

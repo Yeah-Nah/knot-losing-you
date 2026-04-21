@@ -108,3 +108,13 @@ def test_apply_motion_command_rejects_invalid_command() -> None:
         apply_motion_command(controller=controller, command=bad_cmd)
 
     assert controller.calls == []
+
+
+def test_decide_command_returns_valid_motion_command() -> None:
+    from ugv_follower.pipeline import Pipeline
+
+    pipeline = object.__new__(Pipeline)  # skip __init__, no hardware needed
+    cmd = pipeline._decide_command()
+
+    assert isinstance(cmd, MotionCommand)
+    cmd.validate()  # must be valid by construction

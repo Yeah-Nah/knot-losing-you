@@ -115,10 +115,19 @@ class Pipeline:
 
         # Keep alive so the operator can observe the log output.
         while True:
-            # Phase 3A-lite Step 1: all motion goes through the normalized contract.
-            idle_cmd = MotionCommand.zero(source=MotionCommandSource.AUTONOMOUS)
-            self._apply_motion_command(idle_cmd)
+            # Phase 3A-lite Step 2: one decision point feeds one apply call.
+            cmd = self._decide_command()
+            self._apply_motion_command(cmd)
             time.sleep(1)
+
+    def _decide_command(self) -> MotionCommand:
+        """Sole decision point for chassis motion commands.
+
+        All Phase 3 logic (detection, LiDAR ranging, mode selection) will be
+        added here. For now returns a zero-velocity hold until sensors and
+        control loops are wired in.
+        """
+        return MotionCommand.zero(source=MotionCommandSource.AUTONOMOUS)
 
     def _apply_motion_command(self, command: MotionCommand) -> None:
         """Apply one normalized motion command to the controller."""
