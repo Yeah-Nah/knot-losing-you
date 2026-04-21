@@ -38,21 +38,29 @@ class MotionCommand:
         Origin of this command.
     timestamp_s : float
         Monotonic timestamp in seconds when this command was produced.
+    reason : str
+        Short runtime reason tag describing why this command was emitted.
     """
 
     linear_m_s: float
     angular_rad_s: float
     source: MotionCommandSource
     timestamp_s: float
+    reason: str = ""
 
     @classmethod
-    def zero(cls, source: MotionCommandSource) -> MotionCommand:
+    def zero(
+        cls,
+        source: MotionCommandSource,
+        reason: str = "",
+    ) -> MotionCommand:
         """Build a zero-velocity command stamped with monotonic time."""
         return cls(
             linear_m_s=0.0,
             angular_rad_s=0.0,
             source=source,
             timestamp_s=time.monotonic(),
+            reason=reason,
         )
 
     def validate(self) -> None:
