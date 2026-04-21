@@ -78,7 +78,7 @@ No sea legs required.
 - [x] **3A-lite — safety-first override rule**: emergency stop preempts all other motion commands
 - [x] **3A-lite — minimal mode model**: implement only `AUTONOMOUS` and `MANUAL`, with a mandatory
   zero-velocity command on every mode transition
-- [ ] **3A-lite — one thin end-to-end run, then tune**: run with real sensors/inputs, log edge
+- [x] **3A-lite — one thin end-to-end run, then tune**: run with real sensors/inputs, log edge
   cases, then refine thresholds and payload fields before continuing the rest of Phase 3
 
 - [x] YOLO detection with configurable target class (set via `model_config.yaml classes`; default: `0` = person)
