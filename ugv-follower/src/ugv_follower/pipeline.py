@@ -10,6 +10,11 @@ from typing import TYPE_CHECKING
 
 from loguru import logger
 
+from .control.motion_command import (
+    MotionCommand,
+    MotionCommandSource,
+    apply_motion_command,
+)
 from .control.ugv_controller import UGVController
 from .perception.camera_access import CameraAccess
 from .perception.lidar_access import LidarAccess
@@ -110,7 +115,14 @@ class Pipeline:
 
         # Keep alive so the operator can observe the log output.
         while True:
+            # Phase 3A-lite Step 1: all motion goes through the normalized contract.
+            idle_cmd = MotionCommand.zero(source=MotionCommandSource.AUTONOMOUS)
+            self._apply_motion_command(idle_cmd)
             time.sleep(1)
+
+    def _apply_motion_command(self, command: MotionCommand) -> None:
+        """Apply one normalized motion command to the controller."""
+        apply_motion_command(self._ugv, command)
 
     def _shutdown(self) -> None:
         """Release all hardware resources on exit."""

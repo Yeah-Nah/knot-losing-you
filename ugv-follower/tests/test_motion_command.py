@@ -1,0 +1,110 @@
+"""Unit tests for the Phase 3A motion command contract."""
+
+from __future__ import annotations
+
+import math
+import time
+
+import pytest
+
+from ugv_follower.control.motion_command import (
+    MotionCommand,
+    MotionCommandSource,
+    apply_motion_command,
+)
+
+
+class _DummyController:
+    def __init__(self) -> None:
+        self.calls: list[tuple[float, float]] = []
+
+    def move(self, linear: float, angular: float) -> None:
+        self.calls.append((linear, angular))
+
+
+def test_zero_factory_uses_normalized_shape() -> None:
+    cmd = MotionCommand.zero(source=MotionCommandSource.AUTONOMOUS)
+
+    assert cmd.linear_m_s == 0.0
+    assert cmd.angular_rad_s == 0.0
+    assert cmd.source == MotionCommandSource.AUTONOMOUS
+    assert cmd.timestamp_s > 0.0
+
+
+def test_validate_accepts_finite_values() -> None:
+    cmd = MotionCommand(
+        linear_m_s=0.25,
+        angular_rad_s=-0.2,
+        source=MotionCommandSource.MANUAL,
+        timestamp_s=time.monotonic(),
+    )
+
+    cmd.validate()  # must not raise
+
+
+@pytest.mark.parametrize("bad_linear", [math.inf, -math.inf, math.nan])
+def test_validate_rejects_non_finite_linear(bad_linear: float) -> None:
+    cmd = MotionCommand(
+        linear_m_s=bad_linear,
+        angular_rad_s=0.1,
+        source=MotionCommandSource.AUTONOMOUS,
+        timestamp_s=time.monotonic(),
+    )
+
+    with pytest.raises(ValueError, match="linear_m_s"):
+        cmd.validate()
+
+
+@pytest.mark.parametrize("bad_angular", [math.inf, -math.inf, math.nan])
+def test_validate_rejects_non_finite_angular(bad_angular: float) -> None:
+    cmd = MotionCommand(
+        linear_m_s=0.1,
+        angular_rad_s=bad_angular,
+        source=MotionCommandSource.AUTONOMOUS,
+        timestamp_s=time.monotonic(),
+    )
+
+    with pytest.raises(ValueError, match="angular_rad_s"):
+        cmd.validate()
+
+
+@pytest.mark.parametrize("bad_timestamp", [0.0, -1.0, math.inf, -math.inf, math.nan])
+def test_validate_rejects_invalid_timestamp(bad_timestamp: float) -> None:
+    cmd = MotionCommand(
+        linear_m_s=0.1,
+        angular_rad_s=0.2,
+        source=MotionCommandSource.ESTOP,
+        timestamp_s=bad_timestamp,
+    )
+
+    with pytest.raises(ValueError, match="timestamp_s"):
+        cmd.validate()
+
+
+def test_apply_motion_command_validates_and_calls_controller() -> None:
+    controller = _DummyController()
+    cmd = MotionCommand(
+        linear_m_s=0.3,
+        angular_rad_s=-0.4,
+        source=MotionCommandSource.AUTONOMOUS,
+        timestamp_s=time.monotonic(),
+    )
+
+    apply_motion_command(controller=controller, command=cmd)
+
+    assert controller.calls == [(0.3, -0.4)]
+
+
+def test_apply_motion_command_rejects_invalid_command() -> None:
+    controller = _DummyController()
+    bad_cmd = MotionCommand(
+        linear_m_s=math.nan,
+        angular_rad_s=0.1,
+        source=MotionCommandSource.MANUAL,
+        timestamp_s=time.monotonic(),
+    )
+
+    with pytest.raises(ValueError):
+        apply_motion_command(controller=controller, command=bad_cmd)
+
+    assert controller.calls == []
