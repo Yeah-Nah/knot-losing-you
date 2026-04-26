@@ -1,12 +1,37 @@
 """Unit tests for LiDAR coordinate-system conversion helpers.
 
-Groups
-------
-1  ``wrap_360`` — maps any float to [0, 360).
-2  ``wrap_180`` — maps any float to (-180, 180].
-3  ``lidar_point_to_body_frame`` — polar → Cartesian, mounting offset, mm→m.
-4  ``filter_forward_arc`` — arc inclusion/exclusion and wrap-boundary cases.
-5  ``nearest_forward_point`` — distance filtering and selection.
+Module under test
+-----------------
+ugv_follower.perception.lidar_geometry — Converts raw D500 polar coordinates
+into rover body-frame Cartesian coordinates and filters the forward obstacle arc.
+
+Test groups
+-----------
+1  TestWrap360               — maps any float to [0, 360).
+2  TestWrap180               — maps any float to (-180, 180].
+3  TestLidarPointToBodyFrame — polar → Cartesian, mounting offset, mm→m conversion.
+4  TestFilterForwardArc      — arc inclusion/exclusion and wrap-boundary edge cases.
+5  TestNearestForwardPoint   — distance filtering and nearest-point selection.
+
+Running
+-------
+All tests in this file (from ``ugv-follower/``)::
+
+    pytest tests/test_lidar_geometry.py
+
+Verbose with short tracebacks::
+
+    pytest tests/test_lidar_geometry.py -v --tb=short
+
+Run a specific group::
+
+    pytest tests/test_lidar_geometry.py::TestWrap360
+    pytest tests/test_lidar_geometry.py::TestFilterForwardArc
+
+Notes
+-----
+No physical hardware required.  All tests are pure-function unit tests and run
+offline without any serial devices attached.
 """
 
 from __future__ import annotations

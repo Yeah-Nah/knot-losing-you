@@ -83,7 +83,7 @@ No sea legs required.
 
 - [x] YOLO detection with configurable target class (set via `model_config.yaml classes`; default: `0` = person)
 - [x] Support custom trained model via `model_config.yaml` (drop-in replacement — e.g. jacket detector trained externally)
-- [ ] **Coordinate system conversion — LiDAR**: convert polar scan returns $(r, \theta)$ →
+- [x] **Coordinate system conversion — LiDAR**: convert polar scan returns $(r, \theta)$ →
   robot body-frame Cartesian $(x, y)$; extract the forward arc for range-to-target
   _Skills: spatial transformations and coordinate system conversions_
 
