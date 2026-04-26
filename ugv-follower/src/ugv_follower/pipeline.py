@@ -141,6 +141,9 @@ class Pipeline:
             cmd = self._apply_estop_override(cmd)
             self._log_motion_command(cmd)
             self._apply_motion_command(cmd)
+            if self._thin_run_complete:
+                logger.info("Thin 3A-lite run finished; exiting main loop.")
+                break
             time.sleep(self._loop_period_s)
 
     def _update_lidar_state(self) -> None:
@@ -242,7 +245,7 @@ class Pipeline:
             self.set_mode(PipelineMode.AUTONOMOUS)
         elif self._thin_run_tick == 20:
             self._thin_run_complete = True
-            logger.info("Thin 3A-lite scenario complete; continuing steady-state hold.")
+            logger.info("Thin 3A-lite scenario complete.")
 
     def _log_motion_command(self, command: MotionCommand) -> None:
         """Log the emitted command so thin-run edge cases are visible."""
