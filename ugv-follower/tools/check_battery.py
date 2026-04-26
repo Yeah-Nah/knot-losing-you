@@ -115,7 +115,9 @@ def listen(port: str, duration: float) -> None:
                         continue
                     got = True
                     try:
-                        voltage_found |= _print_response(f"[T:{cmd['T']}]", json.loads(raw))
+                        voltage_found |= _print_response(
+                            f"[T:{cmd['T']}]", json.loads(raw)
+                        )
                     except json.JSONDecodeError:
                         logger.debug(f"[T:{cmd['T']}] raw: {raw!r}")
                 if not got:
