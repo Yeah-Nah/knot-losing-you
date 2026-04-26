@@ -18,6 +18,7 @@ Packet layout (47 bytes, little-endian)
 from __future__ import annotations
 
 import struct
+import time
 from typing import TypedDict
 
 import serial
@@ -128,52 +129,66 @@ class LidarAccess:
         if self._serial is None or not self._serial.is_open:
             raise RuntimeError("Serial port is not open. Call start() first.")
 
-        # Sync to header: scan byte-by-byte for 0x54 followed by 0x2C
-        while True:
-            byte = self._serial.read(1)
-            if not byte:
-                return None  # timeout
-            if byte[0] != _HEADER:
+        # Keep scanning until a valid packet is decoded or we hit the serial timeout.
+        timeout_s = float(self._serial.timeout or 1.0)
+        deadline = time.monotonic() + timeout_s
+
+        while time.monotonic() < deadline:
+            # Sync to header: scan byte-by-byte for 0x54 followed by 0x2C
+            while True:
+                if time.monotonic() >= deadline:
+                    return None
+                byte = self._serial.read(1)
+                if not byte:
+                    return None  # timeout
+                if byte[0] != _HEADER:
+                    continue
+                next_byte = self._serial.read(1)
+                if not next_byte:
+                    return None
+                if next_byte[0] == _VER_LEN:
+                    break  # found sync
+
+            # Read remaining 45 bytes (we already consumed the first 2)
+            rest = self._serial.read(_PACKET_SIZE - 2)
+            if len(rest) < _PACKET_SIZE - 2:
+                return None  # timeout mid-packet
+
+            packet = bytes([_HEADER, _VER_LEN]) + rest
+
+            # Verify CRC (over bytes 0-45, result compared to byte 46).
+            # A mismatch can occur while syncing mid-stream; keep scanning.
+            if _crc8(packet[:46]) != packet[46]:
+                logger.warning("LiDAR packet CRC mismatch — discarding.")
                 continue
-            next_byte = self._serial.read(1)
-            if not next_byte:
-                return None
-            if next_byte[0] == _VER_LEN:
-                break  # found sync
 
-        # Read remaining 45 bytes (we already consumed the first 2)
-        rest = self._serial.read(_PACKET_SIZE - 2)
-        if len(rest) < _PACKET_SIZE - 2:
-            return None  # timeout mid-packet
+            # Parse header fields
+            start_angle = struct.unpack_from("<H", packet, 4)[0] / 100.0
+            end_angle = struct.unpack_from("<H", packet, 42)[0] / 100.0
 
-        packet = bytes([_HEADER, _VER_LEN]) + rest
+            # Unwrap end_angle if it wraps past 360°
+            if end_angle < start_angle:
+                end_angle += 360.0
 
-        # Verify CRC (over bytes 0-45, result compared to byte 46)
-        if _crc8(packet[:46]) != packet[46]:
-            logger.warning("LiDAR packet CRC mismatch — discarding.")
-            return None
+            angle_step = (end_angle - start_angle) / (_POINTS_PER_PACK - 1)
 
-        # Parse header fields
-        start_angle = struct.unpack_from("<H", packet, 4)[0] / 100.0
-        end_angle = struct.unpack_from("<H", packet, 42)[0] / 100.0
+            points: list[LidarPoint] = []
+            offset = 6  # points start at byte 6
+            for i in range(_POINTS_PER_PACK):
+                distance, intensity = _POINT_STRUCT.unpack_from(packet, offset)
+                angle = (start_angle + i * angle_step) % 360.0
+                points.append(
+                    {
+                        "angle": round(angle, 2),
+                        "distance": distance,
+                        "intensity": intensity,
+                    }
+                )
+                offset += 3
 
-        # Unwrap end_angle if it wraps past 360°
-        if end_angle < start_angle:
-            end_angle += 360.0
+            return points
 
-        angle_step = (end_angle - start_angle) / (_POINTS_PER_PACK - 1)
-
-        points: list[LidarPoint] = []
-        offset = 6  # points start at byte 6
-        for i in range(_POINTS_PER_PACK):
-            distance, intensity = _POINT_STRUCT.unpack_from(packet, offset)
-            angle = (start_angle + i * angle_step) % 360.0
-            points.append(
-                {"angle": round(angle, 2), "distance": distance, "intensity": intensity}
-            )
-            offset += 3
-
-        return points
+        return None
 
     # ------------------------------------------------------------------
     # Public API
