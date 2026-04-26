@@ -45,6 +45,7 @@ _POINT_STRUCT = struct.Struct("<HB")  # uint16 distance + uint8 intensity
 _PKG_STRUCT = struct.Struct(
     "<BBHHH"
 )  # header ver_len speed start_angle (+ points) end_angle timestamp
+_SERIAL_TIMEOUT_S = 0.1
 
 # CRC-8/MAXIM constants (polynomial 0x31, init 0x00)
 _CRC8_POLYNOMIAL = 0x31
@@ -159,7 +160,7 @@ class LidarAccess:
             # Verify CRC (over bytes 0-45, result compared to byte 46).
             # A mismatch can occur while syncing mid-stream; keep scanning.
             if _crc8(packet[:46]) != packet[46]:
-                logger.warning("LiDAR packet CRC mismatch — discarding.")
+                logger.debug("LiDAR packet CRC mismatch — discarding.")
                 continue
 
             # Parse header fields
@@ -203,7 +204,11 @@ class LidarAccess:
             If the port cannot be opened.
         """
         logger.info(f"Starting LiDAR on {self._port} at {self._baud_rate} baud...")
-        self._serial = serial.Serial(self._port, self._baud_rate, timeout=1)
+        self._serial = serial.Serial(
+            self._port,
+            self._baud_rate,
+            timeout=_SERIAL_TIMEOUT_S,
+        )
         self._serial.reset_input_buffer()
         logger.info("LiDAR started.")
 
