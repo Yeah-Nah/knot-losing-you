@@ -176,6 +176,11 @@ class Settings:
         """Direction the LiDAR 0° axis points in rover body frame (degrees)."""
         return float(self._lidar_cfg.get("mounting_offset_deg", 270.0))
 
+    @property
+    def lidar_forward_displacement_m(self) -> float:
+        """Forward displacement of LiDAR origin from rover body centre (metres)."""
+        return float(self._lidar_cfg.get("forward_displacement_m", 0.0))
+
     # ------------------------------------------------------------------
     # Pan-tilt servo calibration properties
     # ------------------------------------------------------------------

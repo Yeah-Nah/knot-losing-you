@@ -152,7 +152,11 @@ class Pipeline:
         if scan is None:
             return
         body = [
-            lidar_point_to_body_frame(p, self._settings.lidar_mounting_offset_deg)
+            lidar_point_to_body_frame(
+                p,
+                self._settings.lidar_mounting_offset_deg,
+                self._settings.lidar_forward_displacement_m,
+            )
             for p in scan
         ]
         forward = filter_forward_arc(body)

@@ -106,12 +106,15 @@ def wrap_180(angle_deg: float) -> float:
 def lidar_point_to_body_frame(
     point: LidarPoint,
     mounting_offset_deg: float,
+    forward_displacement_m: float = 0.0,
 ) -> BodyFramePoint:
     """Convert a single D500 polar point to rover body-frame Cartesian.
 
     Applies the mounting offset so that 0° in the output corresponds to
     rover forward, then projects to (x, y) using the body-frame convention
-    (+x forward, +y left, clockwise-positive angles).
+    (+x forward, +y left, clockwise-positive angles).  If the LiDAR origin
+    is not coincident with the rover body centre, ``forward_displacement_m``
+    translates the point from LiDAR-origin frame to rover-centre frame.
 
     Parameters
     ----------
@@ -121,12 +124,18 @@ def lidar_point_to_body_frame(
     mounting_offset_deg : float
         Direction the LiDAR 0° axis points in the rover body frame
         (degrees).  Read from ``Settings.lidar_mounting_offset_deg``.
+    forward_displacement_m : float, optional
+        Forward displacement of the LiDAR origin from the rover body centre
+        (metres).  Positive = LiDAR is ahead of centre.  Default is 0.0
+        (LiDAR at body centre).  Read from
+        ``Settings.lidar_forward_displacement_m``.
 
     Returns
     -------
     BodyFramePoint
-        Body-frame representation of *point*.  ``distance_m`` is the
-        slant range in metres.  ``bearing_deg`` is positive to the right.
+        Body-frame representation of *point*, expressed relative to the
+        rover body centre.  ``distance_m`` is the slant range in metres.
+        ``bearing_deg`` is positive to the right.
 
     Examples
     --------
@@ -137,11 +146,14 @@ def lidar_point_to_body_frame(
     """
     theta_body = wrap_360(point["angle"] + mounting_offset_deg)
     theta_rad = math.radians(theta_body)
-    distance_m = point["distance"] / 1000.0
-    x_m = distance_m * math.cos(theta_rad)
+    raw_distance_m = point["distance"] / 1000.0
+    x_m = raw_distance_m * math.cos(theta_rad)
     # CW-positive with +y=left requires negating the sin component
-    y_m = -distance_m * math.sin(theta_rad)
-    bearing_deg = wrap_180(theta_body)
+    y_m = -raw_distance_m * math.sin(theta_rad)
+    # Translate from LiDAR-origin frame to rover-centre frame.
+    x_m += forward_displacement_m
+    distance_m = math.hypot(x_m, y_m)
+    bearing_deg = wrap_180(math.degrees(math.atan2(-y_m, x_m)))
     return {
         "x_m": x_m,
         "y_m": y_m,
