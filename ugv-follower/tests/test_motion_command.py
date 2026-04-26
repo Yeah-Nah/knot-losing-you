@@ -41,8 +41,7 @@ from __future__ import annotations
 
 import math
 import time
-from collections.abc import Callable, Sequence
-from typing import TypeVar, cast
+from typing import Any
 
 import pytest
 
@@ -52,11 +51,7 @@ from ugv_follower.control.motion_command import (
     apply_motion_command,
 )
 
-_F = TypeVar("_F", bound=Callable[..., object])
-parametrize = cast(
-    Callable[[str, Sequence[object]], Callable[[_F], _F]],
-    pytest.mark.parametrize,
-)
+parametrize: Any = pytest.mark.parametrize
 
 
 class _DummyController:

@@ -40,6 +40,7 @@ import math
 
 import pytest
 
+from ugv_follower.perception.lidar_access import LidarPoint
 from ugv_follower.perception.lidar_geometry import (
     BodyFramePoint,
     filter_forward_arc,
@@ -50,7 +51,7 @@ from ugv_follower.perception.lidar_geometry import (
 )
 
 
-def _pt(angle: float, distance: int = 1000, intensity: int = 100) -> dict:
+def _pt(angle: float, distance: int = 1000, intensity: int = 100) -> LidarPoint:
     """Convenience factory for a raw LidarPoint dict."""
     return {"angle": angle, "distance": distance, "intensity": intensity}
 

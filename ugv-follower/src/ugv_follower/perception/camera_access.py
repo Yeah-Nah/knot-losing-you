@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import depthai as dai
 import numpy as np
@@ -32,7 +32,7 @@ class CameraAccess:
         self._fps = fps
         self._resolution = resolution
         self._pipeline: dai.Pipeline | None = None
-        self._video_queue: dai.DataOutputQueue | None = None
+        self._video_queue: Any | None = None
         self._colour_cam_name: str | None = None
         logger.debug("CameraAccess initialised.")
 
@@ -84,11 +84,12 @@ class CameraAccess:
             colour_feature = self._discover_colour_socket()
             self._colour_cam_name = colour_feature.socket.name
 
-            self._pipeline = dai.Pipeline()
-            cam = self._pipeline.create(dai.node.Camera).build(colour_feature.socket)
+            pipeline = dai.Pipeline()
+            cam = pipeline.create(dai.node.Camera).build(colour_feature.socket)
             output = cam.requestOutput(self._resolution, fps=self._fps)
             self._video_queue = output.createOutputQueue(maxSize=16, blocking=False)
-            self._pipeline.start()
+            pipeline.start()
+            self._pipeline = pipeline
         except RuntimeError:
             self._pipeline = None
             raise

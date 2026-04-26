@@ -41,6 +41,8 @@ repos:
         files: ^ugv-follower/
         additional_dependencies:
           - pyright
+          - depthai
+          - pytest
           - pyserial
           - numpy
           - opencv-python-headless

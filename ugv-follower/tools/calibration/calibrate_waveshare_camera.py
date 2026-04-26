@@ -133,6 +133,7 @@ def _detect_corners(
         found, corners = cv2.findChessboardCorners(
             gray,
             board_size,
+            None,
             cv2.CALIB_CB_ADAPTIVE_THRESH + cv2.CALIB_CB_NORMALIZE_IMAGE,
         )
         if not found:
@@ -140,6 +141,7 @@ def _detect_corners(
             skipped += 1
             continue
 
+        assert corners is not None
         corners = cv2.cornerSubPix(gray, corners, (11, 11), (-1, -1), _CORNER_CRITERIA)
         object_points.append(objp)
         image_points.append(corners.astype(np.float64))

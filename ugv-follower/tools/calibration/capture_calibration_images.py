@@ -193,10 +193,12 @@ def _run_capture(
         found, corners = cv2.findChessboardCorners(
             gray,
             board_size,
+            None,
             cv2.CALIB_CB_ADAPTIVE_THRESH + cv2.CALIB_CB_NORMALIZE_IMAGE,
         )
         annotated = frame.copy()
         if found:
+            assert corners is not None
             corners = cv2.cornerSubPix(
                 gray, corners, (11, 11), (-1, -1), _CORNER_CRITERIA
             )
@@ -216,7 +218,9 @@ def _make_handler(
     """Return a handler class closed over *state*."""
 
     class Handler(BaseHTTPRequestHandler):
-        def log_message(self, fmt: str, *args: object) -> None:  # silence access log
+        def log_message(
+            self, format: str, *args: object
+        ) -> None:  # silence access log  # noqa: A002
             pass
 
         def do_GET(self) -> None:  # noqa: N802
