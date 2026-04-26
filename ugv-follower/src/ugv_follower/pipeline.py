@@ -19,6 +19,11 @@ from .control.motion_command import (
 from .control.ugv_controller import UGVController
 from .perception.camera_access import CameraAccess
 from .perception.lidar_access import LidarAccess
+from .perception.lidar_geometry import (
+    filter_forward_arc,
+    lidar_point_to_body_frame,
+    nearest_forward_point,
+)
 
 if TYPE_CHECKING:
     from .settings import Settings
@@ -130,12 +135,31 @@ class Pipeline:
         # Thin 3A-lite run: exercise the safe command path on real hardware.
         while True:
             self._advance_thin_run_scenario()
+            self._update_lidar_state()
             cmd = self._decide_command()
             cmd = self._apply_mode_transition_stop(cmd)
             cmd = self._apply_estop_override(cmd)
             self._log_motion_command(cmd)
             self._apply_motion_command(cmd)
             time.sleep(self._loop_period_s)
+
+    def _update_lidar_state(self) -> None:
+        """Read one LiDAR packet, convert to body frame, and log the nearest forward distance."""
+        scan = self._lidar.get_scan()
+        if scan is None:
+            return
+        body = [
+            lidar_point_to_body_frame(p, self._settings.lidar_mounting_offset_deg)
+            for p in scan
+        ]
+        forward = filter_forward_arc(body)
+        nearest = nearest_forward_point(forward)
+        if nearest is not None:
+            logger.debug(
+                "lidar nearest_forward dist={:.3f} m  bearing={:.1f} deg",
+                nearest["distance_m"],
+                nearest["bearing_deg"],
+            )
 
     def _decide_command(self) -> MotionCommand:
         """Sole decision point for chassis motion commands.
