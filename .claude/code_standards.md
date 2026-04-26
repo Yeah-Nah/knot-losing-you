@@ -62,16 +62,15 @@ with Pipeline(settings) as pipeline:
 ```
 
 ### Type Hints
-```python
-from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-    from numpy.typing import NDArray
-    import numpy as np
-
-def process_frame(self, frame: NDArray[np.uint8]) -> NDArray[np.uint8]:
-    """Process a video frame."""
-```
+- All files: `from __future__ import annotations` at the top.
+- Checker: **pyright** in `standard` mode — write annotations pyright accepts.
+- Use lower-case built-ins: `list[x]`, `dict[k, v]`, `tuple[...]`, `x | None` (never `List`, `Dict`, `Optional` from `typing`).
+- Expensive/circular imports for annotations only → inside `if TYPE_CHECKING:` guard.
+- `NDArray` must be parameterised: `NDArray[np.uint8]`.
+- Use `TypedDict` for structured dicts that cross function boundaries.
+- Every function/method needs a return type, including `-> None`.
+- Full pattern reference (for fixing pyright errors): `.claude/pyright_type_hints_reference.md`.
 
 ### Logging
 - Use `logger.debug()` for development/diagnostic info
@@ -140,5 +139,5 @@ Before committing, verify:
 - [ ] Error handling is specific and includes context
 - [ ] Resources are properly managed (closed/cleaned up)
 - [ ] No hardcoded paths or device-specific values
-- [ ] Pre-commit hooks pass (ruff, mypy)
+- [ ] Pre-commit hooks pass (ruff, pyright)
 - [ ] Code is testable (methods can be unit tested independently)

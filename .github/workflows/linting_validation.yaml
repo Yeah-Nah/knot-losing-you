@@ -51,4 +51,4 @@ jobs:
           pre-commit run check-yaml --all-files
           pre-commit run check-merge-conflict --all-files
           pre-commit run nbstripout --all-files
-          pre-commit run mypy --all-files
+          pre-commit run pyright --all-files
