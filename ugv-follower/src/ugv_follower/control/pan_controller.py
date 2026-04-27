@@ -205,7 +205,7 @@ class PanController:
             return None
 
         new_pan = clamp_pan(
-            self._current_pan_deg + corrected,
+            corrected,
             self._cmd_min_deg,
             self._cmd_max_deg,
         )
