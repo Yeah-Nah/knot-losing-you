@@ -191,6 +191,26 @@ class Settings:
     # ------------------------------------------------------------------
 
     @property
+    def _waveshare_rgb_cfg(self) -> dict[str, Any]:
+        return dict(self.sensor_config.get("waveshare_rgb") or {})
+
+    @property
+    def waveshare_camera_device_index(self) -> int:
+        """cv2.VideoCapture device index for the Waveshare RGB camera."""
+        return int(self._waveshare_rgb_cfg.get("device_index", 0))
+
+    @property
+    def waveshare_camera_fps(self) -> int:
+        """Target frame rate for the Waveshare RGB camera."""
+        return int(self._waveshare_rgb_cfg.get("fps", 30))
+
+    @property
+    def waveshare_camera_resolution(self) -> tuple[int, int]:
+        """Waveshare RGB camera resolution as (width, height)."""
+        res = self._waveshare_rgb_cfg.get("resolution", [1920, 1080])
+        return (int(res[0]), int(res[1]))
+
+    @property
     def _pan_tilt_servo_cfg(self) -> dict[str, Any]:
         return dict(self.sensor_config.get("pan_tilt_servo") or {})
 

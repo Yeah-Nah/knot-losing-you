@@ -31,6 +31,8 @@ ugv:
 # Waveshare RGB (pan-tilt) camera — intrinsic calibration results
 # Populated by calibrate_waveshare_camera.py after running the calibration workflow.
 waveshare_rgb:
+  device_index: 0               # cv2.VideoCapture device index for runtime pipeline
+  fps: 30                       # target frame rate for runtime camera acquisition
   model: "fisheye"                # fisheye or pinhole — set after calibration
   camera_matrix: [[812.62, 0.0, 1002.92], [0.0, 814.07, 567.80], [0.0, 0.0, 1.0]] # 3x3 K matrix (row-major) — set after calibration
   dist_coeffs: [0.042287176079693914, -0.03351504621552974, 0.008025571747576593, -0.0022739457747216188] # [k1, k2, k3, k4] fisheye distortion vector — set after calibration

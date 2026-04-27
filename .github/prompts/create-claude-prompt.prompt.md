@@ -19,8 +19,21 @@ Using the task description provided, generate a Claude Code prompt that includes
    - Plan before implementing: read and understand relevant files first, then propose the approach and wait for confirmation before making changes
    - After implementing changes, delete any now-moot code that is directly made obsolete by the task (keep cleanup minimal and in-scope)
 
-Output the prompt as plain raw text so it can be copied directly into Claude Code.
-Do not wrap the output in code fences.
-Do not use backticks around file paths or any other text.
-Assess if the task needs low, medium, or high effort and tell this to the user so they can decide which level of
+Output format requirements (strict):
+- Return plain raw text only.
+- Do not use Markdown formatting of any kind.
+- Do not use headings, bullet markers, numbered Markdown lists, bold, italics, blockquotes, or tables.
+- Do not wrap output in code fences.
+- Do not use backticks anywhere.
+- Use simple line breaks and plain paragraphs only.
+- Assess if the task needs low, medium, or high effort and tell this to the user so they can decide which level of
 effort to choose for the task in Claude Code.
+- Start the first line with: Effort: <low|medium|high>
+- Then provide sections in this exact plain-text label format:
+  Goal:
+  High-level guidance:
+  Constraints:
+  Must read before proposing changes:
+  Files to inspect:
+- If the assistant cannot comply with plain raw text, it must output exactly:
+  RAW_TEXT_OUTPUT_FAILURE

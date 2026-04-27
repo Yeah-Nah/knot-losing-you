@@ -12,7 +12,7 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
 
 
-class CameraAccess:
+class OakdCamera:
     """Manages the OAK-D Lite camera connection and frame retrieval.
 
     Discovers the colour camera socket at runtime from the connected device,
@@ -34,7 +34,7 @@ class CameraAccess:
         self._pipeline: dai.Pipeline | None = None
         self._video_queue: Any | None = None
         self._colour_cam_name: str | None = None
-        logger.debug("CameraAccess initialised.")
+        logger.debug("OakdCamera initialised.")
 
     # ------------------------------------------------------------------
     # Private helpers

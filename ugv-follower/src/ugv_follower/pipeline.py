@@ -19,7 +19,7 @@ from .control.motion_command import (
 from .control.pan_controller import PanController
 from .control.ugv_controller import UGVController
 from .inference.object_detection import ObjectDetection, select_target_centroid
-from .perception.camera_access import CameraAccess
+from .perception.waveshare_camera import WaveshareCamera
 from .perception.lidar_access import LidarAccess
 from .perception.lidar_geometry import (
     filter_forward_arc,
@@ -58,9 +58,12 @@ class Pipeline:
         self._mode_transition_stop_pending = False
         self._estop_active = False
         self._loop_period_s = 0.1
-        self._camera = CameraAccess(
-            fps=settings.camera_fps,
-            resolution=settings.camera_resolution,
+        w, h = settings.waveshare_camera_resolution
+        self._camera = WaveshareCamera(
+            device_index=settings.waveshare_camera_device_index,
+            width=w,
+            height=h,
+            fps=settings.waveshare_camera_fps,
         )
         self._lidar = LidarAccess(
             port=settings.lidar_port,
@@ -261,7 +264,9 @@ class Pipeline:
             return None
         return self._detector.run(frame)
 
-    def _extract_centroid(self, results: Any | None) -> tuple[float | None, float | None]:
+    def _extract_centroid(
+        self, results: Any | None
+    ) -> tuple[float | None, float | None]:
         """Return the ``(u, v)`` centroid of the highest-confidence detection.
 
         Parameters

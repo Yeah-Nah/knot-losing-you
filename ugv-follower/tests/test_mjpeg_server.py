@@ -28,7 +28,6 @@ import socket
 import time
 
 import numpy as np
-import pytest
 
 from ugv_follower.utils.mjpeg_server import MjpegServer
 
@@ -97,7 +96,9 @@ def test_double_stop_is_safe() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _get(port: int, path: str, read_bytes: int = 512, timeout: float = 2.0) -> tuple[int, bytes]:
+def _get(
+    port: int, path: str, read_bytes: int = 512, timeout: float = 2.0
+) -> tuple[int, bytes]:
     """Make a raw GET request and return (status_code, body_prefix)."""
     with socket.create_connection(("127.0.0.1", port), timeout=timeout) as sock:
         sock.sendall(f"GET {path} HTTP/1.0\r\nHost: localhost\r\n\r\n".encode())

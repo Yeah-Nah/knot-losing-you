@@ -40,7 +40,9 @@ class MjpegServer:
 
     def start(self) -> None:
         """Start the HTTP server in a daemon thread."""
-        self._server = ThreadingHTTPServer(("0.0.0.0", self._port), self._make_handler())
+        self._server = ThreadingHTTPServer(
+            ("0.0.0.0", self._port), self._make_handler()
+        )
         self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
         self._thread.start()
         logger.info("MJPEG stream started on http://0.0.0.0:{}/stream", self._port)
