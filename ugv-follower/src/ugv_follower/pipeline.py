@@ -113,6 +113,10 @@ class Pipeline:
         self._ugv.connect()
         logger.success("controller connected ✓")
 
+        # Home pan-tilt before perception starts so camera begins centered.
+        self._ugv.set_pan_tilt(0.0, self._settings.pan_tilt_setpoint_deg)
+        logger.info("Pan-tilt homed to startup setpoint.")
+
         # -- Camera: wait for first frame --
         self._camera.start()
         frame = None
