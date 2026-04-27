@@ -185,10 +185,14 @@ class PanController:
             Clamped absolute pan command in degrees, or ``None`` to hold.
         """
         if bbox_centre_u is None or bbox_centre_v is None:
-            logger.debug("Pan: no detection — holding at {:.2f}°.", self._current_pan_deg)
+            logger.debug(
+                "Pan: no detection — holding at {:.2f}°.", self._current_pan_deg
+            )
             return None
 
-        heading_deg = pixel_to_bearing_deg(bbox_centre_u, bbox_centre_v, self._K, self._D)
+        heading_deg = pixel_to_bearing_deg(
+            bbox_centre_u, bbox_centre_v, self._K, self._D
+        )
         corrected = apply_tilt_correction(heading_deg, self._tilt_deg)
 
         if within_deadband(corrected, self._dead_band_pos_deg, self._dead_band_neg_deg):

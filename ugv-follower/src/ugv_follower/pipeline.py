@@ -153,7 +153,9 @@ class Pipeline:
             cmd = self._apply_estop_override(cmd)
             self._log_motion_command(cmd)
             self._apply_motion_command(cmd)
-            self._update_pan_state(None, None)  # No detection source yet; holds pan at centre
+            self._update_pan_state(
+                None, None
+            )  # No detection source yet; holds pan at centre
             if self._thin_run_complete:
                 logger.info("Thin 3A-lite run finished; exiting main loop.")
                 break
