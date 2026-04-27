@@ -207,6 +207,31 @@ class Settings:
         v = self._pan_tilt_servo_cfg.get("calibration_target_distance_m")
         return float(v) if v is not None else None
 
+    @property
+    def pan_cmd_min_deg(self) -> float:
+        """Minimum pan servo command in degrees."""
+        return float(self._pan_tilt_servo_cfg.get("cmd_min", -45.0))
+
+    @property
+    def pan_cmd_max_deg(self) -> float:
+        """Maximum pan servo command in degrees."""
+        return float(self._pan_tilt_servo_cfg.get("cmd_max", 45.0))
+
+    @property
+    def pan_dead_band_pos_deg(self) -> float:
+        """Upper deadband threshold: heading errors at or below this are suppressed."""
+        return float(self._pan_tilt_servo_cfg.get("dead_band_pos_deg", 5.0))
+
+    @property
+    def pan_dead_band_neg_deg(self) -> float:
+        """Lower deadband threshold: heading errors at or above this are suppressed."""
+        return float(self._pan_tilt_servo_cfg.get("dead_band_neg_deg", -5.0))
+
+    @property
+    def pan_tilt_setpoint_deg(self) -> float:
+        """Fixed tilt servo setpoint in degrees used for horizontal projection correction."""
+        return float(self._pan_tilt_servo_cfg.get("tilt_setpoint_deg", 0.0))
+
     # ------------------------------------------------------------------
     # Rover drive calibration properties
     # ------------------------------------------------------------------

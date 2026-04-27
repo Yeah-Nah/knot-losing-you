@@ -16,6 +16,7 @@ from .control.motion_command import (
     MotionCommandSource,
     apply_motion_command,
 )
+from .control.pan_controller import PanController
 from .control.ugv_controller import UGVController
 from .perception.camera_access import CameraAccess
 from .perception.lidar_access import LidarAccess
@@ -24,6 +25,7 @@ from .perception.lidar_geometry import (
     lidar_point_to_body_frame,
     nearest_forward_point,
 )
+from .utils.fisheye_utils import load_fisheye_intrinsics
 
 if TYPE_CHECKING:
     from .settings import Settings
@@ -72,6 +74,16 @@ class Pipeline:
             ramp_rate_per_s=settings.ugv_shaping_ramp_rate_per_s,
             reversal_dwell_s=settings.ugv_shaping_reversal_dwell_s,
             zero_crossing_epsilon=settings.ugv_shaping_zero_crossing_epsilon,
+        )
+        K, D = load_fisheye_intrinsics(settings.sensor_config)
+        self._pan_controller = PanController(
+            K=K,
+            D=D,
+            cmd_min_deg=settings.pan_cmd_min_deg,
+            cmd_max_deg=settings.pan_cmd_max_deg,
+            dead_band_pos_deg=settings.pan_dead_band_pos_deg,
+            dead_band_neg_deg=settings.pan_dead_band_neg_deg,
+            tilt_deg=settings.pan_tilt_setpoint_deg,
         )
         logger.info("Pipeline initialised.")
 
@@ -141,6 +153,7 @@ class Pipeline:
             cmd = self._apply_estop_override(cmd)
             self._log_motion_command(cmd)
             self._apply_motion_command(cmd)
+            self._update_pan_state(None, None)  # No detection source yet; holds pan at centre
             if self._thin_run_complete:
                 logger.info("Thin 3A-lite run finished; exiting main loop.")
                 break
@@ -212,6 +225,26 @@ class Pipeline:
     def _apply_motion_command(self, command: MotionCommand) -> None:
         """Apply one normalized motion command to the controller."""
         apply_motion_command(self._ugv, command)
+
+    def _update_pan_state(
+        self,
+        bbox_centre_u: float | None,
+        bbox_centre_v: float | None,
+    ) -> None:
+        """Update the pan servo from a detection centroid, or hold if no detection.
+
+        Parameters
+        ----------
+        bbox_centre_u : float | None
+            Horizontal pixel coordinate of the bounding-box centroid, or
+            ``None`` when there is no valid detection.
+        bbox_centre_v : float | None
+            Vertical pixel coordinate of the bounding-box centroid, or
+            ``None`` when there is no valid detection.
+        """
+        pan_cmd = self._pan_controller.update(bbox_centre_u, bbox_centre_v)
+        if pan_cmd is not None:
+            self._ugv.set_pan_tilt(pan_cmd, self._settings.pan_tilt_setpoint_deg)
 
     def request_estop(self) -> None:
         """Latch emergency-stop override until explicitly cleared."""
