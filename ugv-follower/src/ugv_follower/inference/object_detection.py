@@ -77,10 +77,14 @@ class ObjectDetection:
         list
             Ultralytics Results list containing detections and tracks.
         """
-        return self._model(
-            frame,
-            conf=self._conf,
-            classes=self._classes,
-            persist=self._persist,
-            verbose=self._verbose,
-        )
+        common_kwargs = {
+            "conf": self._conf,
+            "classes": self._classes,
+            "verbose": self._verbose,
+        }
+
+        if self._persist:
+            # persist is a tracking argument — must use track() not predict()
+            return self._model.track(frame, persist=True, **common_kwargs)
+
+        return self._model(frame, **common_kwargs)
