@@ -7,7 +7,7 @@ for the autonomous UGV follower.
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
@@ -27,6 +27,7 @@ from .perception.lidar_geometry import (
     nearest_forward_point,
 )
 from .utils.fisheye_utils import load_fisheye_intrinsics
+from .utils.mjpeg_server import MjpegServer
 
 if TYPE_CHECKING:
     import numpy as np
@@ -57,8 +58,6 @@ class Pipeline:
         self._mode_transition_stop_pending = False
         self._estop_active = False
         self._loop_period_s = 0.1
-        self._thin_run_tick = 0
-        self._thin_run_complete = False
         self._camera = CameraAccess(
             fps=settings.camera_fps,
             resolution=settings.camera_resolution,
@@ -94,6 +93,9 @@ class Pipeline:
             if settings.inference_enabled
             else None
         )
+        self._mjpeg_server: MjpegServer | None = (
+            MjpegServer(settings.stream_port) if settings.stream_port else None
+        )
         logger.info("Pipeline initialised.")
 
     def run(self) -> None:
@@ -107,13 +109,13 @@ class Pipeline:
             self._shutdown()
 
     def _main_loop(self) -> None:
-        """Smoke test: verify all three hardware components are operational."""
+        """Verify all hardware components are operational then run until stopped."""
 
         # -- UGV controller --
         self._ugv.connect()
         logger.success("controller connected ✓")
 
-        # Home pan-tilt before perception starts so camera begins centered.
+        # Home pan-tilt before perception starts so camera begins centred.
         self._ugv.set_pan_tilt(0.0, self._settings.pan_tilt_setpoint_deg)
         logger.info("Pan-tilt homed to startup setpoint.")
 
@@ -155,23 +157,23 @@ class Pipeline:
         )
 
         logger.success("All sensors operational ✓")
-        logger.info("Thin 3A-lite run started. Press Ctrl+C to exit.")
 
-        # Thin 3A-lite run: exercise the safe command path on real hardware.
+        if self._mjpeg_server is not None:
+            self._mjpeg_server.start()
+
+        logger.info("Pipeline running. Press Ctrl+C to stop.")
+
         while True:
-            self._advance_thin_run_scenario()
             self._update_lidar_state()
             cmd = self._decide_command()
             cmd = self._apply_mode_transition_stop(cmd)
             cmd = self._apply_estop_override(cmd)
-            self._log_motion_command(cmd)
             self._apply_motion_command(cmd)
             frame = self._camera.get_frame()
-            bbox_u, bbox_v = self._detect_target(frame)
+            results = self._run_inference(frame)
+            bbox_u, bbox_v = self._extract_centroid(results)
             self._update_pan_state(bbox_u, bbox_v)
-            if self._thin_run_complete:
-                logger.info("Thin 3A-lite run finished; exiting main loop.")
-                break
+            self._push_stream_frame(self._annotate_frame(frame, results))
             time.sleep(self._loop_period_s)
 
     def _update_lidar_state(self) -> None:
@@ -238,14 +240,11 @@ class Pipeline:
         return command
 
     def _apply_motion_command(self, command: MotionCommand) -> None:
-        """Apply one normalized motion command to the controller."""
+        """Apply one normalised motion command to the controller."""
         apply_motion_command(self._ugv, command)
 
-    def _detect_target(
-        self,
-        frame: NDArray[np.uint8] | None,
-    ) -> tuple[float | None, float | None]:
-        """Return the best detection centroid ``(u, v)`` or ``(None, None)``.
+    def _run_inference(self, frame: NDArray[np.uint8] | None) -> Any | None:
+        """Run YOLO inference on *frame* and return the Results, or None.
 
         Parameters
         ----------
@@ -254,14 +253,56 @@ class Pipeline:
 
         Returns
         -------
-        tuple[float | None, float | None]
-            Pixel centroid of the highest-confidence detection, or
-            ``(None, None)`` when inference is disabled or no detection found.
+        Any | None
+            Ultralytics Results list, or ``None`` when inference is disabled
+            or no frame is available.
         """
         if self._detector is None or frame is None:
+            return None
+        return self._detector.run(frame)
+
+    def _extract_centroid(self, results: Any | None) -> tuple[float | None, float | None]:
+        """Return the ``(u, v)`` centroid of the highest-confidence detection.
+
+        Parameters
+        ----------
+        results : Any | None
+            Ultralytics Results list, or ``None`` when no inference was run.
+
+        Returns
+        -------
+        tuple[float | None, float | None]
+            Pixel centroid of the best detection, or ``(None, None)``.
+        """
+        if results is None:
             return None, None
-        results = self._detector.run(frame)
         return select_target_centroid(results)
+
+    def _annotate_frame(
+        self,
+        frame: NDArray[np.uint8] | None,
+        results: Any | None,
+    ) -> NDArray[np.uint8] | None:
+        """Return a BGR frame with detection boxes overlaid, or the raw frame.
+
+        Parameters
+        ----------
+        frame : NDArray[np.uint8] | None
+            Raw camera frame.
+        results : Any | None
+            Ultralytics Results list, or ``None`` if inference was not run.
+
+        Returns
+        -------
+        NDArray[np.uint8] | None
+            Annotated frame if results are available, raw frame if not, or
+            ``None`` when no frame was captured.
+        """
+        if frame is None:
+            return None
+        if results is not None:
+            return results[0].plot()  # type: ignore[no-any-return]
+        return frame
 
     def _update_pan_state(
         self,
@@ -283,6 +324,17 @@ class Pipeline:
         if pan_cmd is not None:
             self._ugv.set_pan_tilt(pan_cmd, self._settings.pan_tilt_setpoint_deg)
 
+    def _push_stream_frame(self, frame: NDArray[np.uint8] | None) -> None:
+        """Push *frame* to the MJPEG server if streaming is enabled.
+
+        Parameters
+        ----------
+        frame : NDArray[np.uint8] | None
+            Frame to stream, or ``None`` to skip (no frame available).
+        """
+        if self._mjpeg_server is not None and frame is not None:
+            self._mjpeg_server.push_frame(frame)
+
     def request_estop(self) -> None:
         """Latch emergency-stop override until explicitly cleared."""
         self._estop_active = True
@@ -302,40 +354,14 @@ class Pipeline:
             )
         return command
 
-    def _advance_thin_run_scenario(self) -> None:
-        """Exercise one safe mode/estop sequence during the thin real run."""
-        if self._thin_run_complete:
-            return
-
-        self._thin_run_tick += 1
-
-        if self._thin_run_tick == 5:
-            self.set_mode(PipelineMode.MANUAL)
-        elif self._thin_run_tick == 10:
-            self.request_estop()
-        elif self._thin_run_tick == 15:
-            self.clear_estop()
-        elif self._thin_run_tick == 16:
-            self.set_mode(PipelineMode.AUTONOMOUS)
-        elif self._thin_run_tick == 20:
-            self._thin_run_complete = True
-            logger.info("Thin 3A-lite scenario complete.")
-
-    def _log_motion_command(self, command: MotionCommand) -> None:
-        """Log the emitted command so thin-run edge cases are visible."""
-        logger.info(
-            "cmd mode={} estop={} source={} linear_m_s={:.3f} angular_rad_s={:.3f} reason={}",
-            self._mode.value,
-            self._estop_active,
-            command.source.value,
-            command.linear_m_s,
-            command.angular_rad_s,
-            command.reason or "unspecified",
-        )
-
     def _shutdown(self) -> None:
         """Release all hardware resources on exit."""
         logger.info("Shutting down pipeline...")
+        if self._mjpeg_server is not None:
+            try:
+                self._mjpeg_server.stop()
+            except Exception as exc:
+                logger.warning(f"MJPEG server stop error: {exc}")
         try:
             self._camera.stop()
         except Exception as exc:

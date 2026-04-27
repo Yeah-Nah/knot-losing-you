@@ -9,9 +9,18 @@ Using the task description provided, generate a Claude Code prompt that includes
 1. **Goal**: A clear statement of what needs to be achieved
 2. **High-level guidance**: Steps or hints on how to approach it — including reading and understanding relevant files before making any changes
 3. **Constraints** (always include all of these):
-   - Follow the existing coding standards and patterns in the codebase
+   - Follow the existing coding standards and patterns in the codebase @.claude/code_standards.md and .claude/pyright_type_hints_reference.md
+   - Start file discovery from .claude/repo_structure_and_script_map.md, then read only the minimum relevant files for the task
+   - If any files are critical for safety/correctness, identify them explicitly as Must read before proposing changes
+   - In the plan, include a concise Files to inspect list with one-line rationale per file
+   - Prefer map-driven discovery over exhaustive hardcoded file lists unless broad review is explicitly required
    - Make minimal changes — do not refactor code that is not directly related to the task
    - Add minimal tests — only what is necessary to validate the change; fewer is better
    - Plan before implementing: read and understand relevant files first, then propose the approach and wait for confirmation before making changes
+   - After implementing changes, delete any now-moot code that is directly made obsolete by the task (keep cleanup minimal and in-scope)
 
-Output the prompt as a raw text block so it can be copied directly into Claude Code.
+Output the prompt as plain raw text so it can be copied directly into Claude Code.
+Do not wrap the output in code fences.
+Do not use backticks around file paths or any other text.
+Assess if the task needs low, medium, or high effort and tell this to the user so they can decide which level of
+effort to choose for the task in Claude Code.
