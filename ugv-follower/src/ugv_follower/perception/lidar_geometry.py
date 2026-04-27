@@ -144,9 +144,17 @@ def lidar_point_to_body_frame(
     >>> round(bp["x_m"], 6), round(bp["y_m"], 6)
     (1.0, -0.0)
     """
+    raw_distance_m = point["distance"] / 1000.0
+    if raw_distance_m == 0.0:
+        return {
+            "x_m": 0.0,
+            "y_m": 0.0,
+            "distance_m": 0.0,
+            "bearing_deg": 0.0,
+        }
+
     theta_body = wrap_360(point["angle"] + mounting_offset_deg)
     theta_rad = math.radians(theta_body)
-    raw_distance_m = point["distance"] / 1000.0
     x_m = raw_distance_m * math.cos(theta_rad)
     # CW-positive with +y=left requires negating the sin component
     y_m = -raw_distance_m * math.sin(theta_rad)

@@ -47,18 +47,21 @@ _PKG_STRUCT = struct.Struct(
 )  # header ver_len speed start_angle (+ points) end_angle timestamp
 _SERIAL_TIMEOUT_S = 0.1
 
-# CRC-8/MAXIM constants (polynomial 0x31, init 0x00)
-_CRC8_POLYNOMIAL = 0x31
+# CRC settings used by this MSB-first table implementation.
+#
+# The known-good D500 table starts ``00 4D 9A D7 ...``, which corresponds
+# to polynomial 0x4D with init 0x00 in this update rule.
+_CRC8_POLYNOMIAL = 0x4D
 _CRC8_INIT = 0x00
 
 
 def _build_crc8_table(polynomial: int) -> tuple[int, ...]:
-    """Build a CRC-8/MAXIM lookup table for the given polynomial.
+    """Build an MSB-first CRC-8 lookup table for the given polynomial.
 
     Parameters
     ----------
     polynomial : int
-        CRC-8 polynomial in normal form (for MAXIM, ``0x31``).
+        MSB-first CRC-8 polynomial (for this D500 path, ``0x4D``).
 
     Returns
     -------
@@ -81,7 +84,7 @@ _CRC_TABLE: tuple[int, ...] = _build_crc8_table(_CRC8_POLYNOMIAL)
 
 
 def _crc8(data: bytes) -> int:
-    """Compute CRC-8/MAXIM over *data*."""
+    """Compute CRC-8 over *data* using the table configured above."""
     crc = _CRC8_INIT
     for byte in data:
         crc = _CRC_TABLE[(crc ^ byte) & 0xFF]

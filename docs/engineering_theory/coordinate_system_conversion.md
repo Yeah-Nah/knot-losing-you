@@ -45,7 +45,7 @@ Phase 3 needs geometric operations that are awkward in polar form but simple in 
 - associating LiDAR points with a camera-derived search direction
 
 Coordinate conversion is therefore a foundational preprocessing step for all downstream
-following and safety behavior.
+following and safety behaviour.
 
 ---
 
@@ -250,12 +250,12 @@ $360^\circ$ should be removed (or added, when negative) so the result lands in $
 Quick checks:
 
 $$
-	heta = 725^\circ: \quad \left\lfloor\frac{725}{360}\right\rfloor = 2
+\theta = 725^\circ: \quad \left\lfloor\frac{725}{360}\right\rfloor = 2
 \Rightarrow 725 - 360\cdot2 = 5^\circ
 $$
 
 $$
-	heta = -20^\circ: \quad \left\lfloor\frac{-20}{360}\right\rfloor = -1
+\theta = -20^\circ: \quad \left\lfloor\frac{-20}{360}\right\rfloor = -1
 \Rightarrow -20 - 360(-1) = 340^\circ
 $$
 
@@ -265,7 +265,7 @@ $$
 \operatorname{wrap}_{(-180,180]}(\theta) = \operatorname{wrap}_{[0,360)}(\theta + 180) - 180
 $$
 
-Equivalent modulo forms are fine in code as long as behavior at boundaries is defined and tested.
+Equivalent modulo forms are fine in code as long as behaviour at boundaries is defined and tested.
 
 ### Minimal Angular Difference
 
@@ -291,7 +291,7 @@ Suppose:
 Naive subtraction:
 
 $$
-  heta_{\text{desired}} - \theta_{\text{current}} = 1 - 359 = -358^\circ
+  \theta_{\text{desired}} - \theta_{\text{current}} = 1 - 359 = -358^\circ
 $$
 
 This suggests a huge clockwise turn. But geometrically, the target is only $2^\circ$ away
@@ -454,4 +454,4 @@ under clearly defined axis and angle conventions.
 
 The mathematics is straightforward; the engineering challenge is consistency. Once conventions,
 wrapping, and calibration are handled rigorously, this step provides the geometric foundation for
-Phase 3 target ranging and later obstacle-avoidance behavior.
+Phase 3 target ranging and later obstacle-avoidance behaviour.

@@ -203,6 +203,18 @@ class TestLidarPointToBodyFrame:
         assert bp["x_m"] == pytest.approx(0.0)
         assert bp["y_m"] == pytest.approx(0.0)
 
+    def test_zero_distance_ignores_forward_displacement(self) -> None:
+        """Out-of-range points must remain out-of-range even with translation enabled."""
+        bp = lidar_point_to_body_frame(
+            _pt(42.0, distance=0),
+            mounting_offset_deg=270.0,
+            forward_displacement_m=0.038,
+        )
+        assert bp["distance_m"] == pytest.approx(0.0)
+        assert bp["x_m"] == pytest.approx(0.0)
+        assert bp["y_m"] == pytest.approx(0.0)
+        assert bp["bearing_deg"] == pytest.approx(0.0)
+
 
 # ---------------------------------------------------------------------------
 # Group 4 — filter_forward_arc
