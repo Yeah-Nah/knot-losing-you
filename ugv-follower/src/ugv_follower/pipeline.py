@@ -18,6 +18,7 @@ from .control.motion_command import (
 )
 from .control.pan_controller import PanController
 from .control.ugv_controller import UGVController
+from .inference.object_detection import ObjectDetection, select_target_centroid
 from .perception.camera_access import CameraAccess
 from .perception.lidar_access import LidarAccess
 from .perception.lidar_geometry import (
@@ -28,6 +29,9 @@ from .perception.lidar_geometry import (
 from .utils.fisheye_utils import load_fisheye_intrinsics
 
 if TYPE_CHECKING:
+    import numpy as np
+    from numpy.typing import NDArray
+
     from .settings import Settings
 
 
@@ -84,6 +88,11 @@ class Pipeline:
             dead_band_pos_deg=settings.pan_dead_band_pos_deg,
             dead_band_neg_deg=settings.pan_dead_band_neg_deg,
             tilt_deg=settings.pan_tilt_setpoint_deg,
+        )
+        self._detector: ObjectDetection | None = (
+            ObjectDetection(settings.model_path, settings.model_config)
+            if settings.inference_enabled
+            else None
         )
         logger.info("Pipeline initialised.")
 
@@ -153,9 +162,9 @@ class Pipeline:
             cmd = self._apply_estop_override(cmd)
             self._log_motion_command(cmd)
             self._apply_motion_command(cmd)
-            self._update_pan_state(
-                None, None
-            )  # No detection source yet; holds pan at centre
+            frame = self._camera.get_frame()
+            bbox_u, bbox_v = self._detect_target(frame)
+            self._update_pan_state(bbox_u, bbox_v)
             if self._thin_run_complete:
                 logger.info("Thin 3A-lite run finished; exiting main loop.")
                 break
@@ -227,6 +236,28 @@ class Pipeline:
     def _apply_motion_command(self, command: MotionCommand) -> None:
         """Apply one normalized motion command to the controller."""
         apply_motion_command(self._ugv, command)
+
+    def _detect_target(
+        self,
+        frame: NDArray[np.uint8] | None,
+    ) -> tuple[float | None, float | None]:
+        """Return the best detection centroid ``(u, v)`` or ``(None, None)``.
+
+        Parameters
+        ----------
+        frame : NDArray[np.uint8] | None
+            Current camera frame, or ``None`` if no frame is available.
+
+        Returns
+        -------
+        tuple[float | None, float | None]
+            Pixel centroid of the highest-confidence detection, or
+            ``(None, None)`` when inference is disabled or no detection found.
+        """
+        if self._detector is None or frame is None:
+            return None, None
+        results = self._detector.run(frame)
+        return select_target_centroid(results)
 
     def _update_pan_state(
         self,

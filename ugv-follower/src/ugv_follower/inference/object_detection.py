@@ -12,6 +12,30 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
 
 
+def select_target_centroid(results: Any) -> tuple[float | None, float | None]:
+    """Return the ``(u, v)`` centroid of the highest-confidence detection.
+
+    Parameters
+    ----------
+    results : Any
+        Ultralytics Results list returned by :meth:`ObjectDetection.run`.
+
+    Returns
+    -------
+    tuple[float | None, float | None]
+        Pixel coordinates ``(u, v)`` of the best detection centroid, or
+        ``(None, None)`` when no detections are present.
+    """
+    if not results:
+        return None, None
+    boxes = results[0].boxes
+    if boxes is None or len(boxes) == 0:
+        return None, None
+    best = int(boxes.conf.argmax())
+    x1, y1, x2, y2 = boxes.xyxy[best].tolist()
+    return (x1 + x2) / 2.0, (y1 + y2) / 2.0
+
+
 class ObjectDetection:
     """Wraps the YOLO model for person detection and tracking.
 
@@ -24,9 +48,21 @@ class ObjectDetection:
     """
 
     def __init__(self, model_path: Path, config: dict[str, object]) -> None:
-        self._model_path = model_path
-        self._config = config
-        logger.debug("ObjectDetection initialised (stub).")
+        from ultralytics import (
+            YOLO,
+        )  # deferred: slow import, only needed when inference enabled
+
+        self._model = YOLO(str(model_path))
+        self._conf = float(config.get("conf", 0.5))
+        self._classes: list[int] = list(config.get("classes", [0]))  # type: ignore[arg-type]
+        self._persist = bool(config.get("persist", True))
+        self._verbose = bool(config.get("verbose", False))
+        logger.debug(
+            "ObjectDetection initialised (model={}, conf={}, classes={}).",
+            model_path.name,
+            self._conf,
+            self._classes,
+        )
 
     def run(self, frame: NDArray[np.uint8]) -> Any:
         """Run inference on a single frame.
@@ -38,7 +74,13 @@ class ObjectDetection:
 
         Returns
         -------
-        Results
-            Ultralytics Results object containing detections and tracks.
+        list
+            Ultralytics Results list containing detections and tracks.
         """
-        raise NotImplementedError
+        return self._model(
+            frame,
+            conf=self._conf,
+            classes=self._classes,
+            persist=self._persist,
+            verbose=self._verbose,
+        )
