@@ -1,6 +1,5 @@
 ---
 description: "Generate a Claude Code prompt for a coding task. Use when you want a prompt to copy into Claude Code for planning and implementation."
-name: "Generate Claude Code Prompt"
 argument-hint: "Describe the goal and any high-level guidance for the change..."
 agent: "ask"
 ---
