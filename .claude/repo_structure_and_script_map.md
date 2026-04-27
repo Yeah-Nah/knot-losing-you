@@ -10,6 +10,8 @@ knot-losing-you/
 ├─ PROGRESS_UPDATES.md
 ├─ planning.md
 ├─ manual_validation_testing.md
+├─ .gitignore
+├─ .pre-commit-config.yaml
 ├─ docs/
 │  ├─ engineering_theory/
 │  └─ math_theory/
@@ -19,8 +21,14 @@ knot-losing-you/
 │  ├─ code_standards.md
 │  ├─ settings.json
 │  └─ repo_structure_and_script_map.md
+├─ .github/
+│  ├─ pull_request_template.md
+│  ├─ prompts/               (create-claude-prompt, create-pr, create-progress-entry)
+│  └─ workflows/
+│     └─ linting_validation.yaml
 └─ ugv-follower/
    ├─ pyproject.toml
+   ├─ pyrightconfig.json
    ├─ configs/
    │  ├─ calibration_config.yaml
    │  ├─ model_config.yaml
