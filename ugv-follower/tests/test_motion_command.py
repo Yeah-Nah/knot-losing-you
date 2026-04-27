@@ -1,11 +1,47 @@
-"""Unit tests for the Phase 3A motion command contract."""
+"""Unit tests for the Phase 3A motion command contract.
+
+Module under test
+-----------------
+ugv_follower.control.motion_command — Canonical motion command data class
+(``MotionCommand``), source tagging (``MotionCommandSource``), command
+validation, and the ``apply_motion_command`` adapter.
+
+Test groups
+-----------
+1  MotionCommand         — ``zero()`` factory shape; ``validate()`` acceptance and rejection
+                          for non-finite linear, angular, and timestamp values.
+2  apply_motion_command  — validates and forwards commands to the controller;
+                          rejects invalid commands before calling the controller.
+3  Pipeline command path — ``decide_command`` return type; ``apply_estop_override``
+                          passthrough when inactive and zero-force when active;
+                          mode switching; one-shot transition-stop behaviour.
+
+Running
+-------
+All tests in this file (from ``ugv-follower/``)::
+
+    pytest tests/test_motion_command.py
+
+Verbose with short tracebacks::
+
+    pytest tests/test_motion_command.py -v --tb=short
+
+Run tests matching a keyword::
+
+    pytest tests/test_motion_command.py -k "estop"
+    pytest tests/test_motion_command.py -k "validate"
+
+Notes
+-----
+No physical hardware required.  The UGV controller is replaced by a lightweight
+``_DummyController`` stub; no serial devices need to be attached.
+"""
 
 from __future__ import annotations
 
 import math
 import time
-from collections.abc import Callable, Sequence
-from typing import TypeVar, cast
+from typing import Any
 
 import pytest
 
@@ -15,11 +51,7 @@ from ugv_follower.control.motion_command import (
     apply_motion_command,
 )
 
-_F = TypeVar("_F", bound=Callable[..., object])
-parametrize = cast(
-    Callable[[str, Sequence[object]], Callable[[_F], _F]],
-    pytest.mark.parametrize,
-)
+parametrize: Any = pytest.mark.parametrize
 
 
 class _DummyController:

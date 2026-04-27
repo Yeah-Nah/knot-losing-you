@@ -34,7 +34,7 @@ knot-losing-you/
    │  ├─ pipeline.py
    │  ├─ settings.py
    │  ├─ control/
-   │  ├─ perception/
+   │  ├─ perception/           (camera_access, lidar_access, lidar_geometry)
    │  ├─ inference/
    │  └─ utils/
    ├─ tools/
@@ -101,6 +101,11 @@ knot-losing-you/
 - `src/ugv_follower/perception/lidar_access.py`
   - D500 packet parsing over serial (sync, CRC, angle interpolation, point extraction).
   - Returns 12-point scan packets; full scan aggregation is left to higher layers.
+
+- `src/ugv_follower/perception/lidar_geometry.py`
+  - Converts raw D500 polar coordinates into rover body-frame Cartesian coordinates.
+  - Provides `filter_forward_arc` and `nearest_forward_point` for Phase 3 forward-obstacle ranging.
+  - Bearing sign convention is consistent with `fisheye_utils.pixel_to_bearing_deg` (positive = right).
 
 - `src/ugv_follower/inference/object_detection.py`
   - Placeholder YOLO wrapper scaffold.
@@ -176,6 +181,9 @@ knot-losing-you/
 
 - `tests/test_calibrate_ugv_drive.py`
   - Unit tests for drive calibration geometry, parsing, fitting, and orchestrator helper behavior.
+
+- `tests/test_lidar_geometry.py`
+  - Unit tests for `lidar_geometry.py` helpers: `wrap_360`, `wrap_180`, `lidar_point_to_body_frame`, `filter_forward_arc`, and `nearest_forward_point`.
 
 ## 4) Non-Script Context Files Worth Keeping in View
 

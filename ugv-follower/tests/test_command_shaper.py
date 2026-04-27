@@ -1,11 +1,41 @@
 """Unit tests for CommandShaper and the _step_wheel pure function.
 
-Groups
-------
-1  Pure ``_step_wheel`` tests — no threading, deterministic, fast.
-2  ``CommandShaper`` threading integration — mock ``send_fn``.
-3  ``immediate_stop()`` behaviour.
-4  ``UGVController`` integration — shaping enabled/disabled, patched serial.
+Module under test
+-----------------
+ugv_follower.control.command_shaper — Background thread that rate-limits wheel
+commands and enforces a reversal dwell around zero crossing.
+ugv_follower.control.ugv_controller — Serial transport layer tested with shaping
+enabled and disabled.
+
+Test groups
+-----------
+1  TestStepWheelRamp          — ramp behaviour of the pure ``_step_wheel`` function; no threading.
+2  TestStepWheelReversal      — direction-reversal logic in ``_step_wheel``.
+3  TestStepWheelDwell         — dwell-on-zero enforcement in ``_step_wheel``.
+4  TestCommandShaperThreading — ``CommandShaper`` lifecycle with a mocked send function.
+5  TestImmediateStop          — ``immediate_stop()`` clears the queue and sends zero.
+6  TestUGVControllerShaping   — ``UGVController`` with shaping enabled/disabled over a patched serial port.
+
+Running
+-------
+All tests in this file (from ``ugv-follower/``)::
+
+    pytest tests/test_command_shaper.py
+
+Verbose with short tracebacks::
+
+    pytest tests/test_command_shaper.py -v --tb=short
+
+Run a specific group::
+
+    pytest tests/test_command_shaper.py::TestStepWheelRamp
+    pytest tests/test_command_shaper.py::TestImmediateStop
+
+Notes
+-----
+No physical hardware required.  Serial I/O is patched with ``unittest.mock``.
+Threading integration tests use real threads with short timeouts; they may be
+sensitive to heavily loaded machines.
 """
 
 from __future__ import annotations

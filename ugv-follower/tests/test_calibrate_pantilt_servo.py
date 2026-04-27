@@ -1,7 +1,47 @@
 """Automated pytest tests for non-hardware logic in calibrate_pantilt_servo.
 
-All tests run without any physical hardware.  They import pure functions and
-CSV/YAML helpers directly from the calibration script.
+Module under test
+-----------------
+tools.calibration.calibrate_pantilt_servo — Interactive pan sweep calibration
+tool that measures commanded pan angle vs observed bearing, fits servo
+characteristics, estimates hysteresis, and writes results to CSV and sensor config.
+
+Test groups
+-----------
+ 1  centroid_to_angle           — pixel centroid to observed bearing conversion.
+ 2  correct_for_forward_offset  — camera forward-offset geometry correction.
+ 3  _validate_geometry          — geometry precondition enforcement.
+ 4  quality_flag                — sweep quality assessment logic.
+ 5  estimate_dead_band          — dead-band estimation from sweep data.
+ 6  fit_linear                  — linear servo-curve fitting.
+ 7  fit_piecewise_linear        — piecewise linear servo-curve fitting.
+ 8  compute_hysteresis          — hysteresis estimation between forward and backward sweeps.
+ 9  CSV round-trip              — calibration data written to CSV and loaded back correctly.
+10  Atomic YAML write           — sensor config patched atomically without corrupting other keys.
+11  analyse_sweep integration   — end-to-end sweep analysis combining fit, quality, and hysteresis.
+12  precondition_cycles         — _load_config validation and _run_sweep cycle-count routing.
+13  precondition_settle_time_s  — _load_config validation and _run_sweep settle-time routing.
+
+Running
+-------
+All tests in this file (from ``ugv-follower/``)::
+
+    pytest tests/test_calibrate_pantilt_servo.py
+
+Verbose with short tracebacks::
+
+    pytest tests/test_calibrate_pantilt_servo.py -v --tb=short
+
+Run tests matching a keyword::
+
+    pytest tests/test_calibrate_pantilt_servo.py -k "hysteresis"
+    pytest tests/test_calibrate_pantilt_servo.py -k "csv"
+
+Notes
+-----
+No physical hardware required.  Pure functions and CSV/YAML helpers are imported
+directly from the calibration script and exercised in isolation.  Camera, serial,
+and threading dependencies are patched with ``unittest.mock``.
 """
 
 from __future__ import annotations

@@ -1,7 +1,56 @@
 """Automated pytest tests for non-hardware logic in calibrate_ugv_drive.
 
-All tests run without any physical hardware.  They import pure functions and
-CSV/YAML helpers directly from the calibration script.
+Module under test
+-----------------
+tools.calibration.calibrate_ugv_drive — Interactive turn-rate and dead-band
+calibration tool for the rover drive model.  Uses clicked target bearings with
+fisheye and camera-offset corrections, fits gain and dead-band estimates, and
+writes outputs to sensor config and CSV.
+
+Test groups
+-----------
+ 1  fisheye_utils — pixel_to_normalised         — pixel normalisation to [-1, 1] coordinates.
+ 2  fisheye_utils — pixel_to_bearing_deg        — pixel to signed horizontal bearing.
+ 3  fisheye_utils — load_fisheye_intrinsics      — intrinsic matrix and distortion loading.
+ 4  fisheye_utils — undistort_frame / pinhole    — undistortion and pinhole bearing helpers.
+ 5  correct_for_camera_offset                    — camera-to-rover lateral offset correction.
+ 6  _validate_geometry                           — geometry precondition enforcement.
+ 7  quality_flag                                 — run quality assessment logic.
+ 8  _sign_consistent                             — sign consistency check for turn data.
+ 9  fit_turn_rate_gain                           — linear turn-rate gain fitting.
+10  estimate_dead_band                           — dead-band estimation from run data.
+11  analyse_runs                                 — full run analysis pipeline.
+12  CSV round-trip                               — calibration rows written to CSV and loaded back.
+13  Atomic YAML write                            — sensor config patched atomically.
+14  Config loading — _load_config                — config validation and missing-key rejection.
+15  _run_sweep — row count / UGV call count      — orchestrator sweep mechanics.
+16  Replay-like integration test                 — end-to-end CSV replay through analyse_runs.
+17  Cancellation sentinel                        — _check_cancel raises ``_SweepCancelled`` correctly.
+18  Recenter pause                               — state transitions and event wiring.
+19  _bearing_from_distorted_click                — distorted pixel click to signed bearing.
+20  _get_status_text                             — status string generation for WAITING_CLICK state.
+
+Running
+-------
+All tests in this file (from ``ugv-follower/``)::
+
+    pytest tests/test_calibrate_ugv_drive.py
+
+Verbose with short tracebacks::
+
+    pytest tests/test_calibrate_ugv_drive.py -v --tb=short
+
+Run tests matching a keyword::
+
+    pytest tests/test_calibrate_ugv_drive.py -k "dead_band"
+    pytest tests/test_calibrate_ugv_drive.py -k "csv"
+    pytest tests/test_calibrate_ugv_drive.py::TestCheckCancel
+
+Notes
+-----
+No physical hardware required.  Pure functions and CSV/YAML helpers are imported
+directly from the calibration script and exercised in isolation.  Camera, serial,
+OpenCV, and threading dependencies are patched with ``unittest.mock``.
 """
 
 from __future__ import annotations

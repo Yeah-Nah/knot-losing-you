@@ -1,0 +1,8 @@
+{
+  "include": ["src", "tools", "tests"],
+  "exclude": ["**/__pycache__", "**/*.egg-info"],
+  "pythonVersion": "3.11",
+  "typeCheckingMode": "standard",
+  "reportMissingImports": true,
+  "reportMissingTypeStubs": false
+}

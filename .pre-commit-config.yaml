@@ -30,15 +30,23 @@ repos:
         args: [--fix]
 
   # Type checking - ugv-follower
-  - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.19.1
+  - repo: local
     hooks:
-      - id: mypy
-        name: mypy (ugv-follower)
+      - id: pyright
+        name: pyright (ugv-follower)
+        language: python
+        entry: pyright
+        pass_filenames: false
+        args: [--project, ugv-follower]
         files: ^ugv-follower/
-        args: [--ignore-missing-imports, --strict, --explicit-package-bases]
         additional_dependencies:
+          - pyright
+          - depthai
+          - pytest
+          - pyserial
+          - numpy
+          - opencv-python-headless
+          - PyYAML
+          - loguru
           - types-PyYAML
           - types-setuptools
-          - numpy
-          - loguru

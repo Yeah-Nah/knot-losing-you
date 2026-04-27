@@ -1,7 +1,7 @@
 ---
 description: "Generate a filled PR description and create the PR on GitHub by analyzing all commits since the last PR"
 agent: "agent"
-tools: [get_changed_files, github-pull-request_activePullRequest, github/*]
+tools: [search/codebase, get_changed_files, github-pull-request_activePullRequest, github/*]
 ---
 
 Generate a pull request description for the current branch compared to `main`.
