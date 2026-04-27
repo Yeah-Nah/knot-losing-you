@@ -53,7 +53,7 @@ class Settings:
 
     def _resolve_model_path(self) -> Path:
         model_filename = str(self.model_config.get("model", ""))
-        return (self._root / "models" / model_filename).resolve()
+        return (self._root / "model" / model_filename).resolve()
 
     def _has_display(self) -> bool:
         """Return True if a display server is available for GUI output."""
