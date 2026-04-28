@@ -24,9 +24,13 @@ shared:
 
 # Pan-tilt servo curve calibration — used by calibrate_pantilt_servo.py
 pan_tilt_servo:
-  sweep_min_deg: -45.0        # Start of the commanded pan sweep (degrees)
-  sweep_max_deg: 45.0         # End of the commanded pan sweep (degrees)
-  sweep_step_deg: 5.0         # Step size between commanded pan values (degrees)
+  # Explicit commanded pan angle schedules (degrees). Each schedule must be a list
+  # of values in strictly ascending order. For each schedule the sweep runs forward
+  # (values as listed) then reverse (values reversed). Multiple schedules allow
+  # probing different command positions across runs.
+  pan_command_schedules_deg:
+    - [-45, -35, -25, -20, -10, 0, 10, 20, 25, 35, 45]
+    - [-40, -30, -25, -15, -5, -1, 0, 1, 5, 15, 25, 30, 40]
   frames_to_average: 10       # Number of frames to collect and median-average at each step
   tilt_setpoint_deg: 0.0      # Tilt angle held constant throughout the sweep
   sign_override: null         # Override sign multiplier applied after centroid_to_angle.
@@ -35,6 +39,7 @@ pan_tilt_servo:
   camera_forward_offset_m: 0.0665         # Forward offset of camera lens from pan-tilt rotation centre (metres)
   calibration_target_distance_m: 2.7    # Distance from pan-tilt rotation centre to calibration target (metres)
   precondition_cycles: 1                # Full forward+reverse warmup passes before recording begins (0 = skip)
+                                        # Preconditioning uses the first schedule's command values.
   precondition_settle_time_s: 0.3      # Dwell time (seconds) used only during warmup/precondition passes.
                                         # Defaults to settle_time_s when absent. Set lower than settle_time_s
                                         # to speed up the warmup sweep without affecting measurement timing.
