@@ -7,7 +7,7 @@ for the autonomous UGV follower.
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from loguru import logger
 
@@ -18,7 +18,11 @@ from .control.motion_command import (
 )
 from .control.pan_controller import PanController
 from .control.ugv_controller import UGVController
-from .inference.object_detection import ObjectDetection, select_target_centroid
+from .inference.object_detection import (
+    ModelConfig,
+    ObjectDetection,
+    select_target_centroid,
+)
 from .perception.waveshare_camera import WaveshareCamera
 from .perception.lidar_access import LidarAccess
 from .perception.lidar_geometry import (
@@ -92,7 +96,10 @@ class Pipeline:
             tilt_deg=settings.pan_tilt_setpoint_deg,
         )
         self._detector: ObjectDetection | None = (
-            ObjectDetection(settings.model_path, settings.model_config)
+            # settings.model_config comes from validated YAML settings.
+            ObjectDetection(
+                settings.model_path, cast(ModelConfig, settings.model_config)
+            )
             if settings.inference_enabled
             else None
         )
