@@ -174,8 +174,9 @@ class Pipeline:
             self._apply_motion_command(cmd)
             frame = self._camera.get_frame()
             results = self._run_inference(frame)
-            bbox_u, bbox_v = self._extract_centroid(results)
-            self._update_pan_state(bbox_u, bbox_v)
+            if not self._estop_active:
+                bbox_u, bbox_v = self._extract_centroid(results)
+                self._update_pan_state(bbox_u, bbox_v)
             self._push_stream_frame(self._annotate_frame(frame, results))
             time.sleep(self._loop_period_s)
 

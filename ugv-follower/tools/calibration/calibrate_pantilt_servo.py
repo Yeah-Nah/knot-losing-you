@@ -1333,8 +1333,8 @@ def _run_sweep(
 
             logger.info(
                 "Starting schedule %d/%d (%d steps × 2 dirs).",
-                sched_idx,
-                len(config.pan_command_schedules_deg) - 1,
+                sched_idx + 1,
+                len(config.pan_command_schedules_deg),
                 len(schedule),
             )
 

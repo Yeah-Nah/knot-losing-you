@@ -49,7 +49,7 @@ def _make_results(
     mock_boxes = MagicMock()
     mock_boxes.xyxy = np.array([[b[0], b[1], b[2], b[3]] for b in boxes], dtype=float)
     mock_boxes.conf = np.array([b[4] for b in boxes], dtype=float)
-    mock_boxes.__len__ = lambda _: len(boxes)
+    mock_boxes.__len__.return_value = len(boxes)
     result.boxes = mock_boxes
     return [result]
 

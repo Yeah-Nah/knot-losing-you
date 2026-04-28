@@ -3,7 +3,7 @@
 #       (e.g., `*.pt` files are typically gitignored). Before running inference,
 #       download the YOLO model weights and place them into the `model/` directory:
 #         1. Create the directory if it does not exist:
-#              mkdir -p models
+#              mkdir -p model
 #         2. Download `yolo11n.pt` from the official Ultralytics releases, for example:
 #              https://github.com/ultralytics/assets/releases
 #         3. Save the file as: `model/yolo11n.pt`
