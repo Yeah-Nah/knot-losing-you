@@ -16,6 +16,7 @@ Using the task description provided, generate a Claude Code prompt that includes
    - Prefer map-driven discovery over exhaustive hardcoded file lists unless broad review is explicitly required
    - Make minimal changes — do not refactor code that is not directly related to the task
    - Add minimal tests — only what is necessary to validate the change; fewer is better
+   - Do not run full pre-commit; run only targeted test file.
    - Plan before implementing: read and understand relevant files first, then propose the approach and wait for confirmation before making changes
    - After implementing changes, delete any now-moot code that is directly made obsolete by the task (keep cleanup minimal and in-scope)
 
