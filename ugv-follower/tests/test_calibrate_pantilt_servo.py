@@ -687,7 +687,9 @@ def _make_sweep_config(
         chassis_main=1,
         chassis_module=1,
         track_width=0.2,
-        pan_command_schedules_deg=((-10.0, 0.0, 10.0),),  # 1 sched × 3 steps × 2 dirs = 6
+        pan_command_schedules_deg=(
+            (-10.0, 0.0, 10.0),
+        ),  # 1 sched × 3 steps × 2 dirs = 6
         settle_time_s=settle_time_s,
         frames_to_average=1,
         tilt_setpoint_deg=0.0,

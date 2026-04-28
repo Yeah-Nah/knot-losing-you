@@ -1070,7 +1070,9 @@ def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
     logger.info(f"CSV written to {path} ({len(rows)} rows).")
 
 
-_CSV_INT_COLS: frozenset[str] = frozenset({"frames_averaged", "quality_flag", "schedule_index"})
+_CSV_INT_COLS: frozenset[str] = frozenset(
+    {"frames_averaged", "quality_flag", "schedule_index"}
+)
 _CSV_STR_COLS: frozenset[str] = frozenset({"sweep_direction"})
 
 
@@ -1309,18 +1311,15 @@ def _run_sweep(
     t0 : float
         ``time.monotonic()`` reference at sweep start, used for ``timestamp_s``.
     """
-    total_steps = sum(
-        len(sched) * 2 for sched in config.pan_command_schedules_deg
-    )
+    total_steps = sum(len(sched) * 2 for sched in config.pan_command_schedules_deg)
     sign_mult = config.sign_override if config.sign_override is not None else 1.0
     rows: list[dict[str, Any]] = []
 
     if config.precondition_cycles > 0:
         first_sched = config.pan_command_schedules_deg[0]
-        precondition_steps: list[tuple[float, str]] = (
-            [(c, "forward") for c in first_sched]
-            + [(c, "reverse") for c in reversed(first_sched)]
-        )
+        precondition_steps: list[tuple[float, str]] = [
+            (c, "forward") for c in first_sched
+        ] + [(c, "reverse") for c in reversed(first_sched)]
         if not _run_precondition_cycles(precondition_steps, config, ugv, cancel_event):
             return  # cancelled
 
@@ -1353,7 +1352,9 @@ def _run_sweep(
                 u_list, score_list = _capture_frames(cap, template, config, cap_lock)
 
                 if not u_list:
-                    err = f"No frames captured at cmd={cmd_deg}° (schedule {sched_idx})."
+                    err = (
+                        f"No frames captured at cmd={cmd_deg}° (schedule {sched_idx})."
+                    )
                     logger.error(err)
                     state.transition_to(
                         SweepStatus(state=CalibrationState.FAILED, error_message=err)
