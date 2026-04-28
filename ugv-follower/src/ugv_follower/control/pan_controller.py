@@ -40,7 +40,8 @@ def apply_tilt_correction(heading_deg: float, tilt_deg: float) -> float:
     >>> apply_tilt_correction(10.0, 0.0)
     10.0
     >>> import math
-    >>> apply_tilt_correction(10.0, 90.0) == pytest.approx(0.0, abs=1e-9)
+    >>> math.isclose(apply_tilt_correction(10.0, 90.0), 0.0, abs_tol=1e-9)
+    True
     """
     return heading_deg * math.cos(math.radians(tilt_deg))
 
@@ -203,15 +204,17 @@ class PanController:
                 self._dead_band_pos_deg,
             )
             return None
-
+        target_pan = self._current_pan_deg + corrected
         new_pan = clamp_pan(
-            corrected,
+            target_pan,
             self._cmd_min_deg,
             self._cmd_max_deg,
         )
         self._current_pan_deg = new_pan
         logger.debug(
-            "Pan: heading={:.2f}° → pan_cmd={:.2f}°.",
+            "Pan: heading={:.2f}° + current_pan={:.2f}° → pan_cmd={:.2f}°.",
+            corrected,
+            target_pan - corrected,
             corrected,
             new_pan,
         )

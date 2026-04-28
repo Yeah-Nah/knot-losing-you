@@ -24,7 +24,7 @@ No hardware required.  cv2.VideoCapture and camera_preflight are mocked.
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest

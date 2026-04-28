@@ -51,6 +51,7 @@ class MjpegServer:
         """Shut down the HTTP server. Safe to call even if never started."""
         if self._server is not None:
             self._server.shutdown()
+            self._server.server_close()
             self._server = None
         if self._thread is not None:
             self._thread.join(timeout=2)

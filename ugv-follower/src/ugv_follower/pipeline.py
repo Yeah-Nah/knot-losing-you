@@ -7,7 +7,7 @@ for the autonomous UGV follower.
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from loguru import logger
 
@@ -18,7 +18,11 @@ from .control.motion_command import (
 )
 from .control.pan_controller import PanController
 from .control.ugv_controller import UGVController
-from .inference.object_detection import ObjectDetection, select_target_centroid
+from .inference.object_detection import (
+    ModelConfig,
+    ObjectDetection,
+    select_target_centroid,
+)
 from .perception.waveshare_camera import WaveshareCamera
 from .perception.lidar_access import LidarAccess
 from .perception.lidar_geometry import (
@@ -92,7 +96,10 @@ class Pipeline:
             tilt_deg=settings.pan_tilt_setpoint_deg,
         )
         self._detector: ObjectDetection | None = (
-            ObjectDetection(settings.model_path, settings.model_config)
+            # settings.model_config comes from validated YAML settings.
+            ObjectDetection(
+                settings.model_path, cast(ModelConfig, settings.model_config)
+            )
             if settings.inference_enabled
             else None
         )
@@ -174,8 +181,9 @@ class Pipeline:
             self._apply_motion_command(cmd)
             frame = self._camera.get_frame()
             results = self._run_inference(frame)
-            bbox_u, bbox_v = self._extract_centroid(results)
-            self._update_pan_state(bbox_u, bbox_v)
+            if not self._estop_active:
+                bbox_u, bbox_v = self._extract_centroid(results)
+                self._update_pan_state(bbox_u, bbox_v)
             self._push_stream_frame(self._annotate_frame(frame, results))
             time.sleep(self._loop_period_s)
 

@@ -3,13 +3,22 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypedDict
 
 from loguru import logger
 
 if TYPE_CHECKING:
     import numpy as np
     from numpy.typing import NDArray
+
+
+class ModelConfig(TypedDict, total=False):
+    """Typed schema for model_config.yaml values used by ObjectDetection."""
+
+    conf: float
+    classes: list[int]
+    persist: bool
+    verbose: bool
 
 
 def select_target_centroid(results: Any) -> tuple[float | None, float | None]:
@@ -43,20 +52,20 @@ class ObjectDetection:
     ----------
     model_path : Path
         Path to the YOLO ``.pt`` or ``.onnx`` model file.
-    config : dict[str, object]
+    config : ModelConfig
         Model configuration dictionary from ``model_config.yaml``.
     """
 
-    def __init__(self, model_path: Path, config: dict[str, object]) -> None:
-        from ultralytics import (
+    def __init__(self, model_path: Path, config: ModelConfig) -> None:
+        from ultralytics import (  # pyright: ignore[reportMissingImports]
             YOLO,
         )  # deferred: slow import, only needed when inference enabled
 
         self._model = YOLO(str(model_path))
-        self._conf = float(config.get("conf", 0.5))
-        self._classes: list[int] = list(config.get("classes", [0]))  # type: ignore[arg-type]
-        self._persist = bool(config.get("persist", True))
-        self._verbose = bool(config.get("verbose", False))
+        self._conf = config.get("conf", 0.5)
+        self._classes = config.get("classes", [0])
+        self._persist = config.get("persist", True)
+        self._verbose = config.get("verbose", False)
         logger.debug(
             "ObjectDetection initialised (model={}, conf={}, classes={}).",
             model_path.name,

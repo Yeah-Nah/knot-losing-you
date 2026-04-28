@@ -107,7 +107,7 @@ class Settings:
     @property
     def stream_port(self) -> int:
         """HTTP port for the MJPEG stream endpoint. 0 disables streaming."""
-        return int(self.pipeline_config.get("stream_port", 8080))
+        return int(self.pipeline_config.get("stream_port", 0))
 
     @property
     def dev_or_pi(self) -> str:

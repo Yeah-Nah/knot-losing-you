@@ -246,4 +246,4 @@ $$
 $$
 
 With proper intrinsics, distortion handling, and sign discipline, this gives a robust heading
-error suitable for pan re-centering, LiDAR association, and rover turn control.
+error suitable for pan re-centring, LiDAR association, and rover turn control.
