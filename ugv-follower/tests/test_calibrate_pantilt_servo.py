@@ -11,16 +11,17 @@ Test groups
  1  centroid_to_angle           — pixel centroid to observed bearing conversion.
  2  correct_for_forward_offset  — camera forward-offset geometry correction.
  3  _validate_geometry          — geometry precondition enforcement.
- 4  quality_flag                — sweep quality assessment logic.
- 5  estimate_dead_band          — dead-band estimation from sweep data.
- 6  fit_linear                  — linear servo-curve fitting.
- 7  fit_piecewise_linear        — piecewise linear servo-curve fitting.
- 8  compute_hysteresis          — hysteresis estimation between forward and backward sweeps.
- 9  CSV round-trip              — calibration data written to CSV and loaded back correctly.
-10  Atomic YAML write           — sensor config patched atomically without corrupting other keys.
-11  analyse_sweep integration   — end-to-end sweep analysis combining fit, quality, and hysteresis.
-12  precondition_cycles         — _load_config validation and _run_sweep cycle-count routing.
-13  precondition_settle_time_s  — _load_config validation and _run_sweep settle-time routing.
+ 4  _validate_schedules         — schedule monotonicity and completeness enforcement.
+ 5  quality_flag                — sweep quality assessment logic.
+ 6  estimate_dead_band          — dead-band estimation from sweep data.
+ 7  fit_linear                  — linear servo-curve fitting.
+ 8  fit_piecewise_linear        — piecewise linear servo-curve fitting.
+ 9  compute_hysteresis          — hysteresis estimation between forward and backward sweeps.
+10  CSV round-trip              — calibration data written to CSV and loaded back correctly.
+11  Atomic YAML write           — sensor config patched atomically without corrupting other keys.
+12  analyse_sweep integration   — end-to-end sweep analysis combining fit, quality, and hysteresis.
+13  precondition_cycles         — _load_config validation and _run_sweep cycle-count routing.
+14  precondition_settle_time_s  — _load_config validation and _run_sweep settle-time routing.
 
 Running
 -------
@@ -51,7 +52,7 @@ import math
 import threading
 import time
 from pathlib import Path
-from typing import TypeAlias
+from typing import Any, TypeAlias
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -65,6 +66,7 @@ from tools.calibration.calibrate_pantilt_servo import (
     _load_csv,
     _run_sweep,
     _validate_geometry,
+    _validate_schedules,
     _write_csv,
     _write_results_atomic,
     analyse_sweep,
@@ -191,6 +193,41 @@ def test_validate_geometry_offset_exceeds_distance() -> None:
         _validate_geometry(3.0, 2.0)
     with pytest.raises(ValueError):
         _validate_geometry(2.0, 2.0)
+
+
+# ---------------------------------------------------------------------------
+# _validate_schedules
+# ---------------------------------------------------------------------------
+
+
+def test_validate_schedules_valid() -> None:
+    """Strictly ascending schedules must not raise."""
+    _validate_schedules([[-45.0, -20.0, 0.0, 20.0, 45.0]])
+    _validate_schedules([[-10.0, 0.0, 10.0], [-5.0, 0.0, 5.0]])
+
+
+def test_validate_schedules_empty_list_raises() -> None:
+    """Empty schedules list → ValueError."""
+    with pytest.raises(ValueError, match="at least one schedule"):
+        _validate_schedules([])
+
+
+def test_validate_schedules_single_value_raises() -> None:
+    """Schedule with fewer than 2 values → ValueError."""
+    with pytest.raises(ValueError, match="at least 2 values"):
+        _validate_schedules([[0.0]])
+
+
+def test_validate_schedules_non_monotonic_raises() -> None:
+    """Schedule with a non-ascending pair → ValueError."""
+    with pytest.raises(ValueError, match="strictly monotonic ascending"):
+        _validate_schedules([[-10.0, 5.0, 0.0, 10.0]])
+
+
+def test_validate_schedules_duplicate_raises() -> None:
+    """Schedule with a repeated value → ValueError (strict ascending requires >)."""
+    with pytest.raises(ValueError, match="strictly monotonic ascending"):
+        _validate_schedules([[-10.0, 0.0, 0.0, 10.0]])
 
 
 # ---------------------------------------------------------------------------
@@ -358,6 +395,7 @@ def _make_sample_row(**overrides: RowValue) -> dict[str, RowValue]:
         "commanded_pan_deg": -5.0,
         "tilt_setpoint_deg": 0.0,
         "sweep_direction": "forward",
+        "schedule_index": 0,
         "u_px": 450.0,
         "fx_px": 544.64,
         "cx_px": 500.0,
@@ -385,6 +423,7 @@ def test_csv_roundtrip(tmp_path: Path) -> None:
     assert r["phi_deg"] == pytest.approx(5.25)
     assert r["quality_flag"] == 0  # must be int, not str
     assert r["frames_averaged"] == 10  # must be int
+    assert r["schedule_index"] == 0  # must be int
     assert r["sweep_direction"] == "forward"  # must remain str
 
 
@@ -576,10 +615,11 @@ def _make_minimal_sensor_cfg() -> dict[
 def _make_minimal_cal_cfg(
     precondition_cycles: int | None = None,
     precondition_settle_time_s: float | None = None,
-) -> dict[str, dict[str, RowValue]]:
-    pt: dict[str, RowValue] = {
+) -> dict[str, Any]:
+    pt: dict[str, Any] = {
         "camera_forward_offset_m": 0.0665,
         "calibration_target_distance_m": 2.7,
+        "pan_command_schedules_deg": [[-10.0, 0.0, 10.0]],
     }
     if precondition_cycles is not None:
         pt["precondition_cycles"] = precondition_cycles
@@ -647,9 +687,9 @@ def _make_sweep_config(
         chassis_main=1,
         chassis_module=1,
         track_width=0.2,
-        sweep_min_deg=-10.0,
-        sweep_max_deg=10.0,
-        sweep_step_deg=10.0,
+        pan_command_schedules_deg=(
+            (-10.0, 0.0, 10.0),
+        ),  # 1 sched × 3 steps × 2 dirs = 6
         settle_time_s=settle_time_s,
         frames_to_average=1,
         tilt_setpoint_deg=0.0,
@@ -658,7 +698,6 @@ def _make_sweep_config(
         sign_override=None,
         camera_device="/dev/video0",
         sensor_config_path=Path("/tmp/sensor.yaml"),
-        sweep_steps=(-10.0, 0.0, 10.0),  # 3 steps → 6 full_steps (fwd + rev)
         camera_forward_offset_m=0.0,
         calibration_target_distance_m=2.0,
         precondition_cycles=precondition_cycles,

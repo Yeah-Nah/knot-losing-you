@@ -21,6 +21,36 @@ Short description of what was done and why.
 
 -->
 
+# Phase 3: Detection, Spatial Transforms & Following
+
+## Entry 7: Phase 3 Begins — Safety Foundation, LiDAR Geometry, and Pan Tracking
+*Date: April 27, 2026*
+
+The 3A-lite safety checkpoint is done which was basically setting up the structure so that no accidental commands could be sent to the rover from the later parts of the build. LiDAR scan data is now in rover body-frame coordinates, the pan controller for the pan-tilt camera is implemented, and the pipeline is wired up for live inference with MJPEG streaming.
+
+**What was done:**
+- Implemented the 3A-lite safety scaffold in the pipeline: single command decision point, emergency stop override (`_estop_active` latch with `request_estop`/`clear_estop`), minimal `AUTONOMOUS`/`MANUAL` mode model with a mandatory zero-velocity command on every mode transition — verified with a thin end-to-end run at 10 Hz logging each emitted command with mode, estop state, source, velocities, and reason tags
+- Built `lidar_geometry.py` — pure functions converting raw D500 polar returns $(r, \theta)$ to rover body-frame Cartesian $(x, y)$, with `filter_forward_arc` and `nearest_forward_point` ready for Phase 3 range-to-target; comprehensively unit-tested in `test_lidar_geometry.py`
+- Added coordinate system conversion reference doc covering the D500 sensor frame → rover body frame math, the 270° mounting offset correction, and the bearing sign convention used across the pipeline
+- Implemented `pan_controller.py` — converts a detection bounding-box pixel centroid to an absolute pan servo command via `pixel_to_bearing_deg` → tilt correction → dead-band guard → mechanical clamp; split into pure helper functions for direct unit testing
+- Added `select_target_centroid` to `object_detection.py` — picks the highest-confidence detection box and returns its pixel centroid; covered by `test_object_detection.py`
+- Refactored the camera access layer: `WaveshareCamera` now has its own dedicated class; pan-tilt is homed to centre before perception starts; fixed pan angle to use the corrected angle (not accumulated drift)
+- Wired `MjpegServer` into the pipeline for live stream access during follower runs; added `lap` dependency for ByteTrack tracking support and fixed the YOLO `persist` call path
+- Added Pyright strict type checking to pre-commit and CI; resolved type errors across the codebase
+- Moved hardware smoke-test scripts out of `tests/` into `tools/` to keep pytest clean in CI
+
+**Key Achievements:**
+- Phase 3A-lite safety framework complete: every command flows through a single decision point, estop preempts all motion, and mode transitions force a zero-velocity command before normal operation resumes ✅
+- LiDAR coordinate-system conversion implemented and tested — D500 returns are now in rover body frame with consistent bearing sign convention, ready for range-to-target matching in the next step
+- Pan controller implemented using calibrated fisheye intrinsics and the measured servo curve from Phase 2 — detection centroids can now be converted directly to servo commands
+- Pipeline is live: YOLO11n inference over the Waveshare camera, streaming over MJPEG, with the full safety scaffold in place and the structure ready for the complete Phase 3 control loop
+
+Me wondering what's going on with the pan-tilt camera and object detection:
+
+<img src="other/images/Screenshot 2026-04-27 224225.png" alt="Testing Camera Connection" width="500">
+
+---
+
 # Phase 2: Sensor Calibration
 
 ## Entry 6: UGV Drive Calibration Finally Complete

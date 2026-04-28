@@ -6,6 +6,19 @@ Purpose: compact, high-signal context for AI coding agents (Claude/Copilot) to u
 
 ```text
 knot-losing-you/
+├─ .claude/
+│  ├─ code_standards.md
+│  ├─ pyright_type_hints_reference.md
+│  ├─ repo_structure_and_script_map.md
+│  └─ settings.json
+├─ .github/
+│  ├─ .instructions.md
+│  ├─ pull_request_template.md
+│  ├─ prompts/               (create-claude-prompt, create-pr, create-progress-entry)
+│  └─ workflows/
+│     └─ linting_validation.yaml
+├─ .gitignore
+├─ .pre-commit-config.yaml
 ├─ README.md
 ├─ PROGRESS_UPDATES.md
 ├─ planning.md
@@ -15,12 +28,9 @@ knot-losing-you/
 │  └─ math_theory/
 ├─ other/
 │  └─ images/
-├─ .claude/
-│  ├─ code_standards.md
-│  ├─ settings.json
-│  └─ repo_structure_and_script_map.md
 └─ ugv-follower/
    ├─ pyproject.toml
+   ├─ pyrightconfig.json
    ├─ configs/
    │  ├─ calibration_config.yaml
    │  ├─ model_config.yaml
@@ -33,15 +43,15 @@ knot-losing-you/
    ├─ src/ugv_follower/
    │  ├─ pipeline.py
    │  ├─ settings.py
-   │  ├─ control/
+   │  ├─ control/              (command_shaper, motion_command, pan_controller, ugv_controller)
    │  ├─ perception/           (camera_access, lidar_access, lidar_geometry)
    │  ├─ inference/
-   │  └─ utils/
+   │  └─ utils/                (camera_preflight, config_utils, fisheye_utils, mjpeg_server)
    ├─ tools/
    │  ├─ run_follower.py
    │  ├─ check_battery.py
    │  └─ calibration/
-   └─ tests/
+   └─ tests/                   (includes pan_controller, mjpeg_server, object_detection coverage)
 ```
 
 ## 2) Runtime Architecture Snapshot
@@ -50,8 +60,10 @@ knot-losing-you/
 - `Settings` loads/validates YAML config and exposes typed properties.
 - `Pipeline` wires camera, LiDAR, and UGV controller, then runs a thin safe control loop.
 - Motion command path is normalized through `MotionCommand` and `apply_motion_command`.
+- Pan tracking logic is factored into `PanController`; MJPEG frame serving is available via `MjpegServer`.
 - Current autonomy logic is intentionally minimal (hold/zero commands + mode/estop sequencing).
-- Perception access layers for OAK-D and LiDAR are implemented; object detection wrapper exists but inference call is still a stub (`NotImplementedError`).
+- Runtime frame source is the Waveshare RGB pan-tilt camera (`WaveshareCamera` / V4L2); OAK-D (`OakdCamera`) is retained for the `check_camera_access.py` smoke tool only.
+- Object detection (`ObjectDetection`) is fully wired to the Waveshare frame path; `run()` calls Ultralytics YOLO when `inference_enabled: true`.
 
 ## 3) Script Breakdown (All Python Files)
 
@@ -93,10 +105,20 @@ knot-losing-you/
   - Canonical motion command contract (`MotionCommand`, source tagging, validation).
   - Single adapter that applies validated commands to controller.
 
+- `src/ugv_follower/control/pan_controller.py`
+  - Converts detection bounding-box centroids into absolute pan servo commands.
+  - Applies fisheye-derived bearing estimation, tilt correction, deadband suppression, and clamp logic.
+
 #### Perception and Inference
 
 - `src/ugv_follower/perception/camera_access.py`
   - OAK-D color camera startup/discovery and frame retrieval via DepthAI.
+  - Used by `tools/check_camera_access.py` smoke script only; not used in the runtime follower pipeline.
+
+- `src/ugv_follower/perception/waveshare_camera.py`
+  - cv2.VideoCapture wrapper for the Waveshare RGB pan-tilt camera (V4L2).
+  - Runtime frame source for the follower pipeline: inference, pan servo control, and MJPEG streaming.
+  - Calls `camera_preflight.ensure_camera_device_available` on start.
 
 - `src/ugv_follower/perception/lidar_access.py`
   - D500 packet parsing over serial (sync, CRC, angle interpolation, point extraction).
@@ -122,6 +144,10 @@ knot-losing-you/
 - `src/ugv_follower/utils/fisheye_utils.py`
   - Fisheye calibration math helpers (load K/D, pixel-to-bearing transforms, undistortion map caching).
   - Shared by calibration tools and intended for future runtime heading estimation.
+
+- `src/ugv_follower/utils/mjpeg_server.py`
+  - Thread-safe HTTP MJPEG server that streams the latest pipeline frame at `/stream`.
+  - Encodes pushed OpenCV frames to JPEG and serves them from a daemon thread.
 
 ### 3.3 Operational and Calibration Tools (`tools`)
 
@@ -176,6 +202,12 @@ knot-losing-you/
 - `tests/test_motion_command.py`
   - Unit tests for motion command contract validation and pipeline command-path behavior.
 
+- `tests/test_object_detection.py`
+  - Unit tests for object-detection wrapper configuration and placeholder runtime behavior.
+
+- `tests/test_pan_controller.py`
+  - Unit tests for heading sign, tilt correction, deadband handling, clamp logic, and pan command updates.
+
 - `tests/test_calibrate_pantilt_servo.py`
   - Unit tests for pan-tilt calibration math/fit/quality/csv/config helper functions.
 
@@ -184,6 +216,12 @@ knot-losing-you/
 
 - `tests/test_lidar_geometry.py`
   - Unit tests for `lidar_geometry.py` helpers: `wrap_360`, `wrap_180`, `lidar_point_to_body_frame`, `filter_forward_arc`, and `nearest_forward_point`.
+
+- `tests/test_mjpeg_server.py`
+  - Unit tests for MJPEG frame storage, server lifecycle, and `/stream` versus 404 HTTP responses.
+
+- `tests/test_waveshare_camera.py`
+  - Unit tests for `WaveshareCamera`: pre-start guard, start/stop lifecycle, frame acquisition, and read-failure handling (mocked cv2.VideoCapture).
 
 ## 4) Non-Script Context Files Worth Keeping in View
 
@@ -198,9 +236,10 @@ knot-losing-you/
 
 - Calibration tooling is substantial and appears to be the most mature area.
 - Core hardware access layers are implemented and test-covered.
-- Runtime autonomy loop is intentionally conservative (safe hold path + mode/estop behavior).
-- Detection/tracking integration is scaffolded but not fully wired (`ObjectDetection.run` pending).
-- Sensor config is the central contract between calibration outputs and runtime behavior.
+- Pan servo command generation and MJPEG streaming infrastructure are implemented and unit tested.
+- Runtime autonomy loop is intentionally conservative (safe hold path + mode/estop behaviour).
+- Runtime frame source is the Waveshare RGB pan-tilt camera; detection and pan tracking are fully wired to it.
+- Sensor config is the central contract between calibration outputs and runtime behaviour.
 
 ## 6) Suggested Update Pattern For This File
 

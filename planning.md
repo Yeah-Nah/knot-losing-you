@@ -23,7 +23,7 @@ No sea legs required.
 
 > Get real data flowing from each sensor on Raspberry Pi.
 
-- [x] OAK-D Lite colour camera frames via DepthAI V3 (`CameraAccess`)
+- [x] OAK-D Lite colour camera frames via DepthAI V3 (`OakdCamera`)
 - [x] LiDAR scan data via serial (`LidarAccess`)
 - [x] Waveshare UGV Rover basic drive commands (`UGVController`)
 - [x] Verify sensor pipeline end-to-end with logging

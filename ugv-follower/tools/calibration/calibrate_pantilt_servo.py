@@ -70,7 +70,7 @@ Calibration procedure
 4. Physically position the rover until the stationary target is bisected by the
    green guide line.
 5. ``GET /confirm`` to start the commanded sweep.  The tool will automatically
-   sweep pan commands from sweep_min_deg to sweep_max_deg and back, pausing at
+   sweep pan commands across all configured schedules, pausing at
    each step to collect settled frames.
 6. Poll ``GET /status`` until ``state`` is ``COMPLETE`` (or ``FAILED``).
 7. ``GET /save`` to write the CSV and update sensor_config.yaml.
@@ -139,6 +139,7 @@ _CSV_COLUMNS: list[str] = [
     "commanded_pan_deg",
     "tilt_setpoint_deg",
     "sweep_direction",
+    "schedule_index",
     "u_px",
     "fx_px",
     "cx_px",
@@ -208,9 +209,7 @@ class PanTiltCalConfig:
     chassis_main: int
     chassis_module: int
     track_width: float
-    sweep_min_deg: float
-    sweep_max_deg: float
-    sweep_step_deg: float
+    pan_command_schedules_deg: tuple[tuple[float, ...], ...]
     settle_time_s: float
     frames_to_average: int
     tilt_setpoint_deg: float
@@ -219,7 +218,6 @@ class PanTiltCalConfig:
     sign_override: float | None
     camera_device: str
     sensor_config_path: Path
-    sweep_steps: tuple[float, ...]
     camera_forward_offset_m: float
     calibration_target_distance_m: float
     precondition_cycles: int
@@ -782,6 +780,37 @@ def analyse_sweep(
 # ---------------------------------------------------------------------------
 
 
+def _validate_schedules(schedules: list[list[float]]) -> None:
+    """Raise ValueError if any schedule is empty or not strictly monotonic ascending.
+
+    Parameters
+    ----------
+    schedules : list[list[float]]
+        The parsed pan command schedules to validate.
+
+    Raises
+    ------
+    ValueError
+        If schedules is empty, any schedule has fewer than 2 values, or any
+        schedule is not strictly monotonic ascending.
+    """
+    if not schedules:
+        raise ValueError(
+            "pan_tilt_servo.pan_command_schedules_deg must contain at least one schedule."
+        )
+    for i, sched in enumerate(schedules):
+        if len(sched) < 2:
+            raise ValueError(
+                f"Schedule {i} must have at least 2 values, got {len(sched)}."
+            )
+        for j in range(len(sched) - 1):
+            if sched[j] >= sched[j + 1]:
+                raise ValueError(
+                    f"Schedule {i} is not strictly monotonic ascending at index {j}: "
+                    f"{sched[j]} >= {sched[j + 1]}."
+                )
+
+
 def _validate_geometry(
     camera_forward_offset_m: float,
     calibration_target_distance_m: float,
@@ -853,9 +882,6 @@ def _load_config(
     pt_cfg: dict[str, Any] = cal_cfg.get("pan_tilt_servo", {})
     shared_cfg: dict[str, Any] = cal_cfg.get("shared", {})
 
-    sweep_min = float(pt_cfg.get("sweep_min_deg", -45.0))
-    sweep_max = float(pt_cfg.get("sweep_max_deg", 45.0))
-    sweep_step = float(pt_cfg.get("sweep_step_deg", 5.0))
     settle_time = float(
         shared_cfg.get("settle_time_s", pt_cfg.get("settle_time_s", 1.5))
     )
@@ -918,15 +944,15 @@ def _load_config(
 
     sensor_config_path: Path = args.sensor_config.resolve()
 
-    if sweep_step <= 0:
-        raise ValueError("pan_tilt_servo.sweep_step_deg must be positive.")
-    if sweep_min >= sweep_max:
+    schedules_raw = pt_cfg.get("pan_command_schedules_deg")
+    if not schedules_raw:
         raise ValueError(
-            "pan_tilt_servo.sweep_min_deg must be less than sweep_max_deg."
+            "pan_tilt_servo.pan_command_schedules_deg is missing or empty "
+            "in calibration_config.yaml."
         )
-
-    raw_steps = np.arange(sweep_min, sweep_max + sweep_step / 2.0, sweep_step)
-    sweep_steps = tuple(float(v) for v in raw_steps)
+    schedules: list[list[float]] = [[float(v) for v in s] for s in schedules_raw]
+    _validate_schedules(schedules)
+    pan_command_schedules = tuple(tuple(s) for s in schedules)
 
     return PanTiltCalConfig(
         cx=cx,
@@ -939,9 +965,7 @@ def _load_config(
         chassis_main=int(ugv_cfg["chassis_main"]),
         chassis_module=int(ugv_cfg["chassis_module"]),
         track_width=float(ugv_cfg["track_width"]),
-        sweep_min_deg=sweep_min,
-        sweep_max_deg=sweep_max,
-        sweep_step_deg=sweep_step,
+        pan_command_schedules_deg=pan_command_schedules,
         settle_time_s=settle_time,
         frames_to_average=frames_to_avg,
         tilt_setpoint_deg=tilt_sp,
@@ -950,7 +974,6 @@ def _load_config(
         sign_override=sign_override,
         camera_device=camera_device,
         sensor_config_path=sensor_config_path,
-        sweep_steps=sweep_steps,
         camera_forward_offset_m=camera_fwd_offset,
         calibration_target_distance_m=cal_target_dist,
         precondition_cycles=precondition_cycles_raw,
@@ -1047,7 +1070,9 @@ def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
     logger.info(f"CSV written to {path} ({len(rows)} rows).")
 
 
-_CSV_INT_COLS: frozenset[str] = frozenset({"frames_averaged", "quality_flag"})
+_CSV_INT_COLS: frozenset[str] = frozenset(
+    {"frames_averaged", "quality_flag", "schedule_index"}
+)
 _CSV_STR_COLS: frozenset[str] = frozenset({"sweep_direction"})
 
 
@@ -1060,6 +1085,9 @@ def _load_csv(path: Path) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     with path.open(newline="") as f:
         reader = csv.DictReader(f)
+        has_schedule_index = (
+            reader.fieldnames is not None and "schedule_index" in reader.fieldnames
+        )
         for row in reader:
             typed: dict[str, Any] = {}
             for k, v in row.items():
@@ -1069,6 +1097,8 @@ def _load_csv(path: Path) -> list[dict[str, Any]]:
                     typed[k] = v
                 else:
                     typed[k] = float(v)
+            if not has_schedule_index:
+                typed["schedule_index"] = 0
             rows.append(typed)
     return rows
 
@@ -1186,6 +1216,7 @@ def _capture_frames(
 def _build_sweep_row(
     cmd_deg: float,
     direction: str,
+    schedule_index: int,
     u_median: float,
     score_med: float,
     qflag: int,
@@ -1206,6 +1237,8 @@ def _build_sweep_row(
         Commanded pan angle in degrees.
     direction : str
         Sweep direction label (``"forward"`` or ``"reverse"``).
+    schedule_index : int
+        Zero-based index of the schedule this step belongs to.
     u_median : float
         Median horizontal centroid in pixels.
     score_med : float
@@ -1233,6 +1266,7 @@ def _build_sweep_row(
         "commanded_pan_deg": round(cmd_deg, 4),
         "tilt_setpoint_deg": round(config.tilt_setpoint_deg, 4),
         "sweep_direction": direction,
+        "schedule_index": schedule_index,
         "u_px": round(u_median, 3),
         "fx_px": round(config.fx, 4),
         "cx_px": round(config.cx, 4),
@@ -1277,73 +1311,93 @@ def _run_sweep(
     t0 : float
         ``time.monotonic()`` reference at sweep start, used for ``timestamp_s``.
     """
-    forward_steps = [(c, "forward") for c in config.sweep_steps]
-    reverse_steps = [(c, "reverse") for c in reversed(config.sweep_steps)]
-    full_steps = forward_steps + reverse_steps
-    total_steps = len(full_steps)
-
+    total_steps = sum(len(sched) * 2 for sched in config.pan_command_schedules_deg)
     sign_mult = config.sign_override if config.sign_override is not None else 1.0
     rows: list[dict[str, Any]] = []
 
     if config.precondition_cycles > 0:
-        if not _run_precondition_cycles(full_steps, config, ugv, cancel_event):
+        first_sched = config.pan_command_schedules_deg[0]
+        precondition_steps: list[tuple[float, str]] = [
+            (c, "forward") for c in first_sched
+        ] + [(c, "reverse") for c in reversed(first_sched)]
+        if not _run_precondition_cycles(precondition_steps, config, ugv, cancel_event):
             return  # cancelled
 
     try:
-        for i, (cmd_deg, direction) in enumerate(full_steps):
-            if cancel_event.is_set():
-                logger.info("Sweep cancelled.")
-                return
+        global_step = 0
+        for sched_idx, schedule in enumerate(config.pan_command_schedules_deg):
+            forward_steps = [(c, "forward") for c in schedule]
+            reverse_steps = [(c, "reverse") for c in reversed(schedule)]
+            full_steps = forward_steps + reverse_steps
 
-            ugv.set_pan_tilt(cmd_deg, config.tilt_setpoint_deg)
-            time.sleep(config.settle_time_s)
-
-            if cancel_event.is_set():
-                logger.info("Sweep cancelled during settle.")
-                return
-
-            u_list, score_list = _capture_frames(cap, template, config, cap_lock)
-
-            if not u_list:
-                err = f"No frames captured at cmd={cmd_deg}°."
-                logger.error(err)
-                state.transition_to(
-                    SweepStatus(state=CalibrationState.FAILED, error_message=err)
-                )
-                return
-
-            u_median = float(np.median(u_list))
-            score_med = float(np.median(score_list))
-            qflag = quality_flag(score_med, u_median, config.cam_width)
-
-            image_angle_deg = math.degrees(math.atan2(u_median - config.cx, config.fx))
-            phi_cam = centroid_to_angle(u_median, config.cx, config.fx) * sign_mult
-            phi = correct_for_forward_offset(
-                phi_cam,
-                config.camera_forward_offset_m,
-                config.calibration_target_distance_m,
-            )
-
-            rows.append(
-                _build_sweep_row(
-                    cmd_deg=cmd_deg,
-                    direction=direction,
-                    u_median=u_median,
-                    score_med=score_med,
-                    qflag=qflag,
-                    phi=phi,
-                    image_angle_deg=image_angle_deg,
-                    config=config,
-                    t0=t0,
-                    frames_captured=len(u_list),
-                )
-            )
-
-            state.update_sweep_progress(i + 1, total_steps)
             logger.info(
-                f"Step {i + 1}/{total_steps}: cmd={cmd_deg:+.1f}° ({direction:7s})  "
-                f"u={u_median:.1f}px  phi={phi:+.2f}°  score={score_med:.3f}  flag={qflag}"
+                "Starting schedule %d/%d (%d steps × 2 dirs).",
+                sched_idx + 1,
+                len(config.pan_command_schedules_deg),
+                len(schedule),
             )
+
+            for cmd_deg, direction in full_steps:
+                if cancel_event.is_set():
+                    logger.info("Sweep cancelled.")
+                    return
+
+                ugv.set_pan_tilt(cmd_deg, config.tilt_setpoint_deg)
+                time.sleep(config.settle_time_s)
+
+                if cancel_event.is_set():
+                    logger.info("Sweep cancelled during settle.")
+                    return
+
+                u_list, score_list = _capture_frames(cap, template, config, cap_lock)
+
+                if not u_list:
+                    err = (
+                        f"No frames captured at cmd={cmd_deg}° (schedule {sched_idx})."
+                    )
+                    logger.error(err)
+                    state.transition_to(
+                        SweepStatus(state=CalibrationState.FAILED, error_message=err)
+                    )
+                    return
+
+                u_median = float(np.median(u_list))
+                score_med = float(np.median(score_list))
+                qflag = quality_flag(score_med, u_median, config.cam_width)
+
+                image_angle_deg = math.degrees(
+                    math.atan2(u_median - config.cx, config.fx)
+                )
+                phi_cam = centroid_to_angle(u_median, config.cx, config.fx) * sign_mult
+                phi = correct_for_forward_offset(
+                    phi_cam,
+                    config.camera_forward_offset_m,
+                    config.calibration_target_distance_m,
+                )
+
+                rows.append(
+                    _build_sweep_row(
+                        cmd_deg=cmd_deg,
+                        direction=direction,
+                        schedule_index=sched_idx,
+                        u_median=u_median,
+                        score_med=score_med,
+                        qflag=qflag,
+                        phi=phi,
+                        image_angle_deg=image_angle_deg,
+                        config=config,
+                        t0=t0,
+                        frames_captured=len(u_list),
+                    )
+                )
+
+                global_step += 1
+                state.update_sweep_progress(global_step, total_steps)
+                logger.info(
+                    f"Step {global_step}/{total_steps}: "
+                    f"sched={sched_idx}  cmd={cmd_deg:+.1f}° ({direction:7s})  "
+                    f"u={u_median:.1f}px  phi={phi:+.2f}°  score={score_med:.3f}  flag={qflag}"
+                )
 
         state.set_sweep_rows(rows)
         state.transition_to(
@@ -1703,6 +1757,8 @@ def _get_status_text(
 def _run_frame(
     cap: cv2.VideoCapture,
     cx: float,
+    cy: float,
+    template_half_width_px: int,
     state: CalibrationStateContainer,
     cap_lock: threading.Lock,
     stop_event: threading.Event,
@@ -1714,6 +1770,8 @@ def _run_frame(
     indefinitely.
     """
     cx_col = int(round(cx))
+    cy_row = int(round(cy))
+    half_w = template_half_width_px
     while not stop_event.is_set():
         acquired = cap_lock.acquire(blocking=False)
         if not acquired:
@@ -1729,8 +1787,14 @@ def _run_frame(
             continue
 
         h = frame.shape[0]
+        w = frame.shape[1]
         annotated = frame.copy()
         cv2.line(annotated, (cx_col, 0), (cx_col, h - 1), (0, 255, 0), 2)
+        box_x1 = max(0, cx_col - half_w)
+        box_y1 = max(0, cy_row - half_w)
+        box_x2 = min(w - 1, cx_col + half_w)
+        box_y2 = min(h - 1, cy_row + half_w)
+        cv2.rectangle(annotated, (box_x1, box_y1), (box_x2, box_y2), (0, 255, 0), 1)
 
         status = state.get_status()
         overlay = _get_status_text(status["state"], status)
@@ -2005,10 +2069,14 @@ def main() -> None:
     logger.info(
         f"Intrinsics: cx={config.cx:.2f}px  cy={config.cy:.2f}px  fx={config.fx:.2f}px"
     )
-    logger.info(
-        f"Sweep: {config.sweep_min_deg}° → {config.sweep_max_deg}° "
-        f"in {config.sweep_step_deg}° steps  ({len(config.sweep_steps)} steps × 2 dirs)"
-    )
+    for i, sched in enumerate(config.pan_command_schedules_deg):
+        logger.info(
+            f"Schedule {i}: {len(sched)} steps, "
+            f"range [{sched[0]:.1f}°, {sched[-1]:.1f}°]  "
+            f"({len(sched) * 2} samples)"
+        )
+    total_samples = sum(len(s) * 2 for s in config.pan_command_schedules_deg)
+    logger.info(f"Total sweep samples: {total_samples}")
     logger.info(
         f"Settle: {config.settle_time_s}s  Frames/step: {config.frames_to_average}  "
         f"Template half-width: {config.template_half_width_px}px"
@@ -2061,7 +2129,15 @@ def main() -> None:
         # -- Start frame thread ----------------------------------------------------
         frame_thread = threading.Thread(
             target=_run_frame,
-            args=(cap, config.cx, state, cap_lock, stop_event),
+            args=(
+                cap,
+                config.cx,
+                config.cy,
+                config.template_half_width_px,
+                state,
+                cap_lock,
+                stop_event,
+            ),
             daemon=True,
         )
         frame_thread.start()

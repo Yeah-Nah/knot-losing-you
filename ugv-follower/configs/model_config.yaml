@@ -1,15 +1,15 @@
 # YOLO model configuration
 # NOTE: The default model file `yolo11n.pt` is not committed to this repository
 #       (e.g., `*.pt` files are typically gitignored). Before running inference,
-#       download the YOLO model weights and place them into the `models/` directory:
+#       download the YOLO model weights and place them into the `model/` directory:
 #         1. Create the directory if it does not exist:
-#              mkdir -p models
+#              mkdir -p model
 #         2. Download `yolo11n.pt` from the official Ultralytics releases, for example:
 #              https://github.com/ultralytics/assets/releases
-#         3. Save the file as: `models/yolo11n.pt`
+#         3. Save the file as: `model/yolo11n.pt`
 #       After completing these steps, the default configuration below will work.
-model: "yolo11n.pt"   # Model filename (must be in models/ directory)
-conf: 0.5             # Detection confidence threshold
+model: "yolo11n.pt"   # Model filename (must be in model/ directory)
+conf: 0.7             # Detection confidence threshold
 classes: [0]          # Class IDs to detect (0 = person in COCO)
 persist: true         # Enable multi-frame tracking
 verbose: false        # Suppress YOLO console output

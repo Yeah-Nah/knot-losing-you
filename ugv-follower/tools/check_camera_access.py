@@ -2,7 +2,7 @@
 
 Test that there is a connection to the camera and that frames can
 be retrieved at a reasonable rate. This is a smoke test for the
-CameraAccess class, which is critical for the autonomous pipeline.
+OakdCamera class, which is critical for the autonomous pipeline.
 
 Usage
 -----
@@ -20,14 +20,14 @@ import time
 
 from loguru import logger
 
-from ugv_follower.perception.camera_access import CameraAccess
+from ugv_follower.perception.camera_access import OakdCamera
 
 
 NONE_FRAME_BACKOFF_S = 0.02
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="CameraAccess headless smoke test.")
+    parser = argparse.ArgumentParser(description="OakdCamera headless smoke test.")
     parser.add_argument("--fps", type=int, default=30, help="Target camera frame rate")
     parser.add_argument(
         "--log-every",
@@ -49,7 +49,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    camera = CameraAccess(fps=args.fps, resolution=(1920, 1080))
+    camera = OakdCamera(fps=args.fps, resolution=(1920, 1080))
 
     try:
         camera.start()

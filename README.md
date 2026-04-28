@@ -1,12 +1,18 @@
 # knot-losing-you
-Autonomous UGV that follows you around the boat park using OAK-D Lite and LiDAR. No sea legs required.
+This project builds an autonomous person-following rover for use in a marina environment. A Waveshare UGV Rover running on a Raspberry Pi 5 uses an OAK-D Lite camera and a 2D LiDAR to detect and track a target person, then drive to maintain a set following distance and heading. The system includes a full calibration pipeline (camera intrinsics, pan-tilt servo curve, LiDAR-to-camera extrinsic offset, and drive model), a safe control loop with mode switching and emergency stop, and a YOLO-based object detection stage that is currently being integrated to close the autonomy loop.
 
 ## **Check out my progress updates here:** ([`👉 Progress Updates 👈`](PROGRESS_UPDATES.md))
 
 ### Technical Specifications for This Project
+
+**Supplied separately:**
 - Raspberry Pi 5
-- Waveshare UGV Rover
 - OAK-D Lite
+
+**[Waveshare UGV Rover kit](https://www.waveshare.com/ugv-rover.htm) included:**
+- Waveshare UGV Rover (6WD chassis)
+- LDRobot D500 LiDAR
+- Waveshare Pan-Tilt Module
 
 ---
 

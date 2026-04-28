@@ -53,7 +53,7 @@ class Settings:
 
     def _resolve_model_path(self) -> Path:
         model_filename = str(self.model_config.get("model", ""))
-        return (self._root / "models" / model_filename).resolve()
+        return (self._root / "model" / model_filename).resolve()
 
     def _has_display(self) -> bool:
         """Return True if a display server is available for GUI output."""
@@ -103,6 +103,11 @@ class Settings:
     def recording_enabled(self) -> bool:
         """Whether to record the camera feed to disk."""
         return bool(self.pipeline_config.get("recording_enabled", False))
+
+    @property
+    def stream_port(self) -> int:
+        """HTTP port for the MJPEG stream endpoint. 0 disables streaming."""
+        return int(self.pipeline_config.get("stream_port", 0))
 
     @property
     def dev_or_pi(self) -> str:
@@ -186,6 +191,26 @@ class Settings:
     # ------------------------------------------------------------------
 
     @property
+    def _waveshare_rgb_cfg(self) -> dict[str, Any]:
+        return dict(self.sensor_config.get("waveshare_rgb") or {})
+
+    @property
+    def waveshare_camera_device_index(self) -> int:
+        """cv2.VideoCapture device index for the Waveshare RGB camera."""
+        return int(self._waveshare_rgb_cfg.get("device_index", 0))
+
+    @property
+    def waveshare_camera_fps(self) -> int:
+        """Target frame rate for the Waveshare RGB camera."""
+        return int(self._waveshare_rgb_cfg.get("fps", 30))
+
+    @property
+    def waveshare_camera_resolution(self) -> tuple[int, int]:
+        """Waveshare RGB camera resolution as (width, height)."""
+        res = self._waveshare_rgb_cfg.get("resolution", [1920, 1080])
+        return (int(res[0]), int(res[1]))
+
+    @property
     def _pan_tilt_servo_cfg(self) -> dict[str, Any]:
         return dict(self.sensor_config.get("pan_tilt_servo") or {})
 
@@ -206,6 +231,31 @@ class Settings:
         """Distance from pan-tilt rotation centre to calibration target (metres), or None."""
         v = self._pan_tilt_servo_cfg.get("calibration_target_distance_m")
         return float(v) if v is not None else None
+
+    @property
+    def pan_cmd_min_deg(self) -> float:
+        """Minimum pan servo command in degrees."""
+        return float(self._pan_tilt_servo_cfg.get("cmd_min", -45.0))
+
+    @property
+    def pan_cmd_max_deg(self) -> float:
+        """Maximum pan servo command in degrees."""
+        return float(self._pan_tilt_servo_cfg.get("cmd_max", 45.0))
+
+    @property
+    def pan_dead_band_pos_deg(self) -> float:
+        """Upper deadband threshold: heading errors at or below this are suppressed."""
+        return float(self._pan_tilt_servo_cfg.get("dead_band_pos_deg", 5.0))
+
+    @property
+    def pan_dead_band_neg_deg(self) -> float:
+        """Lower deadband threshold: heading errors at or above this are suppressed."""
+        return float(self._pan_tilt_servo_cfg.get("dead_band_neg_deg", -5.0))
+
+    @property
+    def pan_tilt_setpoint_deg(self) -> float:
+        """Fixed tilt servo setpoint in degrees used for horizontal projection correction."""
+        return float(self._pan_tilt_servo_cfg.get("tilt_setpoint_deg", 0.0))
 
     # ------------------------------------------------------------------
     # Rover drive calibration properties
