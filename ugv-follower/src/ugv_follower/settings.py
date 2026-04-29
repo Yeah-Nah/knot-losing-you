@@ -281,6 +281,26 @@ class Settings:
         return self.pan_tracking_dead_band_neg_deg
 
     @property
+    def pan_tracking_gain_kp(self) -> float:
+        """Proportional gain applied to corrected heading error before accumulation."""
+        return float(self._pan_tilt_servo_cfg.get("tracking_gain_kp", 0.4))
+
+    @property
+    def pan_tracking_delta_max_deg(self) -> float:
+        """Maximum per-cycle pan command change in degrees (slew rate cap)."""
+        return float(self._pan_tilt_servo_cfg.get("tracking_delta_max_deg", 2.5))
+
+    @property
+    def pan_tracking_hysteresis_enter_deg(self) -> float:
+        """Enter-hold threshold: suppress motion when |scaled error| <= this value."""
+        return float(self._pan_tilt_servo_cfg.get("tracking_hysteresis_enter_deg", 1.5))
+
+    @property
+    def pan_tracking_hysteresis_exit_deg(self) -> float:
+        """Exit-hold threshold: resume motion when |scaled error| > this value."""
+        return float(self._pan_tilt_servo_cfg.get("tracking_hysteresis_exit_deg", 3.0))
+
+    @property
     def pan_tilt_setpoint_deg(self) -> float:
         """Fixed tilt servo setpoint in degrees used for horizontal projection correction."""
         return float(self._pan_tilt_servo_cfg.get("tilt_setpoint_deg", 0.0))

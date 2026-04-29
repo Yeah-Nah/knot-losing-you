@@ -103,12 +103,21 @@ def clamp_pan(pan_deg: float, cmd_min_deg: float, cmd_max_deg: float) -> float:
 class PanController:
     """Converts a bounding-box centroid to an absolute pan servo command.
 
-    Maintains the last commanded pan position so the no-detection and deadband
+    Maintains the last commanded pan position so the no-detection and hold
     paths both produce a hardware hold (no new command issued).
 
     The detection centroid is assumed to come from the Waveshare RGB fisheye
     camera whose intrinsics (K, D) are read from the ``waveshare_rgb`` block
     in ``sensor_config.yaml``.
+
+    Three oscillation-reducing controls are applied in ``update()`` in this order:
+
+    1. Proportional gain (``gain_kp``) scales the corrected heading error before
+       accumulation to slow convergence and reduce overshoot.
+    2. Hysteresis deadband uses a stateful enter/exit threshold pair so the
+       controller cannot chatter at the deadband boundary.
+    3. Delta clamp (``delta_max_deg``) caps the per-cycle command change to
+       suppress large impulsive jumps from noisy detections.
 
     Parameters
     ----------
@@ -120,12 +129,17 @@ class PanController:
         Minimum pan servo command in degrees.
     cmd_max_deg : float
         Maximum pan servo command in degrees.
-    tracking_dead_band_pos_deg : float
-        Upper tracking deadband threshold in degrees; errors at or below this
-        are suppressed.
-    tracking_dead_band_neg_deg : float
-        Lower tracking deadband threshold in degrees; errors at or above this
-        are suppressed.
+    gain_kp : float
+        Proportional gain applied to corrected heading error before accumulation.
+        Values in (0, 1) slow convergence and reduce overshoot.
+    delta_max_deg : float
+        Maximum per-cycle pan command change in degrees (slew rate cap).
+    hysteresis_enter_deg : float
+        Enter-hold threshold in degrees; motion is suppressed when the scaled
+        heading error magnitude falls at or below this value.
+    hysteresis_exit_deg : float
+        Exit-hold threshold in degrees; motion resumes only when the scaled
+        heading error magnitude exceeds this value (must be >= hysteresis_enter_deg).
     tilt_deg : float
         Fixed camera tilt angle in degrees used for horizontal projection correction.
         Defaults to 0.0 (no correction). Hook for future dynamic tilt tracking.
@@ -137,25 +151,33 @@ class PanController:
         D: NDArray[np.float64],
         cmd_min_deg: float,
         cmd_max_deg: float,
-        tracking_dead_band_pos_deg: float,
-        tracking_dead_band_neg_deg: float,
+        gain_kp: float,
+        delta_max_deg: float,
+        hysteresis_enter_deg: float,
+        hysteresis_exit_deg: float,
         tilt_deg: float = 0.0,
     ) -> None:
         self._K = K
         self._D = D
         self._cmd_min_deg = cmd_min_deg
         self._cmd_max_deg = cmd_max_deg
-        self._tracking_dead_band_pos_deg = tracking_dead_band_pos_deg
-        self._tracking_dead_band_neg_deg = tracking_dead_band_neg_deg
+        self._gain_kp = gain_kp
+        self._delta_max_deg = delta_max_deg
+        self._hysteresis_enter_deg = hysteresis_enter_deg
+        self._hysteresis_exit_deg = hysteresis_exit_deg
         self._tilt_deg = tilt_deg
         self._current_pan_deg: float = 0.0
+        self._in_hold: bool = False
         logger.debug(
             "PanController initialised "
-            "(cmd=[{}, {}]°, tracking_deadband=[{}, {}]°, tilt={:.1f}°).",
+            "(cmd=[{}, {}]°, kp={}, delta_max={:.1f}°, "
+            "hysteresis=[enter={:.1f}°, exit={:.1f}°], tilt={:.1f}°).",
             cmd_min_deg,
             cmd_max_deg,
-            tracking_dead_band_neg_deg,
-            tracking_dead_band_pos_deg,
+            gain_kp,
+            delta_max_deg,
+            hysteresis_enter_deg,
+            hysteresis_exit_deg,
             tilt_deg,
         )
 
@@ -172,7 +194,7 @@ class PanController:
         """Compute a pan command from a detection centroid.
 
         Returns the new absolute pan command in degrees, or ``None`` when the
-        pan position should be held (no detection or heading within deadband).
+        pan position should be held (no detection or hysteresis hold active).
 
         Parameters
         ----------
@@ -199,30 +221,44 @@ class PanController:
         )
         corrected = apply_tilt_correction(heading_deg, self._tilt_deg)
 
-        if within_deadband(
-            corrected,
-            self._tracking_dead_band_pos_deg,
-            self._tracking_dead_band_neg_deg,
-        ):
-            logger.debug(
-                "Pan: heading={:.2f}° within deadband [{:.1f}°, {:.1f}°] — holding.",
-                corrected,
-                self._tracking_dead_band_neg_deg,
-                self._tracking_dead_band_pos_deg,
-            )
-            return None
-        target_pan = self._current_pan_deg + corrected
-        new_pan = clamp_pan(
-            target_pan,
-            self._cmd_min_deg,
-            self._cmd_max_deg,
-        )
+        # 1. Proportional gain: scale heading error before accumulation.
+        scaled = self._gain_kp * corrected
+
+        # 2. Hysteresis deadband: stateful enter/exit threshold guard.
+        if self._in_hold:
+            if not within_deadband(
+                scaled, self._hysteresis_exit_deg, -self._hysteresis_exit_deg
+            ):
+                self._in_hold = False
+            else:
+                logger.debug(
+                    "Pan: in hold, |scaled|={:.2f}° < exit={:.1f}° — holding.",
+                    abs(scaled),
+                    self._hysteresis_exit_deg,
+                )
+                return None
+        else:
+            if within_deadband(
+                scaled, self._hysteresis_enter_deg, -self._hysteresis_enter_deg
+            ):
+                self._in_hold = True
+                logger.debug(
+                    "Pan: entering hold, |scaled|={:.2f}° <= enter={:.1f}°.",
+                    abs(scaled),
+                    self._hysteresis_enter_deg,
+                )
+                return None
+
+        # 3. Delta clamp: cap per-cycle command change (slew rate limit).
+        delta = max(-self._delta_max_deg, min(self._delta_max_deg, scaled))
+        target_pan = self._current_pan_deg + delta
+        new_pan = clamp_pan(target_pan, self._cmd_min_deg, self._cmd_max_deg)
         self._current_pan_deg = new_pan
         logger.debug(
-            "Pan: heading={:.2f}° + current_pan={:.2f}° → pan_cmd={:.2f}°.",
+            "Pan: corrected={:.2f}°, scaled={:.2f}°, delta={:.2f}°, pan_cmd={:.2f}°.",
             corrected,
-            target_pan - corrected,
-            corrected,
+            scaled,
+            delta,
             new_pan,
         )
         return new_pan
