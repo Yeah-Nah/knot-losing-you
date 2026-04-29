@@ -51,10 +51,10 @@ pan_tilt_servo:
   sweep_min_deg: -45.0
   sweep_max_deg: 45.0
   # Oscillation-reducing control parameters (see pan_control_stops_and_curves_theory.md)
-  tracking_gain_kp: 0.4               # Proportional gain on corrected heading error (0–1)
-  tracking_delta_max_deg: 2.5         # Max per-cycle pan command change in degrees
-  tracking_hysteresis_enter_deg: 1.5  # Enter-hold threshold in degrees
-  tracking_hysteresis_exit_deg: 3.0   # Exit-hold threshold in degrees
+  tracking_gain_kp: 0.25               # Proportional gain on corrected heading error (0–1)
+  tracking_delta_max_deg: 1.25         # Max per-cycle pan command change in degrees
+  tracking_hysteresis_enter_deg: 2.25  # Enter-hold threshold in degrees
+  tracking_hysteresis_exit_deg: 4.5   # Exit-hold threshold in degrees
   dead_band_pos_deg: 1.0
   dead_band_neg_deg: -1.0
   cmd_min: -45.0
