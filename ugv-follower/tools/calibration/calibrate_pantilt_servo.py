@@ -911,14 +911,10 @@ def _load_config(
             "pan_tilt_servo.precondition_settle_time_s must be non-negative."
         )
 
-    tracking_hysteresis_enter = float(
-        pt_cfg.get("tracking_hysteresis_enter_deg", 1.5)
-    )
+    tracking_hysteresis_enter = float(pt_cfg.get("tracking_hysteresis_enter_deg", 1.5))
     tracking_hysteresis_exit = float(pt_cfg.get("tracking_hysteresis_exit_deg", 3.0))
     if tracking_hysteresis_enter < 0:
-        raise ValueError(
-            "pan_tilt_servo.tracking_hysteresis_enter_deg must be >= 0."
-        )
+        raise ValueError("pan_tilt_servo.tracking_hysteresis_enter_deg must be >= 0.")
     if tracking_hysteresis_exit < tracking_hysteresis_enter:
         raise ValueError(
             "pan_tilt_servo.tracking_hysteresis_exit_deg must be >= "
@@ -1605,7 +1601,9 @@ class CalibrationOrchestrator:
         model["tracking_hysteresis_enter_deg"] = (
             self._config.tracking_hysteresis_enter_deg
         )
-        model["tracking_hysteresis_exit_deg"] = self._config.tracking_hysteresis_exit_deg
+        model["tracking_hysteresis_exit_deg"] = (
+            self._config.tracking_hysteresis_exit_deg
+        )
         model["calibrated_at"] = datetime.now().isoformat(timespec="seconds")
         try:
             model["raw_csv"] = str(self._csv_path.relative_to(get_project_root()))

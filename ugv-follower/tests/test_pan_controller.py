@@ -44,8 +44,8 @@ _CMD_MIN = -45.0
 _CMD_MAX = 45.0
 _DB_POS = 5.0
 _DB_NEG = -5.0
-_GAIN_KP = 1.0         # unity gain by default so existing tests are unaffected
-_DELTA_MAX = 90.0      # large by default so slew limit is not the constraint
+_GAIN_KP = 1.0  # unity gain by default so existing tests are unaffected
+_DELTA_MAX = 90.0  # large by default so slew limit is not the constraint
 _HYS_ENTER = 1.5
 _HYS_EXIT = 3.0
 
