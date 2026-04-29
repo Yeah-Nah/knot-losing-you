@@ -243,44 +243,6 @@ class Settings:
         return float(self._pan_tilt_servo_cfg.get("cmd_max", 45.0))
 
     @property
-    def pan_servo_dead_band_pos_deg(self) -> float:
-        """Upper servo command deadband threshold from pan-tilt calibration."""
-        return float(self._pan_tilt_servo_cfg.get("dead_band_pos_deg", 5.0))
-
-    @property
-    def pan_servo_dead_band_neg_deg(self) -> float:
-        """Lower servo command deadband threshold from pan-tilt calibration."""
-        return float(self._pan_tilt_servo_cfg.get("dead_band_neg_deg", -5.0))
-
-    @property
-    def pan_tracking_dead_band_pos_deg(self) -> float:
-        """Upper tracking deadband threshold for centre-of-frame hold logic."""
-        return float(
-            self._pan_tilt_servo_cfg.get(
-                "tracking_deadband_pos_deg", self.pan_servo_dead_band_pos_deg
-            )
-        )
-
-    @property
-    def pan_tracking_dead_band_neg_deg(self) -> float:
-        """Lower tracking deadband threshold for centre-of-frame hold logic."""
-        return float(
-            self._pan_tilt_servo_cfg.get(
-                "tracking_deadband_neg_deg", self.pan_servo_dead_band_neg_deg
-            )
-        )
-
-    @property
-    def pan_dead_band_pos_deg(self) -> float:
-        """Compatibility alias for ``pan_tracking_dead_band_pos_deg``."""
-        return self.pan_tracking_dead_band_pos_deg
-
-    @property
-    def pan_dead_band_neg_deg(self) -> float:
-        """Compatibility alias for ``pan_tracking_dead_band_neg_deg``."""
-        return self.pan_tracking_dead_band_neg_deg
-
-    @property
     def pan_tracking_gain_kp(self) -> float:
         """Proportional gain applied to corrected heading error before accumulation."""
         return float(self._pan_tilt_servo_cfg.get("tracking_gain_kp", 0.4))

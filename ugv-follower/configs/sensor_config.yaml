@@ -50,9 +50,6 @@ pan_tilt_servo:
   tilt_setpoint_deg: 0.0
   sweep_min_deg: -45.0
   sweep_max_deg: 45.0
-  # Superseded by hysteresis parameters below; retained for reference only.
-  tracking_deadband_pos_deg: 5.0
-  tracking_deadband_neg_deg: -5.0
   # Oscillation-reducing control parameters (see pan_control_stops_and_curves_theory.md)
   tracking_gain_kp: 0.4               # Proportional gain on corrected heading error (0–1)
   tracking_delta_max_deg: 2.5         # Max per-cycle pan command change in degrees

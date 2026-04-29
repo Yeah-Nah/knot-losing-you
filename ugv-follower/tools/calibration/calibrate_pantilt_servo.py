@@ -222,8 +222,8 @@ class PanTiltCalConfig:
     calibration_target_distance_m: float
     precondition_cycles: int
     precondition_settle_time_s: float  # dwell time used only during warmup passes
-    tracking_deadband_pos_deg: float
-    tracking_deadband_neg_deg: float
+    tracking_hysteresis_enter_deg: float
+    tracking_hysteresis_exit_deg: float
 
 
 # ---------------------------------------------------------------------------
@@ -911,8 +911,19 @@ def _load_config(
             "pan_tilt_servo.precondition_settle_time_s must be non-negative."
         )
 
-    tracking_deadband_pos = float(pt_cfg.get("tracking_deadband_pos_deg", 5.0))
-    tracking_deadband_neg = float(pt_cfg.get("tracking_deadband_neg_deg", -5.0))
+    tracking_hysteresis_enter = float(
+        pt_cfg.get("tracking_hysteresis_enter_deg", 1.5)
+    )
+    tracking_hysteresis_exit = float(pt_cfg.get("tracking_hysteresis_exit_deg", 3.0))
+    if tracking_hysteresis_enter < 0:
+        raise ValueError(
+            "pan_tilt_servo.tracking_hysteresis_enter_deg must be >= 0."
+        )
+    if tracking_hysteresis_exit < tracking_hysteresis_enter:
+        raise ValueError(
+            "pan_tilt_servo.tracking_hysteresis_exit_deg must be >= "
+            "pan_tilt_servo.tracking_hysteresis_enter_deg."
+        )
 
     sign_override_raw = pt_cfg.get("sign_override")
     sign_override: float | None = (
@@ -983,8 +994,8 @@ def _load_config(
         calibration_target_distance_m=cal_target_dist,
         precondition_cycles=precondition_cycles_raw,
         precondition_settle_time_s=precondition_settle_time,
-        tracking_deadband_pos_deg=tracking_deadband_pos,
-        tracking_deadband_neg_deg=tracking_deadband_neg,
+        tracking_hysteresis_enter_deg=tracking_hysteresis_enter,
+        tracking_hysteresis_exit_deg=tracking_hysteresis_exit,
     )
 
 
@@ -1591,8 +1602,10 @@ class CalibrationOrchestrator:
             self._config.camera_forward_offset_m,
             self._config.calibration_target_distance_m,
         )
-        model["tracking_deadband_pos_deg"] = self._config.tracking_deadband_pos_deg
-        model["tracking_deadband_neg_deg"] = self._config.tracking_deadband_neg_deg
+        model["tracking_hysteresis_enter_deg"] = (
+            self._config.tracking_hysteresis_enter_deg
+        )
+        model["tracking_hysteresis_exit_deg"] = self._config.tracking_hysteresis_exit_deg
         model["calibrated_at"] = datetime.now().isoformat(timespec="seconds")
         try:
             model["raw_csv"] = str(self._csv_path.relative_to(get_project_root()))
@@ -1844,22 +1857,22 @@ def _run_replay(
     noise_floor_deg: float,
     camera_forward_offset_m: float,
     calibration_target_distance_m: float,
-    tracking_deadband_pos_deg: float,
-    tracking_deadband_neg_deg: float,
+    tracking_hysteresis_enter_deg: float,
+    tracking_hysteresis_exit_deg: float,
     save: bool,
 ) -> None:
     """Load an existing CSV, refit all models, print a summary, optionally save.
 
     Parameters
     ----------
-    csv_path                    : Path   Path to the raw CSV file.
-    sensor_config_path          : Path   Destination for sensor_config.yaml if ``save=True``.
-    noise_floor_deg             : float  Passed to ``analyse_sweep``.
-    camera_forward_offset_m     : float  Geometry metadata recorded in output.
+    csv_path                      : Path   Path to the raw CSV file.
+    sensor_config_path            : Path   Destination for sensor_config.yaml if ``save=True``.
+    noise_floor_deg               : float  Passed to ``analyse_sweep``.
+    camera_forward_offset_m       : float  Geometry metadata recorded in output.
     calibration_target_distance_m : float  Geometry metadata recorded in output.
-    tracking_deadband_pos_deg     : float  Runtime tracking deadband (+deg).
-    tracking_deadband_neg_deg     : float  Runtime tracking deadband (-deg).
-    save                        : bool   If True, write results to sensor_config.yaml.
+    tracking_hysteresis_enter_deg : float  Runtime hysteresis enter threshold (deg).
+    tracking_hysteresis_exit_deg  : float  Runtime hysteresis exit threshold (deg).
+    save                          : bool   If True, write results to sensor_config.yaml.
     """
     if not csv_path.exists():
         logger.error(f"CSV not found: {csv_path}")
@@ -1911,8 +1924,8 @@ def _run_replay(
         if not sensor_config_path.exists():
             logger.error(f"Sensor config not found: {sensor_config_path}")
             sys.exit(1)
-        model["tracking_deadband_pos_deg"] = tracking_deadband_pos_deg
-        model["tracking_deadband_neg_deg"] = tracking_deadband_neg_deg
+        model["tracking_hysteresis_enter_deg"] = tracking_hysteresis_enter_deg
+        model["tracking_hysteresis_exit_deg"] = tracking_hysteresis_exit_deg
         model["calibrated_at"] = datetime.now().isoformat(timespec="seconds")
         try:
             model["raw_csv"] = str(csv_path.relative_to(get_project_root()))
@@ -2043,11 +2056,11 @@ def _run_replay_mode(args: argparse.Namespace, sensor_config_path: Path) -> None
         noise_floor_deg=noise_floor,
         camera_forward_offset_m=float(_fwd_replay),
         calibration_target_distance_m=float(_dist_replay),
-        tracking_deadband_pos_deg=float(
-            pt_cfg_replay.get("tracking_deadband_pos_deg", 5.0)
+        tracking_hysteresis_enter_deg=float(
+            pt_cfg_replay.get("tracking_hysteresis_enter_deg", 1.5)
         ),
-        tracking_deadband_neg_deg=float(
-            pt_cfg_replay.get("tracking_deadband_neg_deg", -5.0)
+        tracking_hysteresis_exit_deg=float(
+            pt_cfg_replay.get("tracking_hysteresis_exit_deg", 3.0)
         ),
         save=args.save,
     )
