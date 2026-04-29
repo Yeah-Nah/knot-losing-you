@@ -43,6 +43,15 @@ $$
 
 the loop behaves like aggressive accumulation in command space. With delay and hysteresis, the measured error can flip sign after a delayed response, and the system over-corrects in the opposite direction. Repetition yields oscillation.
 
+| Symbol | Meaning |
+|--------|---------|
+| $e_k$ | Angular heading error at time step $k$ — difference between desired and actual pan angle |
+| $\theta^*$ | Target pan angle setpoint (desired physical angle, usually 0° meaning centred) |
+| $\theta_k$ | Actual physical pan angle at step $k$ |
+| $u_k$ | Pan command sent to the servo at step $k$ |
+| $u_{k-1}$ | Pan command from the previous step |
+| $\Delta u_k$ | Incremental change added to the command at step $k$ |
+
 ## 4. Stop/Curve 1: Proportional Gain Below Unity
 ### What it is
 Scale heading correction by a gain:
@@ -50,6 +59,12 @@ Scale heading correction by a gain:
 $$
 \Delta u_k = K_p e_k, \quad 0 < K_p < 1
 $$
+
+| Symbol | Meaning |
+|--------|---------|
+| $\Delta u_k$ | Pan command increment at step $k$ |
+| $K_p$ | Proportional gain — a scalar in $(0, 1)$ that reduces the fraction of error applied per cycle |
+| $e_k$ | Heading error at step $k$ |
 
 ### Theory
 Reducing effective gain increases stability margin in delayed systems:
@@ -67,6 +82,14 @@ $$
 \Delta u_k = \operatorname{clip}(K_p e_k, -\Delta_{\max}, \Delta_{\max})
 $$
 
+| Symbol | Meaning |
+|--------|---------|
+| $\Delta u_k$ | Pan command increment at step $k$ |
+| $K_p$ | Proportional gain |
+| $e_k$ | Heading error at step $k$ |
+| $\Delta_{\max}$ | Maximum permitted command change per cycle — the slew rate cap |
+| $\operatorname{clip}(x, a, b)$ | Clamp $x$ to the range $[a, b]$; returns $a$ if $x < a$, $b$ if $x > b$, otherwise $x$ |
+
 ### Theory
 A slew limiter is a nonlinear safety stop against impulsive corrections:
 1. Suppresses large jumps caused by transient detection noise.
@@ -82,6 +105,13 @@ Filter measured heading error before control:
 $$
 e_k^f = \alpha e_k + (1-\alpha)e_{k-1}^f, \quad 0 < \alpha < 1
 $$
+
+| Symbol | Meaning |
+|--------|---------|
+| $e_k^f$ | Filtered heading error at step $k$ |
+| $\alpha$ | Filter coefficient in $(0, 1)$ — controls the blend between new measurement and previous estimate; smaller values give heavier smoothing |
+| $e_k$ | Raw (unfiltered) heading error at step $k$ |
+| $e_{k-1}^f$ | Filtered error from the previous step |
 
 ### Theory
 Detection jitter is largely high-frequency disturbance. Filtering:
@@ -167,6 +197,20 @@ $$
 $$
 u_k = \operatorname{clip}(u_{k-1} + \Delta u_k, u_{\min}, u_{\max})
 $$
+
+| Symbol | Meaning |
+|--------|---------|
+| $e_k^f$ | Filtered heading error at step $k$ |
+| $\alpha$ | Low-pass filter coefficient |
+| $e_k$ | Raw heading error at step $k$ |
+| $e_{k-1}^f$ | Filtered error from the previous step |
+| $\Delta u_k$ | Pan command increment at step $k$ |
+| $K_p$ | Proportional gain |
+| $\Delta_{\max}$ | Per-cycle slew rate cap |
+| $\operatorname{clip}(x, a, b)$ | Clamp $x$ to $[a, b]$ |
+| $u_k$ | Pan command sent at step $k$ |
+| $u_{k-1}$ | Pan command from the previous step |
+| $u_{\min},\, u_{\max}$ | Hardware pan travel limits (e.g. $-45°$ and $+45°$) |
 
 Then apply direction-aware inverse servo-curve mapping before transmission.
 
