@@ -50,6 +50,8 @@ pan_tilt_servo:
   tilt_setpoint_deg: 0.0
   sweep_min_deg: -45.0
   sweep_max_deg: 45.0
+  tracking_deadband_pos_deg: 5.0
+  tracking_deadband_neg_deg: -5.0
   dead_band_pos_deg: 1.0
   dead_band_neg_deg: -1.0
   cmd_min: -45.0

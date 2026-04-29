@@ -120,10 +120,12 @@ class PanController:
         Minimum pan servo command in degrees.
     cmd_max_deg : float
         Maximum pan servo command in degrees.
-    dead_band_pos_deg : float
-        Upper deadband threshold in degrees; errors at or below this are suppressed.
-    dead_band_neg_deg : float
-        Lower deadband threshold in degrees; errors at or above this are suppressed.
+    tracking_dead_band_pos_deg : float
+        Upper tracking deadband threshold in degrees; errors at or below this
+        are suppressed.
+    tracking_dead_band_neg_deg : float
+        Lower tracking deadband threshold in degrees; errors at or above this
+        are suppressed.
     tilt_deg : float
         Fixed camera tilt angle in degrees used for horizontal projection correction.
         Defaults to 0.0 (no correction). Hook for future dynamic tilt tracking.
@@ -135,24 +137,25 @@ class PanController:
         D: NDArray[np.float64],
         cmd_min_deg: float,
         cmd_max_deg: float,
-        dead_band_pos_deg: float,
-        dead_band_neg_deg: float,
+        tracking_dead_band_pos_deg: float,
+        tracking_dead_band_neg_deg: float,
         tilt_deg: float = 0.0,
     ) -> None:
         self._K = K
         self._D = D
         self._cmd_min_deg = cmd_min_deg
         self._cmd_max_deg = cmd_max_deg
-        self._dead_band_pos_deg = dead_band_pos_deg
-        self._dead_band_neg_deg = dead_band_neg_deg
+        self._tracking_dead_band_pos_deg = tracking_dead_band_pos_deg
+        self._tracking_dead_band_neg_deg = tracking_dead_band_neg_deg
         self._tilt_deg = tilt_deg
         self._current_pan_deg: float = 0.0
         logger.debug(
-            "PanController initialised (cmd=[{}, {}]°, deadband=[{}, {}]°, tilt={:.1f}°).",
+            "PanController initialised "
+            "(cmd=[{}, {}]°, tracking_deadband=[{}, {}]°, tilt={:.1f}°).",
             cmd_min_deg,
             cmd_max_deg,
-            dead_band_neg_deg,
-            dead_band_pos_deg,
+            tracking_dead_band_neg_deg,
+            tracking_dead_band_pos_deg,
             tilt_deg,
         )
 
@@ -196,12 +199,16 @@ class PanController:
         )
         corrected = apply_tilt_correction(heading_deg, self._tilt_deg)
 
-        if within_deadband(corrected, self._dead_band_pos_deg, self._dead_band_neg_deg):
+        if within_deadband(
+            corrected,
+            self._tracking_dead_band_pos_deg,
+            self._tracking_dead_band_neg_deg,
+        ):
             logger.debug(
                 "Pan: heading={:.2f}° within deadband [{:.1f}°, {:.1f}°] — holding.",
                 corrected,
-                self._dead_band_neg_deg,
-                self._dead_band_pos_deg,
+                self._tracking_dead_band_neg_deg,
+                self._tracking_dead_band_pos_deg,
             )
             return None
         target_pan = self._current_pan_deg + corrected

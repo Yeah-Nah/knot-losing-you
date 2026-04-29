@@ -43,6 +43,8 @@ pan_tilt_servo:
   precondition_settle_time_s: 0.3      # Dwell time (seconds) used only during warmup/precondition passes.
                                         # Defaults to settle_time_s when absent. Set lower than settle_time_s
                                         # to speed up the warmup sweep without affecting measurement timing.
+  tracking_deadband_pos_deg: 5.0       # Runtime centre-of-frame hold threshold (+deg), stored to sensor_config.yaml on save
+  tracking_deadband_neg_deg: -5.0      # Runtime centre-of-frame hold threshold (-deg), stored to sensor_config.yaml on save
 
 # Rover drive calibration — used by calibrate_ugv_drive.py
 ugv_drive:

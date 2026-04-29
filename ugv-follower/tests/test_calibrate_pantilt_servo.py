@@ -620,6 +620,8 @@ def _make_minimal_cal_cfg(
         "camera_forward_offset_m": 0.0665,
         "calibration_target_distance_m": 2.7,
         "pan_command_schedules_deg": [[-10.0, 0.0, 10.0]],
+        "tracking_deadband_pos_deg": 5.0,
+        "tracking_deadband_neg_deg": -5.0,
     }
     if precondition_cycles is not None:
         pt["precondition_cycles"] = precondition_cycles
@@ -702,6 +704,8 @@ def _make_sweep_config(
         calibration_target_distance_m=2.0,
         precondition_cycles=precondition_cycles,
         precondition_settle_time_s=precondition_settle_time_s,
+        tracking_deadband_pos_deg=5.0,
+        tracking_deadband_neg_deg=-5.0,
     )
 
 

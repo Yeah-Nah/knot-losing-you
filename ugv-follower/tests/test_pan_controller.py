@@ -52,8 +52,8 @@ def _make_controller(tilt_deg: float = 0.0) -> PanController:
         D=_D,
         cmd_min_deg=_CMD_MIN,
         cmd_max_deg=_CMD_MAX,
-        dead_band_pos_deg=_DB_POS,
-        dead_band_neg_deg=_DB_NEG,
+        tracking_dead_band_pos_deg=_DB_POS,
+        tracking_dead_band_neg_deg=_DB_NEG,
         tilt_deg=tilt_deg,
     )
 
