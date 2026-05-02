@@ -25,6 +25,8 @@ from typing import Any
 import serial
 from loguru import logger
 
+from ugv_follower.utils.camera_preflight import ensure_character_device_available
+
 _VOLTAGE_KEYS = ("v", "V", "battery", "bat", "voltage", "vol", "Vbat", "vbat")
 _WARN_LOW = 10.5
 _FULL = 12.6
@@ -61,6 +63,15 @@ def _print_response(tag: str, data: dict[str, Any]) -> bool:
 
 def listen(port: str, duration: float) -> None:
     logger.info(f"Opening {port} at 115200 baud — listening for {duration}s...")
+    try:
+        ensure_character_device_available(port, device_label="Serial port")
+    except RuntimeError as exc:
+        logger.error(
+            f"{exc}\n"
+            "If another process holds the port (e.g. the ugv_rpi service), stop it first:\n"
+            "    sudo systemctl stop ugv_rpi"
+        )
+        return
     try:
         ser_conn = serial.Serial(port, 115200, timeout=1)
     except serial.SerialException as exc:

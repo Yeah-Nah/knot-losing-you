@@ -1,8 +1,8 @@
-"""Camera-device preflight checks for V4L2 workflows.
+"""Character-device preflight checks for hardware workflows.
 
-Provides a single place to detect whether a camera device path is already held
-open by another process and, when enabled, attempt to release it before a
-script starts ``cv2.VideoCapture``.
+Provides a single place to detect whether a device path is already held open by
+another process and, when enabled, attempt to release it before a script tries
+to open the device.
 """
 
 from __future__ import annotations
@@ -139,7 +139,7 @@ def _release_device(device_path: str, release_command: list[str]) -> None:
         )
 
 
-def _require_character_device(device_path: str) -> None:
+def _require_character_device(device_path: str, *, device_label: str) -> None:
     """Validate that *device_path* exists and is a character device node.
 
     Parameters
@@ -156,20 +156,92 @@ def _require_character_device(device_path: str) -> None:
         st = os.stat(device_path)
     except FileNotFoundError as exc:
         raise RuntimeError(
-            f"Camera device node not found: {device_path}. "
-            "Check camera connection and configured device path."
+            f"{device_label} node not found: {device_path}. "
+            "Check the connection and configured device path."
         ) from exc
     except PermissionError as exc:
         raise RuntimeError(
-            f"Cannot access camera device node: {device_path} (permission denied)."
+            f"Cannot access {device_label.lower()} node: {device_path} "
+            "(permission denied)."
         ) from exc
     except OSError as exc:
         raise RuntimeError(
-            f"Failed to access camera device node {device_path}: {exc}"
+            f"Failed to access {device_label.lower()} node {device_path}: {exc}"
         ) from exc
 
     if not stat.S_ISCHR(st.st_mode):
-        raise RuntimeError(f"Camera path is not a character device: {device_path}")
+        raise RuntimeError(
+            f"{device_label} path is not a character device: {device_path}"
+        )
+
+
+def ensure_character_device_available(
+    device_path: str,
+    *,
+    auto_release: bool = True,
+    release_command: list[str] | None = None,
+    settle_time_s: float = 0.25,
+    device_label: str = "Device",
+) -> None:
+    """Ensure a character device can be opened by this process.
+
+    Parameters
+    ----------
+    device_path : str
+        Device file path (for example, ``/dev/video0`` or ``/dev/ttyAMA0``).
+    auto_release : bool, default=True
+        Whether to attempt terminating holder processes automatically.
+    release_command : list[str] | None, default=None
+        Optional command prefix used to release the device. When ``None``,
+        defaults to ``["fuser", "-k"]``.
+    settle_time_s : float, default=0.25
+        Delay after release before re-checking holders.
+    device_label : str, default="Device"
+        Human-readable label used in logs and error messages.
+
+    Raises
+    ------
+    RuntimeError
+        If the device is busy and cannot be released, or if auto-release is
+        disabled while holders are present.
+    """
+    if os.name != "posix":
+        logger.debug(f"{device_label} preflight skipped on non-posix OS.")
+        return
+
+    _require_character_device(device_path, device_label=device_label)
+
+    holders = _find_device_holders(device_path)
+    if not holders:
+        logger.debug(f"{device_label} preflight: {device_path} is available.")
+        return
+
+    holder_desc = ", ".join(_describe_pid(pid) for pid in holders)
+    logger.warning(f"{device_label} {device_path} is busy (holders: {holder_desc}).")
+
+    if not auto_release:
+        raise RuntimeError(
+            f"{device_label} {device_path} is busy (holders: {holder_desc})."
+        )
+
+    command = (
+        list(release_command)
+        if release_command is not None
+        else list(_DEFAULT_RELEASE_COMMAND)
+    )
+    logger.info(f"Attempting to release {device_path} via: {' '.join(command)}")
+    _release_device(device_path, command)
+
+    time.sleep(max(0.0, settle_time_s))
+    remaining = _find_device_holders(device_path)
+    if remaining:
+        remaining_desc = ", ".join(_describe_pid(pid) for pid in remaining)
+        raise RuntimeError(
+            f"{device_label} {device_path} is still busy after release attempt "
+            f"(holders: {remaining_desc})."
+        )
+
+    logger.info(f"{device_label} preflight: released busy holder(s) for {device_path}.")
 
 
 def ensure_camera_device_available(
@@ -199,40 +271,10 @@ def ensure_camera_device_available(
         If the device is busy and cannot be released, or if auto-release is
         disabled while holders are present.
     """
-    if os.name != "posix":
-        logger.debug("Camera preflight skipped on non-posix OS.")
-        return
-
-    _require_character_device(device_path)
-
-    holders = _find_device_holders(device_path)
-    if not holders:
-        logger.debug(f"Camera preflight: {device_path} is available.")
-        return
-
-    holder_desc = ", ".join(_describe_pid(pid) for pid in holders)
-    logger.warning(f"Camera device {device_path} is busy (holders: {holder_desc}).")
-
-    if not auto_release:
-        raise RuntimeError(
-            f"Camera device {device_path} is busy (holders: {holder_desc})."
-        )
-
-    command = (
-        list(release_command)
-        if release_command is not None
-        else list(_DEFAULT_RELEASE_COMMAND)
+    ensure_character_device_available(
+        device_path,
+        auto_release=auto_release,
+        release_command=release_command,
+        settle_time_s=settle_time_s,
+        device_label="Camera device",
     )
-    logger.info(f"Attempting to release {device_path} via: {' '.join(command)}")
-    _release_device(device_path, command)
-
-    time.sleep(max(0.0, settle_time_s))
-    remaining = _find_device_holders(device_path)
-    if remaining:
-        remaining_desc = ", ".join(_describe_pid(pid) for pid in remaining)
-        raise RuntimeError(
-            f"Camera device {device_path} is still busy after release attempt "
-            f"(holders: {remaining_desc})."
-        )
-
-    logger.info(f"Camera preflight: released busy holder(s) for {device_path}.")
