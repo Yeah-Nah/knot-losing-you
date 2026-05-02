@@ -72,7 +72,7 @@ Reducing effective gain increases stability margin in delayed systems:
 2. Near-center overshoot is reduced.
 3. Convergence becomes smoother rather than bang-like.
 
-Practical note: start conservatively (for example, equivalent behavior around 0.25 to 0.5) and increase only until response is acceptable without sustained oscillation.
+Practical note: start conservatively (for example, equivalent behaviour around 0.25 to 0.5) and increase only until response is acceptable without sustained oscillation.
 
 ## 5. Stop/Curve 2: Per-Update Slew-Rate (Delta) Limit
 ### What it is
@@ -252,7 +252,7 @@ Observed motion patterns that diagnose which mechanism is missing or mis-tuned.
 ### Theory
 1. Rapid left-right ping-pong near center: gain too high and/or deadband too narrow.
 2. Sluggish delayed convergence: gain too low or filtering too strong.
-3. Different behavior left versus right: uncorrected servo hysteresis/nonlinearity.
+3. Different behaviour left versus right: uncorrected servo hysteresis/nonlinearity.
 4. Large jumps after noisy detections: missing or weak delta clamp.
 5. Chatter at deadband edge: single-threshold deadband where hysteresis is required.
 
@@ -269,4 +269,4 @@ Pan oscillation in vision-based tracking is usually a control-dynamics issue, no
 5. Compensate actuator nonlinearity and directional asymmetry.
 6. Shape reversals and actuator motion profile.
 
-This layered approach converts unstable target chasing into stable convergence with predictable behavior.
+This layered approach converts unstable target chasing into stable convergence with predictable behaviour.

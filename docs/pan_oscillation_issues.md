@@ -36,7 +36,7 @@ On a Pi running yolo11n this can easily push cycle times to 200–400 ms. Every 
 
 ---
 
-## Issue 2 — Stale camera frames (no V4L2 buffer-size cap)
+## Issue 2 — Stale camera frames (no V4L2 buffer-size cap) - COMPLETE
 
 **File:** `ugv-follower/src/ugv_follower/perception/waveshare_camera.py`
 

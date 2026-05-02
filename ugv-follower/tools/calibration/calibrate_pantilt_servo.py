@@ -841,6 +841,26 @@ def _validate_geometry(
         )
 
 
+def _validate_hysteresis(enter_deg: float, exit_deg: float) -> None:
+    """Validate tracking hysteresis parameters.
+
+    Raises
+    ------
+    ValueError
+        If any constraint is violated.
+    """
+    if enter_deg < 0:
+        raise ValueError(
+            f"pan_tilt_servo.tracking_hysteresis_enter_deg must be >= 0, "
+            f"got {enter_deg}."
+        )
+    if exit_deg < enter_deg:
+        raise ValueError(
+            f"pan_tilt_servo.tracking_hysteresis_exit_deg must be >= "
+            f"tracking_hysteresis_enter_deg ({enter_deg}), got {exit_deg}."
+        )
+
+
 def _extract_intrinsics(cfg: dict[str, Any]) -> tuple[float, float, float]:
     """Return (cx, cy, fx) from ``waveshare_rgb.camera_matrix``.
 
@@ -913,13 +933,7 @@ def _load_config(
 
     tracking_hysteresis_enter = float(pt_cfg.get("tracking_hysteresis_enter_deg", 1.5))
     tracking_hysteresis_exit = float(pt_cfg.get("tracking_hysteresis_exit_deg", 3.0))
-    if tracking_hysteresis_enter < 0:
-        raise ValueError("pan_tilt_servo.tracking_hysteresis_enter_deg must be >= 0.")
-    if tracking_hysteresis_exit < tracking_hysteresis_enter:
-        raise ValueError(
-            "pan_tilt_servo.tracking_hysteresis_exit_deg must be >= "
-            "pan_tilt_servo.tracking_hysteresis_enter_deg."
-        )
+    _validate_hysteresis(tracking_hysteresis_enter, tracking_hysteresis_exit)
 
     sign_override_raw = pt_cfg.get("sign_override")
     sign_override: float | None = (
@@ -1997,6 +2011,66 @@ def _build_arg_parser() -> argparse.ArgumentParser:
 # ---------------------------------------------------------------------------
 
 
+@dataclass(frozen=True)
+class _ReplayConfig:
+    noise_floor_deg: float
+    camera_forward_offset_m: float
+    calibration_target_distance_m: float
+    tracking_hysteresis_enter_deg: float
+    tracking_hysteresis_exit_deg: float
+
+
+def _load_replay_config(
+    cal_cfg: dict[str, Any],
+    cal_config_path: Path,
+    args: argparse.Namespace,
+) -> _ReplayConfig:
+    """Parse and validate replay-mode parameters from ``calibration_config.yaml``.
+
+    Raises
+    ------
+    ValueError
+        If any required field is missing or any constraint is violated.
+    """
+    pt_cfg: dict[str, Any] = cal_cfg.get("pan_tilt_servo", {})
+    shared_cfg: dict[str, Any] = cal_cfg.get("shared", {})
+
+    noise_floor: float = (
+        float(args.noise_floor)
+        if args.noise_floor is not None
+        else float(shared_cfg.get("noise_floor_deg", pt_cfg.get("noise_floor_deg", 0.5)))
+    )
+
+    fwd_raw = pt_cfg.get("camera_forward_offset_m")
+    if fwd_raw is None:
+        raise ValueError(
+            "pan_tilt_servo.camera_forward_offset_m is missing from "
+            f"{cal_config_path}. Add it before running replay."
+        )
+    dist_raw = pt_cfg.get("calibration_target_distance_m")
+    if dist_raw is None:
+        raise ValueError(
+            "pan_tilt_servo.calibration_target_distance_m is missing from "
+            f"{cal_config_path}. Add it before running replay."
+        )
+
+    fwd = float(fwd_raw)
+    dist = float(dist_raw)
+    _validate_geometry(fwd, dist)
+
+    enter_deg = float(pt_cfg.get("tracking_hysteresis_enter_deg", 1.5))
+    exit_deg = float(pt_cfg.get("tracking_hysteresis_exit_deg", 3.0))
+    _validate_hysteresis(enter_deg, exit_deg)
+
+    return _ReplayConfig(
+        noise_floor_deg=noise_floor,
+        camera_forward_offset_m=fwd,
+        calibration_target_distance_m=dist,
+        tracking_hysteresis_enter_deg=enter_deg,
+        tracking_hysteresis_exit_deg=exit_deg,
+    )
+
+
 def _run_replay_mode(args: argparse.Namespace, sensor_config_path: Path) -> None:
     """Load calibration config and run offline replay analysis.
 
@@ -2016,50 +2090,24 @@ def _run_replay_mode(args: argparse.Namespace, sensor_config_path: Path) -> None
     if not cal_config_path.exists():
         logger.error(f"Calibration config not found: {cal_config_path}")
         sys.exit(1)
+
     with cal_config_path.open() as f:
-        cal_cfg_replay: dict[str, Any] = yaml.safe_load(f) or {}
-    pt_cfg_replay: dict[str, Any] = cal_cfg_replay.get("pan_tilt_servo", {})
-    shared_cfg_replay: dict[str, Any] = cal_cfg_replay.get("shared", {})
-    noise_floor: float = (
-        float(args.noise_floor)
-        if args.noise_floor is not None
-        else float(
-            shared_cfg_replay.get(
-                "noise_floor_deg", pt_cfg_replay.get("noise_floor_deg", 0.5)
-            )
-        )
-    )
-    _fwd_replay = pt_cfg_replay.get("camera_forward_offset_m")
-    if _fwd_replay is None:
-        logger.error(
-            "pan_tilt_servo.camera_forward_offset_m is missing from "
-            f"{cal_config_path}. Add it before running replay."
-        )
-        sys.exit(1)
-    _dist_replay = pt_cfg_replay.get("calibration_target_distance_m")
-    if _dist_replay is None:
-        logger.error(
-            "pan_tilt_servo.calibration_target_distance_m is missing from "
-            f"{cal_config_path}. Add it before running replay."
-        )
-        sys.exit(1)
+        cal_cfg: dict[str, Any] = yaml.safe_load(f) or {}
+
     try:
-        _validate_geometry(float(_fwd_replay), float(_dist_replay))
+        replay_cfg = _load_replay_config(cal_cfg, cal_config_path, args)
     except ValueError as exc:
         logger.error(str(exc))
         sys.exit(1)
+
     _run_replay(
         csv_path=args.replay.resolve(),
         sensor_config_path=sensor_config_path,
-        noise_floor_deg=noise_floor,
-        camera_forward_offset_m=float(_fwd_replay),
-        calibration_target_distance_m=float(_dist_replay),
-        tracking_hysteresis_enter_deg=float(
-            pt_cfg_replay.get("tracking_hysteresis_enter_deg", 1.5)
-        ),
-        tracking_hysteresis_exit_deg=float(
-            pt_cfg_replay.get("tracking_hysteresis_exit_deg", 3.0)
-        ),
+        noise_floor_deg=replay_cfg.noise_floor_deg,
+        camera_forward_offset_m=replay_cfg.camera_forward_offset_m,
+        calibration_target_distance_m=replay_cfg.calibration_target_distance_m,
+        tracking_hysteresis_enter_deg=replay_cfg.tracking_hysteresis_enter_deg,
+        tracking_hysteresis_exit_deg=replay_cfg.tracking_hysteresis_exit_deg,
         save=args.save,
     )
 

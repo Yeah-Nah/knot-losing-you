@@ -83,6 +83,44 @@ class Settings:
             raise OSError(
                 "No display detected. Set 'live_view_enabled: False' in pipeline_config.yaml."
             )
+        if self.pan_tracking_gain_kp <= 0:
+            logger.error(
+                f"pan_tilt_servo.tracking_gain_kp must be > 0, "
+                f"got {self.pan_tracking_gain_kp}."
+            )
+            raise ValueError(
+                f"pan_tilt_servo.tracking_gain_kp must be > 0, "
+                f"got {self.pan_tracking_gain_kp}."
+            )
+        if self.pan_tracking_delta_max_deg <= 0:
+            logger.error(
+                f"pan_tilt_servo.tracking_delta_max_deg must be > 0, "
+                f"got {self.pan_tracking_delta_max_deg}."
+            )
+            raise ValueError(
+                f"pan_tilt_servo.tracking_delta_max_deg must be > 0, "
+                f"got {self.pan_tracking_delta_max_deg}."
+            )
+        if self.pan_tracking_hysteresis_enter_deg < 0:
+            logger.error(
+                f"pan_tilt_servo.tracking_hysteresis_enter_deg must be >= 0, "
+                f"got {self.pan_tracking_hysteresis_enter_deg}."
+            )
+            raise ValueError(
+                f"pan_tilt_servo.tracking_hysteresis_enter_deg must be >= 0, "
+                f"got {self.pan_tracking_hysteresis_enter_deg}."
+            )
+        if self.pan_tracking_hysteresis_exit_deg < self.pan_tracking_hysteresis_enter_deg:
+            logger.error(
+                f"pan_tilt_servo.tracking_hysteresis_exit_deg must be >= "
+                f"tracking_hysteresis_enter_deg ({self.pan_tracking_hysteresis_enter_deg}), "
+                f"got {self.pan_tracking_hysteresis_exit_deg}."
+            )
+            raise ValueError(
+                f"pan_tilt_servo.tracking_hysteresis_exit_deg must be >= "
+                f"tracking_hysteresis_enter_deg ({self.pan_tracking_hysteresis_enter_deg}), "
+                f"got {self.pan_tracking_hysteresis_exit_deg}."
+            )
         logger.debug(f"Settings validated. Project root: {self._root}")
 
     # ------------------------------------------------------------------

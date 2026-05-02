@@ -98,7 +98,7 @@ Use NumPy-style format:
 def method_name(self, param1: int, param2: str) -> bool:
     """Short one-line summary.
 
-    Longer description if needed, explaining behavior,
+    Longer description if needed, explaining behaviour,
     edge cases, or important implementation details.
 
     Parameters
@@ -126,7 +126,7 @@ def method_name(self, param1: int, param2: str) -> bool:
 ```
 
 Use UK english spelling:
-- E.g. "behaviour" instead of "behavior"
+- E.g. "behaviour" instead of "behaviour"
 
 ---
 
