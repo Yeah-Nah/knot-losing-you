@@ -65,7 +65,9 @@ class WaveshareCamera:
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, self._width)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self._height)
         cap.set(cv2.CAP_PROP_FPS, self._fps)
-        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # Discard all but the latest frame; prevents stale-frame lag
+        cap.set(
+            cv2.CAP_PROP_BUFFERSIZE, 1
+        )  # Discard all but the latest frame; prevents stale-frame lag
         if not cap.isOpened():
             raise RuntimeError(
                 f"Could not open Waveshare camera at device index {self._device_index}."
