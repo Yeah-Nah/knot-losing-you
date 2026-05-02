@@ -92,14 +92,14 @@ class Settings:
                 f"pan_tilt_servo.tracking_gain_kp must be > 0, "
                 f"got {self.pan_tracking_gain_kp}."
             )
-        if self.pan_tracking_delta_max_deg <= 0:
+        if self.pan_tracking_delta_max_deg_per_s <= 0:
             logger.error(
-                f"pan_tilt_servo.tracking_delta_max_deg must be > 0, "
-                f"got {self.pan_tracking_delta_max_deg}."
+                f"pan_tilt_servo.tracking_delta_max_deg_per_s must be > 0, "
+                f"got {self.pan_tracking_delta_max_deg_per_s}."
             )
             raise ValueError(
-                f"pan_tilt_servo.tracking_delta_max_deg must be > 0, "
-                f"got {self.pan_tracking_delta_max_deg}."
+                f"pan_tilt_servo.tracking_delta_max_deg_per_s must be > 0, "
+                f"got {self.pan_tracking_delta_max_deg_per_s}."
             )
         if self.pan_tracking_hysteresis_enter_deg < 0:
             logger.error(
@@ -289,9 +289,9 @@ class Settings:
         return float(self._pan_tilt_servo_cfg.get("tracking_gain_kp", 0.4))
 
     @property
-    def pan_tracking_delta_max_deg(self) -> float:
-        """Maximum per-cycle pan command change in degrees (slew rate cap)."""
-        return float(self._pan_tilt_servo_cfg.get("tracking_delta_max_deg", 2.5))
+    def pan_tracking_delta_max_deg_per_s(self) -> float:
+        """Maximum pan command change in degrees per second (slew rate cap)."""
+        return float(self._pan_tilt_servo_cfg.get("tracking_delta_max_deg_per_s", 25.0))
 
     @property
     def pan_tracking_hysteresis_enter_deg(self) -> float:

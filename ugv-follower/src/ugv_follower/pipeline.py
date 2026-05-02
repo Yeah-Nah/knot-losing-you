@@ -40,6 +40,10 @@ if TYPE_CHECKING:
     from .settings import Settings
 
 
+_DT_MIN_S: float = 0.005  # 5 ms floor — prevents near-zero commands on first tick
+_DT_MAX_S: float = 0.5  # 500 ms ceiling — prevents large commands after a loop stall
+
+
 class PipelineMode(StrEnum):
     """Minimal control modes for Phase 3A-lite."""
 
@@ -92,7 +96,7 @@ class Pipeline:
             cmd_min_deg=settings.pan_cmd_min_deg,
             cmd_max_deg=settings.pan_cmd_max_deg,
             gain_kp=settings.pan_tracking_gain_kp,
-            delta_max_deg=settings.pan_tracking_delta_max_deg,
+            delta_max_deg_per_s=settings.pan_tracking_delta_max_deg_per_s,
             hysteresis_enter_deg=settings.pan_tracking_hysteresis_enter_deg,
             hysteresis_exit_deg=settings.pan_tracking_hysteresis_exit_deg,
             tilt_deg=settings.pan_tilt_setpoint_deg,
@@ -175,7 +179,12 @@ class Pipeline:
 
         logger.info("Pipeline running. Press Ctrl+C to stop.")
 
+        # Prime the timer so the first iteration uses a nominal dt.
+        last_t = time.monotonic() - self._loop_period_s
         while True:
+            now = time.monotonic()
+            dt = max(_DT_MIN_S, min(_DT_MAX_S, now - last_t))
+            last_t = now
             self._update_lidar_state()
             cmd = self._decide_command()
             cmd = self._apply_mode_transition_stop(cmd)
@@ -185,7 +194,7 @@ class Pipeline:
             results = self._run_inference(frame)
             if not self._estop_active:
                 bbox_u, bbox_v = self._extract_centroid(results)
-                self._update_pan_state(bbox_u, bbox_v)
+                self._update_pan_state(bbox_u, bbox_v, dt)
             self._push_stream_frame(self._annotate_frame(frame, results))
             time.sleep(self._loop_period_s)
 
@@ -323,6 +332,7 @@ class Pipeline:
         self,
         bbox_centre_u: float | None,
         bbox_centre_v: float | None,
+        dt: float,
     ) -> None:
         """Update the pan servo from a detection centroid, or hold if no detection.
 
@@ -334,8 +344,10 @@ class Pipeline:
         bbox_centre_v : float | None
             Vertical pixel coordinate of the bounding-box centroid, or
             ``None`` when there is no valid detection.
+        dt : float
+            Elapsed time in seconds since the previous control iteration.
         """
-        pan_cmd = self._pan_controller.update(bbox_centre_u, bbox_centre_v)
+        pan_cmd = self._pan_controller.update(bbox_centre_u, bbox_centre_v, dt)
         if pan_cmd is not None:
             self._ugv.set_pan_tilt(pan_cmd, self._settings.pan_tilt_setpoint_deg)
 

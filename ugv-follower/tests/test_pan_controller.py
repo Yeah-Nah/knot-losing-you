@@ -45,7 +45,8 @@ _CMD_MAX = 45.0
 _DB_POS = 5.0
 _DB_NEG = -5.0
 _GAIN_KP = 1.0  # unity gain by default so existing tests are unaffected
-_DELTA_MAX = 90.0  # large by default so slew limit is not the constraint
+# 900 deg/s × 0.1 s dt = 90°/step — effectively unconstrained for most tests
+_DELTA_MAX_DEG_PER_S = 900.0
 _HYS_ENTER = 1.5
 _HYS_EXIT = 3.0
 
@@ -53,7 +54,7 @@ _HYS_EXIT = 3.0
 def _make_controller(
     tilt_deg: float = 0.0,
     gain_kp: float = _GAIN_KP,
-    delta_max_deg: float = _DELTA_MAX,
+    delta_max_deg_per_s: float = _DELTA_MAX_DEG_PER_S,
     hysteresis_enter_deg: float = _HYS_ENTER,
     hysteresis_exit_deg: float = _HYS_EXIT,
 ) -> PanController:
@@ -63,7 +64,7 @@ def _make_controller(
         cmd_min_deg=_CMD_MIN,
         cmd_max_deg=_CMD_MAX,
         gain_kp=gain_kp,
-        delta_max_deg=delta_max_deg,
+        delta_max_deg_per_s=delta_max_deg_per_s,
         hysteresis_enter_deg=hysteresis_enter_deg,
         hysteresis_exit_deg=hysteresis_exit_deg,
         tilt_deg=tilt_deg,
@@ -177,42 +178,42 @@ class TestPanController:
     def test_no_detection_returns_none(self) -> None:
         """update(None, None) → None (hold, no servo command)."""
         ctrl = _make_controller()
-        result = ctrl.update(None, None)
+        result = ctrl.update(None, None, dt=0.1)
         assert result is None
 
     def test_no_detection_does_not_change_pan(self) -> None:
         """Pan position is unchanged after a no-detection call."""
         ctrl = _make_controller()
         initial = ctrl.current_pan_deg
-        ctrl.update(None, None)
+        ctrl.update(None, None, dt=0.1)
         assert ctrl.current_pan_deg == pytest.approx(initial)
 
     def test_within_deadband_returns_none(self) -> None:
         """Heading within ±5° deadband → None (hold)."""
         ctrl = _make_controller()
         # 2 px right with fx=500 → atan(2/500) ≈ 0.23° — well inside ±5° deadband
-        result = ctrl.update(_CX + 2.0, _CY)
+        result = ctrl.update(_CX + 2.0, _CY, dt=0.1)
         assert result is None
 
     def test_detection_outside_deadband_returns_command(self) -> None:
         """Clear detection outside deadband → returns a float pan command."""
         ctrl = _make_controller()
         # 100 px right → ~11.3° heading, outside ±5° deadband
-        result = ctrl.update(_CX + 100.0, _CY)
+        result = ctrl.update(_CX + 100.0, _CY, dt=0.1)
         assert result is not None
         assert isinstance(result, float)
 
     def test_detection_right_gives_positive_pan(self) -> None:
         """Target right of centre → positive pan command."""
         ctrl = _make_controller()
-        result = ctrl.update(_CX + 100.0, _CY)
+        result = ctrl.update(_CX + 100.0, _CY, dt=0.1)
         assert result is not None
         assert result > 0.0
 
     def test_detection_left_gives_negative_pan(self) -> None:
         """Target left of centre → negative pan command."""
         ctrl = _make_controller()
-        result = ctrl.update(_CX - 100.0, _CY)
+        result = ctrl.update(_CX - 100.0, _CY, dt=0.1)
         assert result is not None
         assert result < 0.0
 
@@ -224,9 +225,9 @@ class TestPanController:
         # atan(x/500) = 40° → x = 500 * tan(40°) ≈ 420 px
         extreme_u = _CX + 500.0 * math.tan(math.radians(40.0))
         # First call accumulates 40° into pan
-        ctrl.update(extreme_u, _CY)
+        ctrl.update(extreme_u, _CY, dt=0.1)
         # Second call would push well past 45° limit
-        result = ctrl.update(extreme_u, _CY)
+        result = ctrl.update(extreme_u, _CY, dt=0.1)
         assert result is not None
         assert result == pytest.approx(_CMD_MAX)
 
@@ -234,7 +235,7 @@ class TestPanController:
         """current_pan_deg reflects the last issued command."""
         ctrl = _make_controller()
         # 100 px right → ~11.3° → pan moves from 0 to ~11.3°
-        result = ctrl.update(_CX + 100.0, _CY)
+        result = ctrl.update(_CX + 100.0, _CY, dt=0.1)
         assert result is not None
         assert ctrl.current_pan_deg == pytest.approx(result)
 
@@ -250,25 +251,30 @@ def test_kp_scaling_reduces_command_magnitude() -> None:
     u = _CX + 100.0
 
     ctrl_full = _make_controller(gain_kp=1.0)
-    result_full = ctrl_full.update(u, _CY)
+    result_full = ctrl_full.update(u, _CY, dt=0.1)
     assert result_full is not None
 
     ctrl_half = _make_controller(gain_kp=0.5)
-    result_half = ctrl_half.update(u, _CY)
+    result_half = ctrl_half.update(u, _CY, dt=0.1)
     assert result_half is not None
 
     assert result_half == pytest.approx(result_full * 0.5, rel=1e-6)
 
 
-def test_delta_clamp_limits_per_cycle_change() -> None:
-    """A tight delta_max caps the single-step pan change regardless of heading size."""
-    delta_max = 1.0
-    # 100 px right → ~11.5° heading — much larger than delta_max
-    ctrl = _make_controller(gain_kp=1.0, delta_max_deg=delta_max)
-    result = ctrl.update(_CX + 100.0, _CY)
+def test_delta_clamp_limits_per_second_rate() -> None:
+    """A tight delta_max_deg_per_s caps the per-step pan change by elapsed time.
+
+    With delta_max_deg_per_s=10.0 and dt=0.1 s the effective per-step cap is 1.0°.
+    A large heading (100 px right → ~11.5°) must be clipped to that cap.
+    """
+    delta_max_deg_per_s = 10.0
+    dt = 0.1  # → effective cap = 1.0° per step
+    # 100 px right → ~11.5° heading — much larger than the 1.0° per-step cap
+    ctrl = _make_controller(gain_kp=1.0, delta_max_deg_per_s=delta_max_deg_per_s)
+    result = ctrl.update(_CX + 100.0, _CY, dt=dt)
     assert result is not None
-    # Pan started at 0°; change must not exceed delta_max
-    assert abs(result - 0.0) <= delta_max + 1e-9
+    # Pan started at 0°; change must not exceed delta_max_deg_per_s * dt
+    assert abs(result - 0.0) <= delta_max_deg_per_s * dt + 1e-9
 
 
 def test_hysteresis_enter_hold_and_exit() -> None:
@@ -277,27 +283,27 @@ def test_hysteresis_enter_hold_and_exit() -> None:
     exit_ = 5.0
     ctrl = _make_controller(
         gain_kp=1.0,
-        delta_max_deg=90.0,
+        delta_max_deg_per_s=900.0,
         hysteresis_enter_deg=enter,
         hysteresis_exit_deg=exit_,
     )
 
     # Phase A: heading ~8° — outside enter and exit → command issued, not in hold
     u_large = _CX + _FX * math.tan(math.radians(8.0))
-    result_a = ctrl.update(u_large, _CY)
+    result_a = ctrl.update(u_large, _CY, dt=0.1)
     assert result_a is not None, "Phase A: expected command, got None"
 
     # Phase B: heading ~1° — within enter threshold → enters hold, returns None
     u_tiny = _CX + _FX * math.tan(math.radians(1.0))
-    result_b = ctrl.update(u_tiny, _CY)
+    result_b = ctrl.update(u_tiny, _CY, dt=0.1)
     assert result_b is None, "Phase B: expected None (entered hold)"
 
     # Phase C: heading ~3° — between enter and exit thresholds, still in hold
     u_mid = _CX + _FX * math.tan(math.radians(3.0))
-    result_c = ctrl.update(u_mid, _CY)
+    result_c = ctrl.update(u_mid, _CY, dt=0.1)
     assert result_c is None, "Phase C: expected None (still in hold, below exit)"
 
     # Phase D: heading ~7° — exceeds exit threshold → exits hold, command issued
     u_exit = _CX + _FX * math.tan(math.radians(7.0))
-    result_d = ctrl.update(u_exit, _CY)
+    result_d = ctrl.update(u_exit, _CY, dt=0.1)
     assert result_d is not None, "Phase D: expected command (exited hold)"

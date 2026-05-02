@@ -132,8 +132,9 @@ class PanController:
     gain_kp : float
         Proportional gain applied to corrected heading error before accumulation.
         Values in (0, 1) slow convergence and reduce overshoot.
-    delta_max_deg : float
-        Maximum per-cycle pan command change in degrees (slew rate cap).
+    delta_max_deg_per_s : float
+        Maximum pan command change in degrees per second (slew rate cap).
+        Scaled by the elapsed time ``dt`` on each ``update()`` call.
     hysteresis_enter_deg : float
         Enter-hold threshold in degrees; motion is suppressed when the scaled
         heading error magnitude falls at or below this value.
@@ -152,7 +153,7 @@ class PanController:
         cmd_min_deg: float,
         cmd_max_deg: float,
         gain_kp: float,
-        delta_max_deg: float,
+        delta_max_deg_per_s: float,
         hysteresis_enter_deg: float,
         hysteresis_exit_deg: float,
         tilt_deg: float = 0.0,
@@ -162,7 +163,7 @@ class PanController:
         self._cmd_min_deg = cmd_min_deg
         self._cmd_max_deg = cmd_max_deg
         self._gain_kp = gain_kp
-        self._delta_max_deg = delta_max_deg
+        self._delta_max_deg_per_s = delta_max_deg_per_s
         self._hysteresis_enter_deg = hysteresis_enter_deg
         self._hysteresis_exit_deg = hysteresis_exit_deg
         self._tilt_deg = tilt_deg
@@ -170,12 +171,12 @@ class PanController:
         self._in_hold: bool = False
         logger.debug(
             "PanController initialised "
-            "(cmd=[{}, {}]°, kp={}, delta_max={:.1f}°, "
+            "(cmd=[{}, {}]°, kp={}, delta_max={:.1f} deg/s, "
             "hysteresis=[enter={:.1f}°, exit={:.1f}°], tilt={:.1f}°).",
             cmd_min_deg,
             cmd_max_deg,
             gain_kp,
-            delta_max_deg,
+            delta_max_deg_per_s,
             hysteresis_enter_deg,
             hysteresis_exit_deg,
             tilt_deg,
@@ -190,6 +191,7 @@ class PanController:
         self,
         bbox_centre_u: float | None,
         bbox_centre_v: float | None,
+        dt: float,
     ) -> float | None:
         """Compute a pan command from a detection centroid.
 
@@ -204,6 +206,9 @@ class PanController:
         bbox_centre_v : float | None
             Vertical pixel coordinate of the bounding-box centroid, or
             ``None`` when there is no valid detection.
+        dt : float
+            Elapsed time in seconds since the previous call. Used to scale
+            the slew rate cap (``delta_max_deg_per_s``) to a per-step limit.
 
         Returns
         -------
@@ -249,8 +254,9 @@ class PanController:
                 )
                 return None
 
-        # 3. Delta clamp: cap per-cycle command change (slew rate limit).
-        delta = max(-self._delta_max_deg, min(self._delta_max_deg, scaled))
+        # 3. Delta clamp: cap command change by elapsed time (slew rate limit in deg/s).
+        delta_max_this_step = self._delta_max_deg_per_s * dt
+        delta = max(-delta_max_this_step, min(delta_max_this_step, scaled))
         target_pan = self._current_pan_deg + delta
         new_pan = clamp_pan(target_pan, self._cmd_min_deg, self._cmd_max_deg)
         self._current_pan_deg = new_pan
