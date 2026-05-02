@@ -2038,7 +2038,9 @@ def _load_replay_config(
     noise_floor: float = (
         float(args.noise_floor)
         if args.noise_floor is not None
-        else float(shared_cfg.get("noise_floor_deg", pt_cfg.get("noise_floor_deg", 0.5)))
+        else float(
+            shared_cfg.get("noise_floor_deg", pt_cfg.get("noise_floor_deg", 0.5))
+        )
     )
 
     fwd_raw = pt_cfg.get("camera_forward_offset_m")

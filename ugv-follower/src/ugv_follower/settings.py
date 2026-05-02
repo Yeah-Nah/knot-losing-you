@@ -110,7 +110,10 @@ class Settings:
                 f"pan_tilt_servo.tracking_hysteresis_enter_deg must be >= 0, "
                 f"got {self.pan_tracking_hysteresis_enter_deg}."
             )
-        if self.pan_tracking_hysteresis_exit_deg < self.pan_tracking_hysteresis_enter_deg:
+        if (
+            self.pan_tracking_hysteresis_exit_deg
+            < self.pan_tracking_hysteresis_enter_deg
+        ):
             logger.error(
                 f"pan_tilt_servo.tracking_hysteresis_exit_deg must be >= "
                 f"tracking_hysteresis_enter_deg ({self.pan_tracking_hysteresis_enter_deg}), "
