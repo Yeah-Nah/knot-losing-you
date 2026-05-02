@@ -57,8 +57,8 @@ pan_tilt_servo:
   tracking_hysteresis_exit_deg: 4.5   # Exit-hold threshold in degrees
   dead_band_pos_deg: 1.0
   dead_band_neg_deg: -1.0
-  cmd_min: -45.0
-  cmd_max: 45.0
+  cmd_min: -60.0
+  cmd_max: 60.0
   phi_min_deg: -36.3585
   phi_max_deg: 38.2317
   hysteresis_mean_deg: 2.3182
