@@ -91,8 +91,10 @@ class Pipeline:
             D=D,
             cmd_min_deg=settings.pan_cmd_min_deg,
             cmd_max_deg=settings.pan_cmd_max_deg,
-            dead_band_pos_deg=settings.pan_dead_band_pos_deg,
-            dead_band_neg_deg=settings.pan_dead_band_neg_deg,
+            gain_kp=settings.pan_tracking_gain_kp,
+            delta_max_deg=settings.pan_tracking_delta_max_deg,
+            hysteresis_enter_deg=settings.pan_tracking_hysteresis_enter_deg,
+            hysteresis_exit_deg=settings.pan_tracking_hysteresis_exit_deg,
             tilt_deg=settings.pan_tilt_setpoint_deg,
         )
         self._detector: ObjectDetection | None = (

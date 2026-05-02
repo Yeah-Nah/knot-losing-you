@@ -200,10 +200,10 @@ knot-losing-you/
   - Unit + integration tests for shaper state machine and controller interaction.
 
 - `tests/test_motion_command.py`
-  - Unit tests for motion command contract validation and pipeline command-path behavior.
+  - Unit tests for motion command contract validation and pipeline command-path behaviour.
 
 - `tests/test_object_detection.py`
-  - Unit tests for object-detection wrapper configuration and placeholder runtime behavior.
+  - Unit tests for object-detection wrapper configuration and placeholder runtime behaviour.
 
 - `tests/test_pan_controller.py`
   - Unit tests for heading sign, tilt correction, deadband handling, clamp logic, and pan command updates.
@@ -212,7 +212,7 @@ knot-losing-you/
   - Unit tests for pan-tilt calibration math/fit/quality/csv/config helper functions.
 
 - `tests/test_calibrate_ugv_drive.py`
-  - Unit tests for drive calibration geometry, parsing, fitting, and orchestrator helper behavior.
+  - Unit tests for drive calibration geometry, parsing, fitting, and orchestrator helper behaviour.
 
 - `tests/test_lidar_geometry.py`
   - Unit tests for `lidar_geometry.py` helpers: `wrap_360`, `wrap_180`, `lidar_point_to_body_frame`, `filter_forward_arc`, and `nearest_forward_point`.

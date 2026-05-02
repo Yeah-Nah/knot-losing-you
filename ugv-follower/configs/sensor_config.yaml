@@ -46,22 +46,27 @@ pan_tilt_servo:
   calibration_method: servo_curve_sweep
   angle_measurement_model: offset_corrected_forward_displacement
   camera_forward_offset_m: 0.0665
-  calibration_target_distance_m: 2.71
+  calibration_target_distance_m: 2.7
   tilt_setpoint_deg: 0.0
   sweep_min_deg: -45.0
   sweep_max_deg: 45.0
-  dead_band_pos_deg: 5.0
-  dead_band_neg_deg: -5.0
+  # Oscillation-reducing control parameters (see pan_control_stops_and_curves_theory.md)
+  tracking_gain_kp: 0.25               # Proportional gain on corrected heading error (0–1)
+  tracking_delta_max_deg: 3         # Max per-cycle pan command change in degrees
+  tracking_hysteresis_enter_deg: 3  # Enter-hold threshold in degrees
+  tracking_hysteresis_exit_deg: 4.5   # Exit-hold threshold in degrees
+  dead_band_pos_deg: 1.0
+  dead_band_neg_deg: -1.0
   cmd_min: -45.0
   cmd_max: 45.0
-  phi_min_deg: -36.4284
-  phi_max_deg: 38.1033
-  hysteresis_mean_deg: 2.4364
+  phi_min_deg: -36.3585
+  phi_max_deg: 38.2317
+  hysteresis_mean_deg: 2.3182
   linear_fit:
-    slope: 0.887922
-    intercept: 0.98013
-    mae_deg: 1.525
-    max_abs_error_deg: 2.9681
+    slope: 0.890369
+    intercept: 1.142296
+    mae_deg: 1.4815
+    max_abs_error_deg: 2.9772
   piecewise_linear:
     forward:
       command_samples:
@@ -70,40 +75,50 @@ pan_tilt_servo:
       - -35.0
       - -30.0
       - -25.0
+      - -25.0
       - -20.0
       - -15.0
       - -10.0
       - -5.0
+      - -1.0
       - 0.0
+      - 0.0
+      - 1.0
       - 5.0
       - 10.0
       - 15.0
       - 20.0
+      - 25.0
       - 25.0
       - 30.0
       - 35.0
       - 40.0
       - 45.0
       angle_samples:
-      - -36.3628
-      - -35.4318
-      - -31.9177
-      - -27.9415
-      - -23.8935
-      - -19.7464
-      - -15.172
-      - -10.0837
-      - -5.1302
-      - -0.4049
-      - 4.2237
-      - 9.3979
-      - 14.4169
-      - 19.029
-      - 23.2175
-      - 27.1502
-      - 31.1891
-      - 34.8991
-      - 38.1033
+      - -36.3585
+      - -35.3365
+      - -31.6623
+      - -27.7127
+      - -23.5569
+      - -23.6716
+      - -19.4145
+      - -14.913
+      - -9.8079
+      - -4.8077
+      - -0.8994
+      - -0.0055
+      - -0.143
+      - 0.8884
+      - 4.6602
+      - 9.5302
+      - 14.582
+      - 19.3438
+      - 23.4903
+      - 23.4328
+      - 27.329
+      - 31.4572
+      - 35.058
+      - 38.2317
     reverse:
       command_samples:
       - -45.0
@@ -111,125 +126,101 @@ pan_tilt_servo:
       - -35.0
       - -30.0
       - -25.0
+      - -25.0
       - -20.0
       - -15.0
       - -10.0
       - -5.0
+      - -1.0
       - 0.0
+      - 0.0
+      - 1.0
       - 5.0
       - 10.0
       - 15.0
       - 20.0
+      - 25.0
       - 25.0
       - 30.0
       - 35.0
       - 40.0
       - 45.0
       angle_samples:
-      - -36.4284
-      - -33.0748
-      - -29.741
-      - -25.5806
-      - -21.1861
-      - -16.4085
-      - -11.8684
-      - -7.3688
-      - -2.3612
-      - 2.8896
-      - 7.7877
-      - 12.4719
-      - 16.8931
-      - 21.4653
-      - 26.0065
-      - 29.9051
-      - 33.3692
-      - 36.8288
-      - 38.1033
+      - -36.3585
+      - -33.0187
+      - -29.5995
+      - -25.5337
+      - -21.1306
+      - -21.1008
+      - -16.5016
+      - -11.7298
+      - -7.2547
+      - -2.2737
+      - 1.9193
+      - 2.8118
+      - 3.0175
+      - 3.9766
+      - 7.8517
+      - 12.3759
+      - 16.9943
+      - 21.6252
+      - 26.1327
+      - 26.1327
+      - 30.052
+      - 33.4381
+      - 35.058
+      - 38.2317
     combined:
       command_samples:
       - -45.0
-      - -45.0
-      - -40.0
       - -40.0
       - -35.0
-      - -35.0
-      - -30.0
       - -30.0
       - -25.0
-      - -25.0
-      - -20.0
       - -20.0
       - -15.0
-      - -15.0
-      - -10.0
       - -10.0
       - -5.0
-      - -5.0
+      - -1.0
       - 0.0
-      - 0.0
-      - 5.0
+      - 1.0
       - 5.0
       - 10.0
-      - 10.0
-      - 15.0
       - 15.0
       - 20.0
-      - 20.0
-      - 25.0
       - 25.0
       - 30.0
-      - 30.0
-      - 35.0
       - 35.0
       - 40.0
-      - 40.0
-      - 45.0
       - 45.0
       angle_samples:
-      - -36.3628
-      - -36.4284
-      - -35.4318
-      - -33.0748
-      - -31.9177
-      - -29.741
-      - -27.9415
-      - -25.5806
-      - -23.8935
-      - -21.1861
-      - -19.7464
-      - -16.4085
-      - -15.172
-      - -11.8684
-      - -10.0837
-      - -7.3688
-      - -5.1302
-      - -2.3612
-      - -0.4049
-      - 2.8896
-      - 4.2237
-      - 7.7877
-      - 9.3979
-      - 12.4719
-      - 14.4169
-      - 16.8931
-      - 19.029
-      - 21.4653
-      - 23.2175
-      - 26.0065
-      - 27.1502
-      - 29.9051
-      - 31.1891
-      - 33.3692
-      - 34.8991
-      - 36.8288
-      - 38.1033
-      - 38.1033
-    mae_deg: 2.4364
-    max_abs_error_deg: 3.564
-  n_good_samples: 38
-  n_total_samples: 38
-  calibrated_at: '2026-04-01T07:47:43'
-  raw_csv: calibration/pantilt_servo/20260401T074410.csv
+      - -36.3585
+      - -34.1776
+      - -30.6309
+      - -26.6232
+      - -22.3437
+      - -17.958
+      - -13.3214
+      - -8.5313
+      - -3.5407
+      - 0.5099
+      - 1.4031
+      - 2.4325
+      - 6.256
+      - 10.953
+      - 15.7882
+      - 20.4845
+      - 24.8115
+      - 28.6905
+      - 32.4477
+      - 35.058
+      - 38.2317
+    mae_deg: 0.4054
+    max_abs_error_deg: 3.1736
+  n_good_samples: 48
+  n_total_samples: 48
+  calibrated_at: '2026-04-28T11:18:09'
+  raw_csv: calibration/pantilt_servo/20260428T111014.csv
 
 # Extrinsic calibration — LiDAR ↔ pan-tilt angular offset
 # Populated by calibrate_angular_offset.py after running the calibration workflow.

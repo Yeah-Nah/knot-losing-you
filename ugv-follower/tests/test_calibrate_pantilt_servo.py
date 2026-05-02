@@ -620,6 +620,8 @@ def _make_minimal_cal_cfg(
         "camera_forward_offset_m": 0.0665,
         "calibration_target_distance_m": 2.7,
         "pan_command_schedules_deg": [[-10.0, 0.0, 10.0]],
+        "tracking_hysteresis_enter_deg": 1.5,
+        "tracking_hysteresis_exit_deg": 3.0,
     }
     if precondition_cycles is not None:
         pt["precondition_cycles"] = precondition_cycles
@@ -666,6 +668,23 @@ def test_load_config_precondition_negative_raises(tmp_path: Path) -> None:
         )
 
 
+def test_load_config_hysteresis_enter_negative_raises(tmp_path: Path) -> None:
+    """Negative hysteresis enter threshold raises ValueError."""
+    cal_cfg = _make_minimal_cal_cfg()
+    cal_cfg["pan_tilt_servo"]["tracking_hysteresis_enter_deg"] = -0.1
+    with pytest.raises(ValueError, match="tracking_hysteresis_enter_deg"):
+        _load_config(_make_minimal_sensor_cfg(), cal_cfg, _make_args(tmp_path))
+
+
+def test_load_config_hysteresis_exit_below_enter_raises(tmp_path: Path) -> None:
+    """Exit hysteresis threshold must be >= enter threshold."""
+    cal_cfg = _make_minimal_cal_cfg()
+    cal_cfg["pan_tilt_servo"]["tracking_hysteresis_enter_deg"] = 2.0
+    cal_cfg["pan_tilt_servo"]["tracking_hysteresis_exit_deg"] = 1.0
+    with pytest.raises(ValueError, match="tracking_hysteresis_exit_deg"):
+        _load_config(_make_minimal_sensor_cfg(), cal_cfg, _make_args(tmp_path))
+
+
 # ---------------------------------------------------------------------------
 # precondition_cycles — _run_sweep
 # ---------------------------------------------------------------------------
@@ -702,6 +721,8 @@ def _make_sweep_config(
         calibration_target_distance_m=2.0,
         precondition_cycles=precondition_cycles,
         precondition_settle_time_s=precondition_settle_time_s,
+        tracking_hysteresis_enter_deg=1.5,
+        tracking_hysteresis_exit_deg=3.0,
     )
 
 

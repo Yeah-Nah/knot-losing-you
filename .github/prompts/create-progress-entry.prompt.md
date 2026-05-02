@@ -36,7 +36,7 @@ Writing requirements:
 - Keep claims verifiable from repo context
 - Do not rewrite previous entries unless numbering must be incremented for the new insertion
 
-Optional focus behavior:
+Optional focus behaviour:
 - If OPTIONAL_FOCUS is provided, prioritize relevant milestones first
 - If OPTIONAL_FOCUS is empty, proceed automatically with no follow-up questions
 
@@ -48,7 +48,7 @@ Entry structure:
 - Key Achievements
 - Optional image block only if a clearly relevant image exists in repo and is tied to this milestone set
 
-Insertion behavior:
+Insertion behaviour:
 - Insert into the correct phase section in [PROGRESS_UPDATES.md](http://_vscodecontentref_/1)
 - Keep newest-first ordering within that phase
 - Preserve separators, spacing, headings, and markdown style already used in the file

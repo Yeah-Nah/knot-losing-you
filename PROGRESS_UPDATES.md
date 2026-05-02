@@ -92,7 +92,7 @@ Built and hardened the pan-tilt servo curve calibration workflow so pan commands
 **Key Achievements:**
 - Servo calibration now writes a full pan response model to `sensor_config.yaml`, including dead-band (`+5.0` / `-5.0` deg), hysteresis (`2.4364` deg mean), linear fit metrics (MAE `1.525` deg, max abs error `2.9681` deg), and piecewise forward/reverse curves
 - Verified usable measured pan range captured from approximately `-36.43` deg to `+38.10` deg across the commanded `-45` to `+45` sweep
-- Warmup/preconditioning behavior was parameterized and optimized, reducing time-to-calibration while preserving measurement-phase settle timing
+- Warmup/preconditioning behaviour was parameterized and optimized, reducing time-to-calibration while preserving measurement-phase settle timing
 - Phase 2 pan-tilt actuator calibration step complete, with runtime-ready model artifacts stored in config for downstream control work
 
 The super high tech set up for the pan tilt calibration. Aka a broom taped to my balcony to align to the cameras optical axis.

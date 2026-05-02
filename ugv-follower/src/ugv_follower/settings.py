@@ -83,6 +83,47 @@ class Settings:
             raise OSError(
                 "No display detected. Set 'live_view_enabled: False' in pipeline_config.yaml."
             )
+        if self.pan_tracking_gain_kp <= 0:
+            logger.error(
+                f"pan_tilt_servo.tracking_gain_kp must be > 0, "
+                f"got {self.pan_tracking_gain_kp}."
+            )
+            raise ValueError(
+                f"pan_tilt_servo.tracking_gain_kp must be > 0, "
+                f"got {self.pan_tracking_gain_kp}."
+            )
+        if self.pan_tracking_delta_max_deg <= 0:
+            logger.error(
+                f"pan_tilt_servo.tracking_delta_max_deg must be > 0, "
+                f"got {self.pan_tracking_delta_max_deg}."
+            )
+            raise ValueError(
+                f"pan_tilt_servo.tracking_delta_max_deg must be > 0, "
+                f"got {self.pan_tracking_delta_max_deg}."
+            )
+        if self.pan_tracking_hysteresis_enter_deg < 0:
+            logger.error(
+                f"pan_tilt_servo.tracking_hysteresis_enter_deg must be >= 0, "
+                f"got {self.pan_tracking_hysteresis_enter_deg}."
+            )
+            raise ValueError(
+                f"pan_tilt_servo.tracking_hysteresis_enter_deg must be >= 0, "
+                f"got {self.pan_tracking_hysteresis_enter_deg}."
+            )
+        if (
+            self.pan_tracking_hysteresis_exit_deg
+            < self.pan_tracking_hysteresis_enter_deg
+        ):
+            logger.error(
+                f"pan_tilt_servo.tracking_hysteresis_exit_deg must be >= "
+                f"tracking_hysteresis_enter_deg ({self.pan_tracking_hysteresis_enter_deg}), "
+                f"got {self.pan_tracking_hysteresis_exit_deg}."
+            )
+            raise ValueError(
+                f"pan_tilt_servo.tracking_hysteresis_exit_deg must be >= "
+                f"tracking_hysteresis_enter_deg ({self.pan_tracking_hysteresis_enter_deg}), "
+                f"got {self.pan_tracking_hysteresis_exit_deg}."
+            )
         logger.debug(f"Settings validated. Project root: {self._root}")
 
     # ------------------------------------------------------------------
@@ -243,14 +284,24 @@ class Settings:
         return float(self._pan_tilt_servo_cfg.get("cmd_max", 45.0))
 
     @property
-    def pan_dead_band_pos_deg(self) -> float:
-        """Upper deadband threshold: heading errors at or below this are suppressed."""
-        return float(self._pan_tilt_servo_cfg.get("dead_band_pos_deg", 5.0))
+    def pan_tracking_gain_kp(self) -> float:
+        """Proportional gain applied to corrected heading error before accumulation."""
+        return float(self._pan_tilt_servo_cfg.get("tracking_gain_kp", 0.4))
 
     @property
-    def pan_dead_band_neg_deg(self) -> float:
-        """Lower deadband threshold: heading errors at or above this are suppressed."""
-        return float(self._pan_tilt_servo_cfg.get("dead_band_neg_deg", -5.0))
+    def pan_tracking_delta_max_deg(self) -> float:
+        """Maximum per-cycle pan command change in degrees (slew rate cap)."""
+        return float(self._pan_tilt_servo_cfg.get("tracking_delta_max_deg", 2.5))
+
+    @property
+    def pan_tracking_hysteresis_enter_deg(self) -> float:
+        """Enter-hold threshold: suppress motion when |scaled error| <= this value."""
+        return float(self._pan_tilt_servo_cfg.get("tracking_hysteresis_enter_deg", 1.5))
+
+    @property
+    def pan_tracking_hysteresis_exit_deg(self) -> float:
+        """Exit-hold threshold: resume motion when |scaled error| > this value."""
+        return float(self._pan_tilt_servo_cfg.get("tracking_hysteresis_exit_deg", 3.0))
 
     @property
     def pan_tilt_setpoint_deg(self) -> float:

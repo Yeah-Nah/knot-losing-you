@@ -44,16 +44,28 @@ _CMD_MIN = -45.0
 _CMD_MAX = 45.0
 _DB_POS = 5.0
 _DB_NEG = -5.0
+_GAIN_KP = 1.0  # unity gain by default so existing tests are unaffected
+_DELTA_MAX = 90.0  # large by default so slew limit is not the constraint
+_HYS_ENTER = 1.5
+_HYS_EXIT = 3.0
 
 
-def _make_controller(tilt_deg: float = 0.0) -> PanController:
+def _make_controller(
+    tilt_deg: float = 0.0,
+    gain_kp: float = _GAIN_KP,
+    delta_max_deg: float = _DELTA_MAX,
+    hysteresis_enter_deg: float = _HYS_ENTER,
+    hysteresis_exit_deg: float = _HYS_EXIT,
+) -> PanController:
     return PanController(
         K=_K,
         D=_D,
         cmd_min_deg=_CMD_MIN,
         cmd_max_deg=_CMD_MAX,
-        dead_band_pos_deg=_DB_POS,
-        dead_band_neg_deg=_DB_NEG,
+        gain_kp=gain_kp,
+        delta_max_deg=delta_max_deg,
+        hysteresis_enter_deg=hysteresis_enter_deg,
+        hysteresis_exit_deg=hysteresis_exit_deg,
         tilt_deg=tilt_deg,
     )
 
@@ -225,3 +237,67 @@ class TestPanController:
         result = ctrl.update(_CX + 100.0, _CY)
         assert result is not None
         assert ctrl.current_pan_deg == pytest.approx(result)
+
+
+# ---------------------------------------------------------------------------
+# Oscillation-reducing controls
+# ---------------------------------------------------------------------------
+
+
+def test_kp_scaling_reduces_command_magnitude() -> None:
+    """Lower Kp produces a proportionally smaller pan command than unity gain."""
+    # 100 px right → ~11.5° heading, well outside hysteresis enter threshold
+    u = _CX + 100.0
+
+    ctrl_full = _make_controller(gain_kp=1.0)
+    result_full = ctrl_full.update(u, _CY)
+    assert result_full is not None
+
+    ctrl_half = _make_controller(gain_kp=0.5)
+    result_half = ctrl_half.update(u, _CY)
+    assert result_half is not None
+
+    assert result_half == pytest.approx(result_full * 0.5, rel=1e-6)
+
+
+def test_delta_clamp_limits_per_cycle_change() -> None:
+    """A tight delta_max caps the single-step pan change regardless of heading size."""
+    delta_max = 1.0
+    # 100 px right → ~11.5° heading — much larger than delta_max
+    ctrl = _make_controller(gain_kp=1.0, delta_max_deg=delta_max)
+    result = ctrl.update(_CX + 100.0, _CY)
+    assert result is not None
+    # Pan started at 0°; change must not exceed delta_max
+    assert abs(result - 0.0) <= delta_max + 1e-9
+
+
+def test_hysteresis_enter_hold_and_exit() -> None:
+    """Hysteresis deadband: hold persists between enter and exit thresholds."""
+    enter = 2.0
+    exit_ = 5.0
+    ctrl = _make_controller(
+        gain_kp=1.0,
+        delta_max_deg=90.0,
+        hysteresis_enter_deg=enter,
+        hysteresis_exit_deg=exit_,
+    )
+
+    # Phase A: heading ~8° — outside enter and exit → command issued, not in hold
+    u_large = _CX + _FX * math.tan(math.radians(8.0))
+    result_a = ctrl.update(u_large, _CY)
+    assert result_a is not None, "Phase A: expected command, got None"
+
+    # Phase B: heading ~1° — within enter threshold → enters hold, returns None
+    u_tiny = _CX + _FX * math.tan(math.radians(1.0))
+    result_b = ctrl.update(u_tiny, _CY)
+    assert result_b is None, "Phase B: expected None (entered hold)"
+
+    # Phase C: heading ~3° — between enter and exit thresholds, still in hold
+    u_mid = _CX + _FX * math.tan(math.radians(3.0))
+    result_c = ctrl.update(u_mid, _CY)
+    assert result_c is None, "Phase C: expected None (still in hold, below exit)"
+
+    # Phase D: heading ~7° — exceeds exit threshold → exits hold, command issued
+    u_exit = _CX + _FX * math.tan(math.radians(7.0))
+    result_d = ctrl.update(u_exit, _CY)
+    assert result_d is not None, "Phase D: expected command (exited hold)"
