@@ -4,6 +4,15 @@ The script commands pan with `T=133`, listens passively, then explicitly polls
 `T=130` to fetch `T=1001` telemetry. It also probes related T-codes for context
 while only treating `T=1001.pan` as valid pan position feedback.
 
+T=1005 bus servo error packets are tracked throughout all phases. If `FeedBack()`
+fails on the ESP32 for a servo ID, the firmware emits::
+
+    {"T":1005,"id":<servo_id>,"status":0}
+
+A stream of T=1005 packets confirms that `FeedBack()` is failing every cycle
+(root cause of the constant -179.9560394 reading), pointing to a bus-level
+problem: wrong servo ID, wiring fault, or baud mismatch on the servo bus.
+
 Usage
 -----
     # Run with defaults (port=/dev/ttyAMA0, angle=20, duration=8s)
@@ -36,6 +45,7 @@ from loguru import logger
 from ugv_follower.utils.camera_preflight import ensure_character_device_available
 
 _PAN_TELEMETRY_T = 1001
+_BUS_SERVO_ERROR_T = 1005
 _PROBE_COMMANDS = [
     {"T": 105},
     {"T": 106},
@@ -56,8 +66,24 @@ def _extract_pan(data: dict[str, Any]) -> float | None:
     return None
 
 
+def _check_bus_servo_error(tag: str, data: dict[str, Any]) -> bool:
+    """Log T=1005 bus servo errors. Returns True if this was a T=1005 error packet."""
+    if data.get("T") != _BUS_SERVO_ERROR_T:
+        return False
+    if data.get("status") == 0:
+        logger.error(
+            f"{tag} BUS SERVO FEEDBACK FAILURE: FeedBack() returned -1 for "
+            f"servo id={data.get('id')}. ESP32 cannot read servo position. "
+            "Check: servo ID constant in firmware, bus wiring, servo power."
+        )
+    else:
+        logger.warning(f"{tag} T=1005 servo status: {data}")
+    return True
+
+
 def _print_response(tag: str, data: dict[str, Any]) -> bool:
     """Log data and return True only for `T=1001` with numeric `pan`."""
+    _check_bus_servo_error(tag, data)
     pan = _extract_pan(data)
     if pan is not None:
         logger.success(f"{tag} Pan telemetry `T=1001.pan`: {pan}  {data}")
@@ -126,6 +152,7 @@ def probe(port: str, angle_deg: float, duration: float, init_module: bool) -> No
         try:
             time.sleep(0.1)
             position_found = False
+            bus_servo_errors: list[dict[str, Any]] = []
 
             if init_module:
                 # Initialise chassis with pan-tilt module (module=2).
@@ -137,6 +164,12 @@ def probe(port: str, angle_deg: float, duration: float, init_module: bool) -> No
                 )
                 time.sleep(0.3)
                 ser.reset_input_buffer()
+
+            # Ensure InfoPrint=1 so the firmware emits T=1005 on FeedBack() failure.
+            # Per firmware comments, 1 is the default, but send explicitly to be sure.
+            ser.write(b'{"T":605,"cmd":1}\n')
+            logger.debug("Sent T=605 cmd=1 (InfoPrint enable)")
+            time.sleep(0.1)
 
             # Command pan to known angle.
             pan_cmd = json.dumps(
@@ -157,7 +190,10 @@ def probe(port: str, angle_deg: float, duration: float, init_module: bool) -> No
                     continue
                 passive_lines += 1
                 try:
-                    position_found |= _print_response("[passive]", json.loads(raw))
+                    data = json.loads(raw)
+                    if data.get("T") == _BUS_SERVO_ERROR_T and data.get("status") == 0:
+                        bus_servo_errors.append(data)
+                    position_found |= _print_response("[passive]", data)
                 except json.JSONDecodeError:
                     logger.debug(f"[passive] raw: {raw!r}")
 
@@ -190,9 +226,10 @@ def probe(port: str, angle_deg: float, duration: float, init_module: bool) -> No
                         continue
                     got = True
                     try:
-                        position_found |= _print_response(
-                            f"[T:{cmd['T']}]", json.loads(raw)
-                        )
+                        data = json.loads(raw)
+                        if data.get("T") == _BUS_SERVO_ERROR_T and data.get("status") == 0:
+                            bus_servo_errors.append(data)
+                        position_found |= _print_response(f"[T:{cmd['T']}]", data)
                     except json.JSONDecodeError:
                         logger.debug(f"[T:{cmd['T']}] raw: {raw!r}")
                 if not got:
@@ -206,16 +243,31 @@ def probe(port: str, angle_deg: float, duration: float, init_module: bool) -> No
                 if not raw:
                     continue
                 try:
-                    position_found |= _print_response("[post-probe]", json.loads(raw))
+                    data = json.loads(raw)
+                    if data.get("T") == _BUS_SERVO_ERROR_T and data.get("status") == 0:
+                        bus_servo_errors.append(data)
+                    position_found |= _print_response("[post-probe]", data)
                 except json.JSONDecodeError:
                     logger.debug(f"[post-probe] raw: {raw!r}")
 
-            if position_found:
-                logger.success("T=1001.pan feedback is available over serial.")
+            # --- Summary ---
+            if bus_servo_errors:
+                ids = sorted({e.get("id") for e in bus_servo_errors})
+                logger.error(
+                    f"DIAGNOSIS: FeedBack() failed {len(bus_servo_errors)} time(s) across all phases "
+                    f"for servo id(s) {ids}. "
+                    "The ESP32 cannot read servo position — T=1001.pan will always be the "
+                    "uninitialised default (-179.9560394). "
+                    "Likely causes: wrong GIMBAL_PAN_ID constant in firmware, "
+                    "servo bus wiring fault, or servo not powered."
+                )
+            elif position_found:
+                logger.success("T=1001.pan feedback is available over serial. No T=1005 errors seen.")
             else:
                 logger.warning(
-                    "No T=1001.pan data found. "
-                    "Re-run with --duration 15 or check firmware version."
+                    "No T=1001.pan data found and no T=1005 bus errors detected. "
+                    "Re-run with --duration 15, or the robot firmware may differ from the "
+                    "ugv_base_ros repo (InfoPrint path may not be compiled in)."
                 )
 
         except serial.SerialException as exc:
