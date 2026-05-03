@@ -1,19 +1,26 @@
-"""Probe whether the Waveshare UGV Rover ESP32 firmware exposes pan servo position.
+"""Probe ESP32 JSON for pan telemetry (`T=1001.pan`) on Waveshare UGV Rover.
 
-Commands the pan-tilt module to a known angle via T=133, then passively listens
-for JSON telemetry. A second phase probes candidate T-codes one at a time and
-logs every response. A final summary reports whether any received JSON field
-resembles angle, position, or pan feedback data.
+The script commands pan with `T=133`, listens passively, then explicitly polls
+`T=130` to fetch `T=1001` telemetry. It also probes related T-codes for context
+while only treating `T=1001.pan` as valid pan position feedback.
 
 Usage
 -----
+    # Run with defaults (port=/dev/ttyAMA0, angle=20, duration=8s)
     ugv-check-pan-tilt-feedback
-    ugv-check-pan-tilt-feedback --port /dev/serial0    # Pi 4B
-    ugv-check-pan-tilt-feedback --angle 30             # command to 30°
-    ugv-check-pan-tilt-feedback --duration 15          # listen for 15 seconds
+
+    # Command different targets
+    ugv-check-pan-tilt-feedback --angle 20
+    ugv-check-pan-tilt-feedback --angle 60
+
+    # Longer capture and alternate port
+    ugv-check-pan-tilt-feedback --duration 15 --port /dev/serial0
+
+    # Skip T=900 init to compare behavior with/without module re-init
+    ugv-check-pan-tilt-feedback --angle 60 --no-init
 
     # Or via python -m:
-    python -m tools.check_pan_tilt_feedback
+    python -m tools.check_pan_tilt_feedback --angle 60 --no-init
 """
 
 from __future__ import annotations
@@ -28,7 +35,7 @@ from loguru import logger
 
 from ugv_follower.utils.camera_preflight import ensure_character_device_available
 
-_POSITION_KEYS = ("x", "X", "pan", "angle", "pos", "position", "servo", "feedback", "deg")
+_PAN_TELEMETRY_T = 1001
 _PROBE_COMMANDS = [
     {"T": 105},
     {"T": 106},
@@ -39,18 +46,52 @@ _PROBE_COMMANDS = [
 ]
 
 
+def _extract_pan(data: dict[str, Any]) -> float | None:
+    """Return pan in degrees only for telemetry payloads with T=1001."""
+    if data.get("T") != _PAN_TELEMETRY_T:
+        return None
+    pan = data.get("pan")
+    if isinstance(pan, (int, float)):
+        return float(pan)
+    return None
+
+
 def _print_response(tag: str, data: dict[str, Any]) -> bool:
-    """Log *data* and return True if any field resembles pan position."""
-    position = next((data[k] for k in _POSITION_KEYS if k in data), None)
-    if position is not None:
-        key = next(k for k in _POSITION_KEYS if k in data)
-        logger.success(f"{tag} Pan position field '{key}': {position}  {data}")
+    """Log data and return True only for `T=1001` with numeric `pan`."""
+    pan = _extract_pan(data)
+    if pan is not None:
+        logger.success(f"{tag} Pan telemetry `T=1001.pan`: {pan}  {data}")
         return True
     logger.debug(f"{tag} {data}")
     return False
 
 
-def probe(port: str, angle_deg: float, duration: float) -> None:
+def _poll_t130_for_pan(ser: serial.Serial, polls: int = 10, wait_s: float = 0.2) -> list[float]:
+    """Poll `T=130` and return all sampled `T=1001.pan` values."""
+    pans: list[float] = []
+    for _ in range(polls):
+        ser.write(b'{"T":130}\n')
+        deadline = time.monotonic() + wait_s
+        while time.monotonic() < deadline:
+            raw = ser.readline().decode("utf-8", errors="replace").strip()
+            if not raw:
+                continue
+            try:
+                data = json.loads(raw)
+            except json.JSONDecodeError:
+                logger.debug(f"[T:130-poll] raw: {raw!r}")
+                continue
+
+            pan = _extract_pan(data)
+            if pan is not None:
+                pans.append(pan)
+                logger.success(f"[T:130-poll] pan={pan}")
+            else:
+                logger.debug(f"[T:130-poll] {data}")
+    return pans
+
+
+def probe(port: str, angle_deg: float, duration: float, init_module: bool) -> None:
     """Probe ESP32 serial output for pan servo position feedback.
 
     Parameters
@@ -86,15 +127,16 @@ def probe(port: str, angle_deg: float, duration: float) -> None:
             time.sleep(0.1)
             position_found = False
 
-            # Initialise chassis with pan-tilt module (module=2).
-            ser.write(
-                json.dumps(
-                    {"T": 900, "main": 2, "module": 2}, separators=(",", ":")
-                ).encode()
-                + b"\n"
-            )
-            time.sleep(0.3)
-            ser.reset_input_buffer()
+            if init_module:
+                # Initialise chassis with pan-tilt module (module=2).
+                ser.write(
+                    json.dumps(
+                        {"T": 900, "main": 2, "module": 2}, separators=(",", ":")
+                    ).encode()
+                    + b"\n"
+                )
+                time.sleep(0.3)
+                ser.reset_input_buffer()
 
             # Command pan to known angle.
             pan_cmd = json.dumps(
@@ -121,6 +163,18 @@ def probe(port: str, angle_deg: float, duration: float) -> None:
 
             if passive_lines == 0:
                 logger.warning("No passive output — ESP32 requires polling.")
+
+            # Phase 1b: explicit poll for T=1001.pan snapshots.
+            logger.debug("--- Phase 1b: explicit T=130 polling ---")
+            polled = _poll_t130_for_pan(ser)
+            if polled:
+                position_found = True
+                logger.info(
+                    "T=130 pan samples: "
+                    f"count={len(polled)} min={min(polled):.6f} max={max(polled):.6f}"
+                )
+            else:
+                logger.warning("T=130 returned no T=1001.pan samples.")
 
             # Phase 2: probe candidate T-codes.
             logger.debug("--- Phase 2: probe T-codes ---")
@@ -157,10 +211,10 @@ def probe(port: str, angle_deg: float, duration: float) -> None:
                     logger.debug(f"[post-probe] raw: {raw!r}")
 
             if position_found:
-                logger.success("Pan servo position feedback IS available over serial.")
+                logger.success("T=1001.pan feedback is available over serial.")
             else:
                 logger.warning(
-                    "No pan position data found. "
+                    "No T=1001.pan data found. "
                     "Re-run with --duration 15 or check firmware version."
                 )
 
@@ -184,8 +238,13 @@ def main() -> None:
         default=8.0,
         help="Total probe duration in seconds (default: 8)",
     )
+    parser.add_argument(
+        "--no-init",
+        action="store_true",
+        help="Skip sending T=900 init before probing.",
+    )
     args = parser.parse_args()
-    probe(args.port, args.angle, args.duration)
+    probe(args.port, args.angle, args.duration, init_module=not args.no_init)
 
 
 if __name__ == "__main__":
