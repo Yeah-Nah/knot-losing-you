@@ -20,7 +20,7 @@ Four root causes identified for the remaining pan servo overcompensation and dam
 
 ---
 
-## Issue 1 — Control-loop latency (fixed sleep + blocking inference)
+## Issue 1 — Control-loop latency (fixed sleep + blocking inference) — COMPLETE
 
 **File:** `ugv-follower/src/ugv_follower/pipeline.py`
 
