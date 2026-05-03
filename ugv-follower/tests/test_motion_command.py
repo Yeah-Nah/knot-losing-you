@@ -50,6 +50,7 @@ from ugv_follower.control.motion_command import (
     MotionCommandSource,
     apply_motion_command,
 )
+from ugv_follower.settings import Settings
 
 parametrize: Any = pytest.mark.parametrize
 
@@ -226,3 +227,20 @@ def test_mode_transition_forces_single_zero_command() -> None:
     assert first.angular_rad_s == 0.0
     assert first.source == MotionCommandSource.MANUAL
     assert second == cmd
+
+
+# ---------------------------------------------------------------------------
+# Settings.loop_period_s
+# ---------------------------------------------------------------------------
+
+
+def test_settings_loop_period_s_default() -> None:
+    s = object.__new__(Settings)
+    s.pipeline_config = {}
+    assert s.loop_period_s == 0.01
+
+
+def test_settings_loop_period_s_custom() -> None:
+    s = object.__new__(Settings)
+    s.pipeline_config = {"loop_period_s": 0.05}
+    assert s.loop_period_s == 0.05

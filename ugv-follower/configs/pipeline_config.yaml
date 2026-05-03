@@ -5,3 +5,4 @@ live_view_enabled: false   # Show camera feed in OpenCV window (disable for head
 recording_enabled: false   # Record camera feed to disk
 output_dir: "output/"      # Output directory (relative to package root)
 stream_port: 0          # HTTP port for MJPEG feed; 0 to disable, 8080 for feed
+loop_period_s: 0.01    # Main control-loop period in seconds

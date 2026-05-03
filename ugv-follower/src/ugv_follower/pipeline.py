@@ -65,7 +65,7 @@ class Pipeline:
         self._mode = PipelineMode.AUTONOMOUS
         self._mode_transition_stop_pending = False
         self._estop_active = False
-        self._loop_period_s = 0.01
+        self._loop_period_s = settings.loop_period_s
         w, h = settings.waveshare_camera_resolution
         self._camera = WaveshareCamera(
             device_index=settings.waveshare_camera_device_index,

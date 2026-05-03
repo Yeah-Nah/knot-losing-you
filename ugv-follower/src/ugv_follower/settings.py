@@ -151,6 +151,11 @@ class Settings:
         return int(self.pipeline_config.get("stream_port", 0))
 
     @property
+    def loop_period_s(self) -> float:
+        """Main control-loop period in seconds."""
+        return float(self.pipeline_config.get("loop_period_s", 0.01))
+
+    @property
     def dev_or_pi(self) -> str:
         """Target runtime environment: ``'dev'`` or ``'pi'``."""
         return str(self.pipeline_config.get("dev_or_pi", "dev"))

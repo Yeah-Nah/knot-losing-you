@@ -16,7 +16,7 @@ Four root causes identified for the remaining pan servo overcompensation and dam
 - Issue 3 (open-loop servo estimate) remains valid and will determine the ceiling on how aggressively gains can be raised after Issues 1 and 2 are fixed.
 - Issue 4 (unused calibration model) is a longer-term accuracy improvement, lower urgency.
 
-**Revised priority order: Issue 2 → Issue 1 → Issue 3 → Issue 4**
+**Revised priority order: Issue 2 → Issue 1 → Issue 5 → Issue 3 → Issue 4**
 
 ---
 
@@ -85,3 +85,30 @@ None of this is currently read by the runtime pan pipeline. `Settings` only expo
 - The commanded angle is sent directly without inversion through the calibrated curve, so a 10° command may only produce ~9° of actual travel (or less), causing systematic under-correction that the integrating loop then compensates for in the next cycle, again overshooting.
 
 **Goal:** Expose the calibrated curve and backlash data through `Settings` and apply the inverse mapping in `PanController` (or a new servo model layer) so commanded angles are pre-compensated for known nonlinearity and the hardware dead band is respected.
+
+---
+
+## Issue 5 — Fixed loop sleep still throttles response (replace with adaptive pacing)
+
+**File:** `ugv-follower/src/ugv_follower/pipeline.py`
+
+Although `dt` is now measured per iteration and pan delta is scaled by elapsed time, the main loop still ends with a fixed sleep (`time.sleep(self._loop_period_s)` with `_loop_period_s = 0.1`). This enforces an additional 100 ms idle delay every cycle regardless of how quickly camera read and inference complete.
+
+In practice this limits the control update rate and increases reaction lag when the target changes direction quickly. The system can therefore still feel hesitant even after stale-frame buffering and `dt` scaling improvements.
+
+Setting the loop period to zero removes this delay but can create a tight busy loop (high CPU load, timing jitter, and noisy command updates). A more robust approach is adaptive pacing:
+
+```python
+target_period_s = 0.02  # example: 50 Hz cap
+loop_start = time.monotonic()
+
+# ... read sensors, run inference, update control ...
+
+elapsed = time.monotonic() - loop_start
+sleep_s = max(0.0, target_period_s - elapsed)
+time.sleep(sleep_s)
+```
+
+This keeps a bounded maximum loop rate when processing is fast, while automatically skipping extra sleep when processing is slow.
+
+**Goal:** Replace fixed end-of-loop sleep with adaptive pacing so control latency is minimized without introducing a CPU-saturating busy loop.
