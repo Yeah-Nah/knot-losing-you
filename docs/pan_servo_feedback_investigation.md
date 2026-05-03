@@ -140,6 +140,56 @@ The T=1001 `pan` and `tilt` fields are sourced from `gimbalFeedback[].pos` via `
 
 ---
 
+## Latest Confirmation (May 2026)
+
+The lower-controller firmware mapping has now been cross-checked against `waveshareteam/ugv_base_general` (described by Waveshare as the lower computer program).
+
+Confirmed definitions:
+
+```cpp
+#define CMD_BASE_FEEDBACK 130
+#define FEEDBACK_BASE_INFO 1001
+#define CMD_BUS_SERVO_ERROR 1005
+```
+
+Confirmed dispatch path:
+
+```cpp
+case CMD_BASE_FEEDBACK:
+  baseInfoFeedback();
+  break;
+```
+
+Confirmed gimbal telemetry path:
+
+- `baseInfoFeedback()` sets `jsonInfoHttp["T"] = FEEDBACK_BASE_INFO`.
+- In gimbal mode (`moduleType == 2`), it publishes:
+  - `pan = panAngleCompute(gimbalFeedback[0].pos)`
+  - `tilt = tiltAngleCompute(gimbalFeedback[1].pos)`
+
+Confirmed feedback-read gate:
+
+- `getGimbalFeedback()` updates `gimbalFeedback[]` only when `st.FeedBack(GIMBAL_*) != -1`.
+- On failure and `InfoPrint == 1`, firmware emits `{"T":1005,"id":...,"status":0}`.
+
+Confirmed expected gimbal IDs in this firmware family:
+
+```cpp
+#define GIMBAL_PAN_ID  2
+#define GIMBAL_TILT_ID 1
+```
+
+### Implication
+
+This conclusively rules out "wrong telemetry command" as the root cause:
+
+- `T=130` is the request.
+- `T=1001` is the response payload.
+
+Your probe output (continuous `T=1005` with stuck `T=1001.pan`) is consistent with readback failure on the servo bus, not protocol misunderstanding.
+
+---
+
 ## Probable Failure Points (Ranked)
 
 ### 1. ~~`FeedBack()` / `ReadPos()` not called per telemetry cycle~~ — RULED OUT
@@ -158,6 +208,8 @@ If T=1005 is observed:
 - Check `GIMBAL_PAN_ID` constant in firmware matches the physical servo's programmed ID
 - Check servo bus wiring (single-wire half-duplex, correct pin)
 - Check servo power
+
+Additional signal from latest run: repeated `T=1005` was observed for multiple IDs (`1`, `2`, and probe-visible IDs such as `11/12/14/15`). This broad failure pattern increases confidence that the problem is a generic readback-path issue (half-duplex RX direction / bus layer), not only a single wrong pan ID.
 
 ---
 
@@ -200,9 +252,9 @@ ugv-check-pan-tilt-feedback --port /dev/ttyAMA0 --angle 30
 
 ### If FeedBack() failure confirmed (T=1005 seen)
 
-1. **Verify servo ID** — confirm `GIMBAL_PAN_ID` in firmware matches the ID physically programmed into the servo. Factory default for ST3215 is typically ID 1.
-2. **Check half-duplex direction pin** — scope the bus pin during a `FeedBack()` call (failure point #5). This is the most likely hardware-level cause.
-3. **Check servo power and bus wiring** — verify the servo bus signal wire reaches the ESP32's expected UART pin.
+1. **Check half-duplex direction pin first** — scope the bus direction/DE pin during `FeedBack()` (most likely cause when many IDs fail readback).
+2. **Check servo power and bus wiring** — verify signal continuity, shared ground, and stable servo supply under motion.
+3. **Verify servo IDs** — confirm physical gimbal IDs match firmware expectations (`PAN=2`, `TILT=1`) or update firmware constants accordingly.
 
 ### If no T=1005 and pan still stuck
 
