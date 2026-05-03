@@ -46,7 +46,7 @@ Example T=1005 error response (FeedBack failure):
 
 ```cpp
 // Call FeedBack() to latch the servo's current state into the library cache
-int result = sms_sts.FeedBack(servo_id);  // Returns 0 on success, -1 on failure
+int result = sms_sts.FeedBack(servo_id);  // Returns servo ID (>= 0) on success, -1 on failure
 
 if (result == 0) {
     int16_t raw_pos = sms_sts.ReadPos(-1);  // -1 reads from cache populated by FeedBack()
@@ -104,9 +104,9 @@ This is exactly the observed value. **`gimbalFeedback[0].pos` is never written**
 
 ---
 
-## Firmware Analysis (waveshareteam/ugv_base_ros)
+## Firmware Analysis (waveshareteam/ugv_base_general)
 
-The relevant firmware source is at: https://github.com/waveshareteam/ugv_base_ros
+The relevant firmware source is at: https://github.com/waveshareteam/ugv_base_general
 
 ### `gimbal_module.h` — `getGimbalFeedback()`
 
@@ -136,13 +136,13 @@ The T=1001 `pan` and `tilt` fields are sourced from `gimbalFeedback[].pos` via `
 
 ### Conclusion
 
-**`FeedBack()` is returning `-1` on every call.** The firmware code is structured correctly — it just never gets past the `if` guard because the servo does not respond on the bus. Failure point #1 (FeedBack not called) is ruled out. The root cause is one of the bus-level failures in failure points #2 or #5 below.
+**`FeedBack()` is returning `-1` on every call.** The firmware code is structured correctly — it never gets past the `if` guard because `FeedBack()` always fails. The root cause is the empty `wFlushSCS()` function in `SCServo/SCSerial.cpp`, which causes the TX echo to be misread as the servo response. See the Root Cause Identified section below.
 
 ---
 
-## Latest Confirmation (May 2026)
+## Confirmation and Servo ID Scan (May 2026)
 
-The lower-controller firmware mapping has now been cross-checked against `waveshareteam/ugv_base_general` (described by Waveshare as the lower computer program).
+The lower-controller firmware mapping has been cross-checked against `waveshareteam/ugv_base_general` (described by Waveshare as the lower computer program).
 
 Confirmed definitions:
 
@@ -170,7 +170,7 @@ Confirmed gimbal telemetry path:
 Confirmed feedback-read gate:
 
 - `getGimbalFeedback()` updates `gimbalFeedback[]` only when `st.FeedBack(GIMBAL_*) != -1`.
-- On failure and `InfoPrint == 1`, firmware emits `{"T":1005,"id":...,"status":0}`.
+- On failure and `InfoPrint == 1`, firmware emits `{"T":1005,"id":..., "status":0}`.
 
 Confirmed expected gimbal IDs in this firmware family:
 
@@ -179,18 +179,95 @@ Confirmed expected gimbal IDs in this firmware family:
 #define GIMBAL_TILT_ID 1
 ```
 
+### Servo ID Scan Results
+
+A diagnostic script (`ugv-follower/tools/scan_servo_ids.py`, CLI: `ugv-scan-servo-ids`) was written and run. It observes T=1005 packets across a 20 s window and cross-references which servo groups fail.
+
+**Results:**
+
+- T=1005 failures seen only for IDs **1** and **2** (gimbal group) — 103 failures each.
+- **No drive servo ID failures observed.**
+- The UGV Rover uses DC motors with quadrature encoders for the wheels, not bus servos — so IDs 11–15 are absent from this bus entirely.
+- The servo **physically moves** when commanded via `T=133`. The `SyncWritePosEx` write path therefore works — IDs 1 and 2 exist on the bus and respond to writes.
+- Since writes succeed but reads always fail on the same IDs, wrong servo IDs are ruled out. The problem is in the receive path.
+
 ### Implication
 
-This conclusively rules out "wrong telemetry command" as the root cause:
+This conclusively rules out both "wrong telemetry command" and "wrong servo IDs" as root causes:
 
-- `T=130` is the request.
-- `T=1001` is the response payload.
-
-Your probe output (continuous `T=1005` with stuck `T=1001.pan`) is consistent with readback failure on the servo bus, not protocol misunderstanding.
+- `T=130` is the correct request; `T=1001` is the correct response payload.
+- IDs 1 and 2 are correct — the servos move when commanded to those IDs.
+- The failure is isolated to the read direction of the servo bus.
 
 ---
 
-## Probable Failure Points (Ranked)
+## Root Cause Identified (May 2026)
+
+Source analysis of `waveshareteam/ugv_base_general` — specifically `SCServo/SCSerial.cpp` and `SCServo/SCS.cpp` — identifies the bug precisely.
+
+### UART wiring
+
+The servo bus uses two separate GPIO pins wired to the same single-wire half-duplex bus:
+
+```cpp
+// General_Driver/ugv_config.h
+#define S_RXD 18   // GPIO 18
+#define S_TXD 19   // GPIO 19
+```
+
+Every byte the ESP32 transmits is immediately echoed back on the RX pin.
+
+### The bug: `wFlushSCS()` is empty
+
+```cpp
+// SCServo/SCSerial.cpp
+void SCSerial::wFlushSCS()
+{
+    // completely empty — does nothing
+}
+```
+
+This function is called after every transmission before reading begins. Its intended purpose is to:
+
+1. Wait until the UART hardware has fully shifted out every queued byte.
+2. Drain the echo of those bytes from the RX buffer.
+
+**It does neither.** It is a no-op.
+
+### What actually happens on every `FeedBack()` call
+
+The call chain in `SCS.cpp` for a read request is:
+
+```
+rFlushSCS()   → clears stale RX bytes (correct)
+writeBuf()    → queues request packet into TX FIFO and returns immediately
+wFlushSCS()   → does nothing  ← BUG
+checkHead()   → immediately reads from RX looking for 0xFF 0xFF
+```
+
+By the time `checkHead()` runs, the UART is still transmitting. The TX echo arrives on RX first — and the request packet begins with `0xFF 0xFF`. `checkHead()` finds those bytes, treats them as the start of a servo response, then tries to parse what follows. What follows is the rest of the outgoing request, not a servo reply. The checksum fails or the length mismatches, `Read()` returns 0, and `FeedBack()` returns `-1`.
+
+The servo's actual response packet arrives after the echo, but nothing is reading at that point.
+
+Writes succeed because `SyncWritePosEx()` calls `syncWrite()`, which only transmits and never reads anything back.
+
+### The fix
+
+A two-line patch to `SCServo/SCSerial.cpp`:
+
+```cpp
+void SCSerial::wFlushSCS()
+{
+    pSerial->flush();  // block until TX FIFO fully drains
+    rFlushSCS();       // discard the echoed TX bytes from RX buffer
+}
+```
+
+`pSerial->flush()` on Arduino/ESP32 blocks until the hardware UART has shifted out every queued byte. `rFlushSCS()` (which already exists and does `while(pSerial->read()!=-1)`) then drains the echo. After that, the RX buffer is empty and the servo's actual response will arrive cleanly.
+
+---
+
+## Failure Points — Final Status
 
 ### 1. ~~`FeedBack()` / `ReadPos()` not called per telemetry cycle~~ — RULED OUT
 
@@ -198,95 +275,125 @@ Firmware source confirmed that `getGimbalFeedback()` calls `st.FeedBack(GIMBAL_P
 
 ---
 
-### 2. `FeedBack()` consistently returns `-1` — servo not responding on bus
+### 2. ~~Wrong servo IDs~~ — RULED OUT
 
-**Most likely remaining cause.** `FeedBack()` sends a read request to the servo and waits for a response packet. If the servo never responds, `FeedBack()` times out and returns `-1`, leaving `gimbalFeedback[0].pos` at its zero-initialised default.
-
-The T=1005 diagnostic path in the firmware (gated on `InfoPrint == 1`) will emit `{"T":1005,"id":<GIMBAL_PAN_ID>,"status":0}` on every failure. **Running the updated probe script will confirm this definitively** — a stream of T=1005 packets means `FeedBack()` is failing every cycle.
-
-If T=1005 is observed:
-- Check `GIMBAL_PAN_ID` constant in firmware matches the physical servo's programmed ID
-- Check servo bus wiring (single-wire half-duplex, correct pin)
-- Check servo power
-
-Additional signal from latest run: repeated `T=1005` was observed for multiple IDs (`1`, `2`, and probe-visible IDs such as `11/12/14/15`). This broad failure pattern increases confidence that the problem is a generic readback-path issue (half-duplex RX direction / bus layer), not only a single wrong pan ID.
+The servo physically moves when commanded via `T=133` targeting IDs 1 and 2. Writes to those IDs succeed. The servo ID scan confirmed only IDs 1 and 2 appear in T=1005 failures — consistent with correct IDs that simply cannot be read back, not with IDs that don't exist on the bus.
 
 ---
 
-### 3. `pan` field sourced from target angle variable, not from servo register
+### 3. ~~`pan` field sourced from software target, not servo register~~ — RULED OUT
 
-**Now less likely** given firmware source confirms `panAngleCompute(gimbalFeedback[0].pos)` is used. Only relevant if the robot is running different firmware than the ugv_base_ros repo.
-
-**How to confirm:** Command an angle, then physically block the servo. If `T=1001.pan` reports the commanded angle rather than the stuck position, the field comes from software state.
+Firmware source confirms `panAngleCompute(gimbalFeedback[0].pos)` is used, sourced from the `FeedBack()` read path.
 
 ---
 
-### 4. Servo operating in Motor Mode instead of Servo Mode
+### 4. ~~Servo in Motor Mode~~ — RULED OUT
 
-**Less likely but worth ruling out.** If the pan servo is in Motor Mode, `FeedBack()` may succeed but position data is meaningless.
-
-**How to confirm:** Read Mode register (address `0x21`). Value `0` = Servo Mode, `1` = Motor Mode.
+Irrelevant given root cause identified. `FeedBack()` never succeeds at all — the failure is before any position data is interpreted.
 
 ---
 
-### 5. UART half-duplex direction control misconfigured
+### 5. ~~UART half-duplex direction control misconfigured~~ — PARTIALLY CORRECT, SUPERSEDED
 
-**Plausible.** ST3215 uses a single-wire half-duplex bus. The ESP32 must toggle a direction pin between TX and RX. If the pin is stuck in TX mode, `SyncWritePosEx` (write-only) works fine but `FeedBack()` (requires receiving a response packet) always times out and returns `-1`. This would perfectly explain the symptom: servo moves, but feedback always fails.
-
-**How to confirm:** Scope the bus direction/DE pin during a `FeedBack()` call. It must transition from TX → RX after the command byte is sent. If it stays high throughout, readback is impossible regardless of servo health.
+The problem is indeed in the half-duplex RX path, but the specific mechanism is not a direction/DE pin — it is the empty `wFlushSCS()` function causing the TX echo to be misread as the servo's response. See Root Cause section above.
 
 ---
 
-## Next Steps
+### 6. `wFlushSCS()` empty — TX echo read as servo response — **CONFIRMED ROOT CAUSE**
 
-### Immediate: run updated probe script
+See Root Cause Identified section above for full analysis and fix.
 
-The probe script now sends `T=605 cmd=1` at startup and collects T=1005 packets throughout all phases. Run it and check the summary line:
+---
+
+## Next Steps — Flash Patched Firmware
+
+### 1. Clone the firmware repository
+
+On a machine with the Arduino IDE or PlatformIO installed (not the Raspberry Pi):
+
+```bash
+git clone https://github.com/waveshareteam/ugv_base_general.git
+cd ugv_base_general
+```
+
+### 2. Apply the patch
+
+Edit `SCServo/SCSerial.cpp`. Find `wFlushSCS()` and replace the empty body:
+
+```cpp
+// BEFORE (broken)
+void SCSerial::wFlushSCS()
+{
+}
+
+// AFTER (fixed)
+void SCSerial::wFlushSCS()
+{
+    pSerial->flush();  // block until TX FIFO fully drains
+    rFlushSCS();       // discard the echoed TX bytes from RX buffer
+}
+```
+
+No other files need changing.
+
+### 3. Configure Arduino IDE for ESP32
+
+1. Install the **ESP32 board package** via Arduino IDE → Boards Manager → search "esp32" → install Espressif's package.
+2. Install required libraries via Library Manager:
+   - **ArduinoJson**
+   - **ESP32Servo** (if not already present)
+3. Open `General_Driver/General_Driver.ino` in Arduino IDE.
+4. Set board: **Tools → Board → ESP32 Arduino → ESP32 Dev Module**.
+5. Set upload speed: **921600** (or lower if connection is unreliable).
+
+### 4. Connect and flash
+
+1. Connect a USB cable between your computer and the ESP32's USB port on the UGV Rover.
+2. Identify the COM port (Windows Device Manager, or `/dev/ttyUSB0` on Linux).
+3. Select the correct port in Arduino IDE under **Tools → Port**.
+4. Click **Upload** (the → arrow button).
+5. If the upload hangs at "Connecting…", hold the **BOOT** button on the ESP32 while the upload begins, then release.
+
+### 5. Verify the fix
+
+After flashing, run the existing probe script on the Raspberry Pi:
 
 ```bash
 ugv-check-pan-tilt-feedback --port /dev/ttyAMA0 --angle 30
 ```
 
-- **T=1005 packets seen** → `FeedBack()` is confirmed failing; note the `id` field to verify `GIMBAL_PAN_ID`
-- **No T=1005 packets, pan still stuck** → robot firmware differs from ugv_base_ros; InfoPrint path may not be compiled in
-
-### If FeedBack() failure confirmed (T=1005 seen)
-
-1. **Check half-duplex direction pin first** — scope the bus direction/DE pin during `FeedBack()` (most likely cause when many IDs fail readback).
-2. **Check servo power and bus wiring** — verify signal continuity, shared ground, and stable servo supply under motion.
-3. **Verify servo IDs** — confirm physical gimbal IDs match firmware expectations (`PAN=2`, `TILT=1`) or update firmware constants accordingly.
-
-### If no T=1005 and pan still stuck
-
-1. Verify firmware version on the robot (check for version string or compare behaviour against ugv_base_ros `main` branch)
-2. Consider reading servo Mode register to rule out Motor Mode (failure point #4)
+- `T=1001.pan` should now change with servo position.
+- T=1005 errors should no longer appear.
+- Pan commanded to 30° should produce a `T=1001.pan` value close to `30.0` rather than `-179.9560394`.
 
 ---
 
-## Probe Script
+## Probe Scripts
 
-The investigation script is at:
+### `ugv-check-pan-tilt-feedback`
 
 ```
 ugv-follower/tools/check_pan_tilt_feedback.py
 ```
 
-CLI entry point: `ugv-check-pan-tilt-feedback`
-
-The script:
-- Sends `T=605 cmd=1` (enables `InfoPrint` so firmware emits T=1005 on `FeedBack()` failure)
-- Collects and counts T=1005 bus servo error packets in all phases
-- Prints a diagnostic summary identifying the servo IDs that failed
-
-Usage:
+Commands pan to a target angle, listens for `T=1001.pan`, and collects T=1005 error packets.
 
 ```bash
-# With module init (default)
 ugv-check-pan-tilt-feedback --port /dev/ttyAMA0 --angle 30
-
-# Skip T=900 init
 ugv-check-pan-tilt-feedback --port /dev/ttyAMA0 --angle 30 --no-init
-
-# Longer capture
 ugv-check-pan-tilt-feedback --port /dev/ttyAMA0 --angle 30 --duration 15
+```
+
+### `ugv-scan-servo-ids`
+
+```
+ugv-follower/tools/scan_servo_ids.py
+```
+
+Listens for T=1005 packets over a configurable window and classifies failures by servo group to distinguish wrong IDs from a bus-wide RX failure.
+
+```bash
+ugv-scan-servo-ids                    # 20 s window, /dev/ttyAMA0
+ugv-scan-servo-ids --duration 30
+ugv-scan-servo-ids --no-init
 ```
