@@ -4,4 +4,4 @@ inference_enabled: True   # Run YOLO person detection on each frame (requires YO
 live_view_enabled: false   # Show camera feed in OpenCV window (disable for headless Pi)
 recording_enabled: false   # Record camera feed to disk
 output_dir: "output/"      # Output directory (relative to package root)
-stream_port: 8080          # HTTP port for MJPEG feed; 0 to disable, 8080 for feed
+stream_port: 0          # HTTP port for MJPEG feed; 0 to disable, 8080 for feed
