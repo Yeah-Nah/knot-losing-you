@@ -112,3 +112,23 @@ time.sleep(sleep_s)
 This keeps a bounded maximum loop rate when processing is fast, while automatically skipping extra sleep when processing is slow.
 
 **Goal:** Replace fixed end-of-loop sleep with adaptive pacing so control latency is minimized without introducing a CPU-saturating busy loop.
+
+---
+
+## Issue 6 — Hysteresis is applied after gain scaling
+
+**File:** `ugv-follower/src/ugv_follower/control/pan_controller.py`
+
+`PanController` currently applies proportional gain first and then checks the hysteresis thresholds against the scaled error. This couples `tracking_gain_kp` and the effective deadband size:
+
+```python
+scaled = self._gain_kp * corrected
+if within_deadband(scaled, enter_deg, -enter_deg):
+	...
+```
+
+As a result, reducing `tracking_gain_kp` does not just make motion gentler — it also makes the raw heading error required to exit hold much larger. This can make low-gain tuning look artificially slow or pause-heavy, while raising gain can reduce hesitation but reintroduce overshoot.
+
+Applying hysteresis to the raw corrected heading, and only then applying gain to the motion command, would decouple “when to move” from “how aggressively to move.”
+
+**Goal:** Evaluate whether hysteresis should be applied to raw corrected heading error rather than gain-scaled error so deadband behaviour remains consistent across gain changes.
