@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import threading
 import time
 
 import serial
@@ -71,6 +72,7 @@ class UGVController:
         self._chassis_module = chassis_module
         self._track_width = track_width
         self._serial: serial.Serial | None = None
+        self._serial_lock = threading.Lock()
         self._shaper: CommandShaper | None = (
             CommandShaper(
                 send_fn=self._send_wheel_speeds,
@@ -97,7 +99,8 @@ class UGVController:
         if self._serial is None or not self._serial.is_open:
             raise RuntimeError("Serial port is not open. Call connect() first.")
         payload = json.dumps(command, separators=(",", ":")) + "\n"
-        self._serial.write(payload.encode("utf-8"))
+        with self._serial_lock:
+            self._serial.write(payload.encode("utf-8"))
         logger.debug(f"Sent: {payload.strip()}")
 
     def _send_wheel_speeds(self, left: float, right: float) -> None:
@@ -123,7 +126,7 @@ class UGVController:
         Starts the command-shaping thread if shaping is enabled.
         """
         logger.info(f"Connecting to UGV on {self._port} at {self._baud_rate} baud...")
-        self._serial = serial.Serial(self._port, self._baud_rate, timeout=1)
+        self._serial = serial.Serial(self._port, self._baud_rate, timeout=0.1)
         time.sleep(0.1)  # Allow ESP32 to settle after port open
         self._send(
             {"T": 900, "main": self._chassis_main, "module": self._chassis_module}
@@ -198,3 +201,27 @@ class UGVController:
         """
         self._send({"T": 133, "X": x_deg, "Y": y_deg, "SPD": 0, "ACC": 0})
         logger.info(f"Pan-tilt set to ({x_deg}°, {y_deg}°).")
+
+    def query_pan_deg(self, timeout_s: float = 0.1) -> float | None:
+        """Send T=130 and return the measured pan angle in degrees from the T=1001 response.
+
+        Returns None if the port is closed, no response arrives within *timeout_s*,
+        or the response does not contain a numeric pan field.
+        """
+        if self._serial is None or not self._serial.is_open:
+            return None
+        with self._serial_lock:
+            self._serial.write(b'{"T":130}\n')
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline:
+            raw = self._serial.readline().decode("utf-8", errors="replace").strip()
+            if raw:
+                try:
+                    data = json.loads(raw)
+                    if data.get("T") == 1001:
+                        pan = data.get("pan")
+                        if isinstance(pan, (int, float)):
+                            return float(pan)
+                except json.JSONDecodeError:
+                    pass
+        return None

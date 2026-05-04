@@ -192,6 +192,7 @@ class PanController:
         bbox_centre_u: float | None,
         bbox_centre_v: float | None,
         dt: float,
+        measured_pan_deg: float | None = None,
     ) -> float | None:
         """Compute a pan command from a detection centroid.
 
@@ -209,6 +210,11 @@ class PanController:
         dt : float
             Elapsed time in seconds since the previous call. Used to scale
             the slew rate cap (``delta_max_deg_per_s``) to a per-step limit.
+        measured_pan_deg : float | None
+            Actual servo position in degrees read from hardware this cycle.
+            When provided, delta is applied from this measured base instead of
+            the accumulated commanded position, closing the control loop.
+            Falls back to the accumulated estimate when ``None``.
 
         Returns
         -------
@@ -257,13 +263,16 @@ class PanController:
         # 3. Delta clamp: cap command change by elapsed time (slew rate limit in deg/s).
         delta_max_this_step = self._delta_max_deg_per_s * dt
         delta = max(-delta_max_this_step, min(delta_max_this_step, scaled))
-        target_pan = self._current_pan_deg + delta
+        base_pan = measured_pan_deg if measured_pan_deg is not None else self._current_pan_deg
+        target_pan = base_pan + delta
         new_pan = clamp_pan(target_pan, self._cmd_min_deg, self._cmd_max_deg)
         self._current_pan_deg = new_pan
         logger.debug(
-            "Pan: corrected={:.2f}°, scaled={:.2f}°, delta={:.2f}°, pan_cmd={:.2f}°.",
+            "Pan: corrected={:.2f}°, scaled={:.2f}°, base={:.2f}°({}), delta={:.2f}°, pan_cmd={:.2f}°.",
             corrected,
             scaled,
+            base_pan,
+            "measured" if measured_pan_deg is not None else "accumulated",
             delta,
             new_pan,
         )

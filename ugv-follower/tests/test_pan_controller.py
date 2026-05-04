@@ -307,3 +307,36 @@ def test_hysteresis_enter_hold_and_exit() -> None:
     u_exit = _CX + _FX * math.tan(math.radians(7.0))
     result_d = ctrl.update(u_exit, _CY, dt=0.1)
     assert result_d is not None, "Phase D: expected command (exited hold)"
+
+
+# ---------------------------------------------------------------------------
+# Closed-loop measured_pan_deg parameter
+# ---------------------------------------------------------------------------
+
+
+def test_update_uses_measured_pan_as_base() -> None:
+    """When measured_pan_deg is provided, delta is applied from measured position not accumulated."""
+    ctrl = _make_controller(gain_kp=1.0, delta_max_deg_per_s=900.0)
+    # Prime accumulated to non-zero
+    ctrl.update(_CX + 100.0, _CY, dt=0.1)
+    assert ctrl.current_pan_deg != pytest.approx(0.0, abs=0.5)
+    # With measured=0.0, base resets to 0 — result is ~delta only
+    result_measured = ctrl.update(_CX + 100.0, _CY, dt=0.1, measured_pan_deg=0.0)
+    # Open-loop controller in same state would add delta to accumulated (larger result)
+    ctrl2 = _make_controller(gain_kp=1.0, delta_max_deg_per_s=900.0)
+    ctrl2.update(_CX + 100.0, _CY, dt=0.1)
+    result_open_loop = ctrl2.update(_CX + 100.0, _CY, dt=0.1)
+    assert result_measured is not None
+    assert result_open_loop is not None
+    assert result_measured < result_open_loop  # closed-loop < open-loop when accumulated > 0
+
+
+def test_update_falls_back_to_accumulated_when_measured_none() -> None:
+    """measured_pan_deg=None falls back to accumulated state (backward-compatible)."""
+    ctrl = _make_controller(gain_kp=1.0, delta_max_deg_per_s=900.0)
+    ctrl.update(_CX + 100.0, _CY, dt=0.1)
+    ctrl2 = _make_controller(gain_kp=1.0, delta_max_deg_per_s=900.0)
+    ctrl2.update(_CX + 100.0, _CY, dt=0.1)
+    result_none = ctrl.update(_CX + 100.0, _CY, dt=0.1, measured_pan_deg=None)
+    result_default = ctrl2.update(_CX + 100.0, _CY, dt=0.1)
+    assert result_none == pytest.approx(result_default)

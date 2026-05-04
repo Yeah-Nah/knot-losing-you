@@ -347,7 +347,8 @@ class Pipeline:
         dt : float
             Elapsed time in seconds since the previous control iteration.
         """
-        pan_cmd = self._pan_controller.update(bbox_centre_u, bbox_centre_v, dt)
+        measured_pan = self._ugv.query_pan_deg()
+        pan_cmd = self._pan_controller.update(bbox_centre_u, bbox_centre_v, dt, measured_pan)
         if pan_cmd is not None:
             self._ugv.set_pan_tilt(pan_cmd, self._settings.pan_tilt_setpoint_deg)
 
