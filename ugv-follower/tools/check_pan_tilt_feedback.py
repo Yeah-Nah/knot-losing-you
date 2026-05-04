@@ -13,6 +13,10 @@ A stream of T=1005 packets confirms that `FeedBack()` is failing every cycle
 (root cause of the constant -179.9560394 reading), pointing to a bus-level
 problem: wrong servo ID, wiring fault, or baud mismatch on the servo bus.
 
+Note: on UGV Rover, only gimbal IDs 1 and 2 are relevant for pan/tilt
+diagnosis. T=1005 packets for other IDs (e.g. arm profiles) are reported as
+informational and do not count as pan feedback failure.
+
 Usage
 -----
     # Run with defaults (port=/dev/ttyAMA0, angle=20, duration=8s)
@@ -46,6 +50,7 @@ from ugv_follower.utils.camera_preflight import ensure_character_device_availabl
 
 _PAN_TELEMETRY_T = 1001
 _BUS_SERVO_ERROR_T = 1005
+_GIMBAL_SERVO_IDS = {1, 2}
 _PROBE_COMMANDS = [
     {"T": 105},
     {"T": 106},
@@ -71,11 +76,17 @@ def _check_bus_servo_error(tag: str, data: dict[str, Any]) -> bool:
     if data.get("T") != _BUS_SERVO_ERROR_T:
         return False
     if data.get("status") == 0:
-        logger.error(
-            f"{tag} BUS SERVO FEEDBACK FAILURE: FeedBack() returned -1 for "
-            f"servo id={data.get('id')}. ESP32 cannot read servo position. "
-            "Check: servo ID constant in firmware, bus wiring, servo power."
-        )
+        servo_id = data.get("id")
+        if isinstance(servo_id, int) and servo_id in _GIMBAL_SERVO_IDS:
+            logger.error(
+                f"{tag} GIMBAL BUS FEEDBACK FAILURE: FeedBack() returned -1 for "
+                f"servo id={servo_id}. ESP32 cannot read gimbal position. "
+                "Check gimbal ID constants, servo bus wiring, and servo power."
+            )
+        else:
+            # Non-gimbal IDs are expected on some firmware profiles; do not spam logs
+            # per packet. We report aggregated non-gimbal IDs once in the final summary.
+            pass
     else:
         logger.warning(f"{tag} T=1005 servo status: {data}")
     return True
@@ -84,6 +95,16 @@ def _check_bus_servo_error(tag: str, data: dict[str, Any]) -> bool:
 def _print_response(tag: str, data: dict[str, Any]) -> bool:
     """Log data and return True only for `T=1001` with numeric `pan`."""
     _check_bus_servo_error(tag, data)
+
+    # Suppress per-packet logs for non-gimbal T=1005 errors. These IDs are
+    # aggregated and reported once in the final summary.
+    if (
+        data.get("T") == _BUS_SERVO_ERROR_T
+        and data.get("status") == 0
+        and not (isinstance(data.get("id"), int) and data.get("id") in _GIMBAL_SERVO_IDS)
+    ):
+        return False
+
     pan = _extract_pan(data)
     if pan is not None:
         logger.success(f"{tag} Pan telemetry `T=1001.pan`: {pan}  {data}")
@@ -152,7 +173,8 @@ def probe(port: str, angle_deg: float, duration: float, init_module: bool) -> No
         try:
             time.sleep(0.1)
             position_found = False
-            bus_servo_errors: list[dict[str, Any]] = []
+            gimbal_bus_servo_errors: list[dict[str, Any]] = []
+            non_gimbal_bus_servo_errors: list[dict[str, Any]] = []
 
             if init_module:
                 # Initialise chassis with pan-tilt module (module=2).
@@ -192,7 +214,11 @@ def probe(port: str, angle_deg: float, duration: float, init_module: bool) -> No
                 try:
                     data = json.loads(raw)
                     if data.get("T") == _BUS_SERVO_ERROR_T and data.get("status") == 0:
-                        bus_servo_errors.append(data)
+                        servo_id = data.get("id")
+                        if isinstance(servo_id, int) and servo_id in _GIMBAL_SERVO_IDS:
+                            gimbal_bus_servo_errors.append(data)
+                        else:
+                            non_gimbal_bus_servo_errors.append(data)
                     position_found |= _print_response("[passive]", data)
                 except json.JSONDecodeError:
                     logger.debug(f"[passive] raw: {raw!r}")
@@ -228,7 +254,11 @@ def probe(port: str, angle_deg: float, duration: float, init_module: bool) -> No
                     try:
                         data = json.loads(raw)
                         if data.get("T") == _BUS_SERVO_ERROR_T and data.get("status") == 0:
-                            bus_servo_errors.append(data)
+                            servo_id = data.get("id")
+                            if isinstance(servo_id, int) and servo_id in _GIMBAL_SERVO_IDS:
+                                gimbal_bus_servo_errors.append(data)
+                            else:
+                                non_gimbal_bus_servo_errors.append(data)
                         position_found |= _print_response(f"[T:{cmd['T']}]", data)
                     except json.JSONDecodeError:
                         logger.debug(f"[T:{cmd['T']}] raw: {raw!r}")
@@ -245,29 +275,42 @@ def probe(port: str, angle_deg: float, duration: float, init_module: bool) -> No
                 try:
                     data = json.loads(raw)
                     if data.get("T") == _BUS_SERVO_ERROR_T and data.get("status") == 0:
-                        bus_servo_errors.append(data)
+                        servo_id = data.get("id")
+                        if isinstance(servo_id, int) and servo_id in _GIMBAL_SERVO_IDS:
+                            gimbal_bus_servo_errors.append(data)
+                        else:
+                            non_gimbal_bus_servo_errors.append(data)
                     position_found |= _print_response("[post-probe]", data)
                 except json.JSONDecodeError:
                     logger.debug(f"[post-probe] raw: {raw!r}")
 
             # --- Summary ---
-            if bus_servo_errors:
-                ids = sorted({e.get("id") for e in bus_servo_errors})
+            if gimbal_bus_servo_errors:
+                ids = sorted({e.get("id") for e in gimbal_bus_servo_errors})
                 logger.error(
-                    f"DIAGNOSIS: FeedBack() failed {len(bus_servo_errors)} time(s) across all phases "
-                    f"for servo id(s) {ids}. "
-                    "The ESP32 cannot read servo position — T=1001.pan will always be the "
+                    f"DIAGNOSIS: Gimbal FeedBack() failed {len(gimbal_bus_servo_errors)} time(s) "
+                    f"across all phases for servo id(s) {ids}. "
+                    "The ESP32 cannot read gimbal position — T=1001.pan will always be the "
                     "uninitialised default (-179.9560394). "
-                    "Likely causes: wrong GIMBAL_PAN_ID constant in firmware, "
+                    "Likely causes: wrong gimbal ID constants in firmware, "
                     "servo bus wiring fault, or servo not powered."
                 )
             elif position_found:
-                logger.success("T=1001.pan feedback is available over serial. No T=1005 errors seen.")
+                logger.success(
+                    "T=1001.pan feedback is available over serial. "
+                    "No gimbal T=1005 errors seen."
+                )
+                if non_gimbal_bus_servo_errors:
+                    other_ids = sorted({e.get("id") for e in non_gimbal_bus_servo_errors})
+                    logger.info(
+                        "Observed non-gimbal T=1005 packets for id(s) "
+                        f"{other_ids}; ignored for pan/tilt diagnosis."
+                    )
             else:
                 logger.warning(
-                    "No T=1001.pan data found and no T=1005 bus errors detected. "
+                    "No T=1001.pan data found and no gimbal T=1005 errors detected. "
                     "Re-run with --duration 15, or the robot firmware may differ from the "
-                    "ugv_base_ros repo (InfoPrint path may not be compiled in)."
+                    "ugv_base_general repo (InfoPrint path may not be compiled in)."
                 )
 
         except serial.SerialException as exc:

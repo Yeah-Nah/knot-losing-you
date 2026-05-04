@@ -48,7 +48,7 @@ Example T=1005 error response (FeedBack failure):
 // Call FeedBack() to latch the servo's current state into the library cache
 int result = sms_sts.FeedBack(servo_id);  // Returns servo ID (>= 0) on success, -1 on failure
 
-if (result == 0) {
+if (result != -1) {
     int16_t raw_pos = sms_sts.ReadPos(-1);  // -1 reads from cache populated by FeedBack()
     // raw_pos is in encoder steps (0–4095 for 360°)
     // Convert to degrees: angle = (raw_pos / 4096.0) * 360.0 - 180.0
@@ -267,6 +267,40 @@ void SCSerial::wFlushSCS()
 
 ---
 
+## Final Validation After Reflash (May 2026)
+
+The patched firmware was built, flashed to the ESP32, and verified on the Raspberry Pi.
+
+### `ugv-scan-servo-ids` validation
+
+- Initial stale-value samples (`pan=-179.956`) were observed immediately after startup.
+- Telemetry then transitioned to live values (`pan=1.494506`, `tilt=-0.175824`).
+- Final summary reported:
+  - **No T=1005 bus errors observed** (for gimbal IDs)
+  - **28 T=1001 telemetry samples received**
+
+### `ugv-check-pan-tilt-feedback` validation
+
+- Commanded pan angle: **20.0°**
+- Readback via `T=1001.pan`: **18.9011°**
+- This confirms live position feedback is now working.
+
+### Interpretation of non-gimbal T=1005 packets
+
+During broad probe command sweeps (e.g. `T=105`, `T=106`), firmware can emit T=1005 for non-gimbal IDs used by other robot profiles (e.g. arm servos 11/12/14/15). On UGV Rover, these IDs are not part of pan/tilt diagnosis.
+
+The probe script has been updated to:
+
+- Treat only gimbal IDs (1 and 2) as pan/tilt failures
+- Ignore non-gimbal IDs in per-packet error diagnosis
+- Report non-gimbal IDs only once in final summary as informational
+
+### Final status
+
+**Root cause fixed and validated.** Pan telemetry is live after applying the `wFlushSCS()` patch and reflashing.
+
+---
+
 ## Failure Points — Final Status
 
 ### 1. ~~`FeedBack()` / `ReadPos()` not called per telemetry cycle~~ — RULED OUT
@@ -305,7 +339,7 @@ See Root Cause Identified section above for full analysis and fix.
 
 ---
 
-## Next Steps — Flash Patched Firmware
+## Flash Procedure (Reference)
 
 ### 1. Clone the firmware repository
 
@@ -363,7 +397,7 @@ ugv-check-pan-tilt-feedback --port /dev/ttyAMA0 --angle 30
 ```
 
 - `T=1001.pan` should now change with servo position.
-- T=1005 errors should no longer appear.
+- Gimbal T=1005 errors (IDs 1 and 2) should no longer appear.
 - Pan commanded to 30° should produce a `T=1001.pan` value close to `30.0` rather than `-179.9560394`.
 
 ---
@@ -377,6 +411,8 @@ ugv-follower/tools/check_pan_tilt_feedback.py
 ```
 
 Commands pan to a target angle, listens for `T=1001.pan`, and collects T=1005 error packets.
+
+For UGV Rover diagnosis, only gimbal IDs 1 and 2 are treated as failures. Non-gimbal T=1005 packets are aggregated and reported as informational.
 
 ```bash
 ugv-check-pan-tilt-feedback --port /dev/ttyAMA0 --angle 30
