@@ -1,6 +1,21 @@
 # Pan Oscillation — Open Issues
 
-Four root causes identified for the remaining pan servo overcompensation and damped oscillation. Each is independent and can be tackled in isolation.
+Eight root causes identified for the remaining pan servo overcompensation and damped oscillation. Each is independent and can be tackled in isolation.
+
+## Quick Diagnostic Checklist (single run)
+
+Use this checklist to separate detector jitter, vision-frame lag, and pan-feedback lag in one capture session.
+
+1. Enable debug logs and record 20-30 seconds while standing still near image centre.
+2. Log per-cycle fields in one line: `dt`, `bbox_centre_u/v`, `corrected`, `scaled`, `measured_pan`, `base_pan`, `delta`, `pan_cmd`.
+3. Mark each pan sample with age/source metadata if possible (for example, immediate `query_pan_deg()` result vs cached fallback).
+4. Look for these signatures:
+	- `corrected` and bbox values wobble while `measured_pan` is stable: detector/centroid jitter dominates.
+	- `corrected` is stable but `measured_pan` jumps/discontinues and `pan_cmd` follows immediately: pan-feedback lag/queue issue dominates.
+	- both `corrected` and `measured_pan` show delayed step-like behavior after commands: combined vision + feedback lag.
+5. Confirm command math consistency on any suspect step: check whether `pan_cmd ~= base_pan + delta`.
+
+If the large command jump occurs with near-constant `corrected` and near-constant `delta`, the jump is coming from `base_pan` (measured-feedback path), not visual heading.
 
 ## Test result — 2026-04-29 (conservative parameter run)
 
@@ -50,7 +65,7 @@ Setting `cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)` after opening the device limits V4
 
 ---
 
-## Issue 3 — Open-loop servo position estimate (no feedback on true pan angle)
+## Issue 3 — Open-loop servo position estimate (no feedback on true pan angle) - COMPLETE
 
 **File:** `ugv-follower/src/ugv_follower/control/pan_controller.py`
 
@@ -132,3 +147,37 @@ As a result, reducing `tracking_gain_kp` does not just make motion gentler — i
 Applying hysteresis to the raw corrected heading, and only then applying gain to the motion command, would decouple “when to move” from “how aggressively to move.”
 
 **Goal:** Evaluate whether hysteresis should be applied to raw corrected heading error rather than gain-scaled error so deadband behaviour remains consistent across gain changes.
+
+---
+
+## Issue 7 — Vision pipeline lag path can create self-generated pan motion
+
+**Files:** `ugv-follower/src/ugv_follower/pipeline.py`, `ugv-follower/src/ugv_follower/perception/waveshare_camera.py`
+
+Even with a stationary target, any lag between camera exposure time and command emission can produce apparent "phantom" motion in closed-loop tracking. The controller acts on centroid data that may describe an earlier pan state. If the servo has already moved by the time that frame is processed, the next command can continue correcting in the old direction and push past centre.
+
+This lag path is independent of servo telemetry quality: it exists even if measured pan feedback is perfect.
+
+**Observable signature:**
+
+- Bounding box and `corrected` heading update in delayed, step-like fashion relative to visible pan movement.
+- Commands continue in one direction for 1-2 cycles after the target appears centred in the live stream.
+
+**Goal:** Instrument and bound camera-to-command latency (capture timestamp to `set_pan_tilt`) and keep fresh-frame semantics under load.
+
+---
+
+## Issue 8 — Pan telemetry lag/queue path can create self-generated pan motion
+
+**Files:** `ugv-follower/src/ugv_follower/control/ugv_controller.py`, `ugv-follower/src/ugv_follower/control/pan_controller.py`, `ugv-follower/src/ugv_follower/pipeline.py`
+
+The pan controller uses measured pan as the command base whenever available. If telemetry samples are stale, delayed, or discontinuous, `base_pan` can jump between cycles while visual error remains nearly unchanged. Because command is formed as `target = base_pan + delta`, the command can jump in lockstep with telemetry jumps and produce unnecessary servo motion.
+
+This lag path is independent of vision lag: it can appear even with stable detections and near-constant heading error.
+
+**Observable signature:**
+
+- `corrected` and `scaled` remain nearly constant while `base_pan` jumps (for example, ~49° to ~34°).
+- `pan_cmd` jump magnitude matches `base_pan` jump, since `delta` is nearly unchanged.
+
+**Goal:** Add telemetry freshness guards (sample age and jump sanity checks), and only trust measured pan when fresh and physically plausible; otherwise fall back to controlled estimate/cached value.
