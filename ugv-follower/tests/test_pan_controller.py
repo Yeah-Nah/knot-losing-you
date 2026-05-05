@@ -331,12 +331,13 @@ def test_update_uses_measured_pan_as_base() -> None:
     assert result_measured < result_open_loop  # closed-loop < open-loop when accumulated > 0
 
 
-def test_update_falls_back_to_accumulated_when_measured_none() -> None:
-    """measured_pan_deg=None falls back to accumulated state (backward-compatible)."""
+def test_update_initialising_fallback_when_no_measurement_ever_received() -> None:
+    """With no prior measurement, measured_pan_deg=None and omitted produce identical results.
+
+    Both fall through to the startup-only _current_pan_deg initialisation fallback.
+    """
     ctrl = _make_controller(gain_kp=1.0, delta_max_deg_per_s=900.0)
-    ctrl.update(_CX + 100.0, _CY, dt=0.1)
     ctrl2 = _make_controller(gain_kp=1.0, delta_max_deg_per_s=900.0)
-    ctrl2.update(_CX + 100.0, _CY, dt=0.1)
     result_none = ctrl.update(_CX + 100.0, _CY, dt=0.1, measured_pan_deg=None)
     result_default = ctrl2.update(_CX + 100.0, _CY, dt=0.1)
     assert result_none == pytest.approx(result_default)

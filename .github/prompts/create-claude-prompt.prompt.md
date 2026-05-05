@@ -33,3 +33,10 @@ Output format requirements (strict):
   Files to inspect:
 - If the assistant cannot comply with plain raw text, it must output exactly:
   RAW_TEXT_OUTPUT_FAILURE
+
+Formatting style:
+```
+Plain unformatted text.
+No "`" surrounding path files.
+Use - for bullet points in the Files to inspect list, but do not use any other Markdown formatting.
+```

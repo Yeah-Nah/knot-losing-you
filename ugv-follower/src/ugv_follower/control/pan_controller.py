@@ -168,6 +168,7 @@ class PanController:
         self._hysteresis_exit_deg = hysteresis_exit_deg
         self._tilt_deg = tilt_deg
         self._current_pan_deg: float = 0.0
+        self._last_measured_pan_deg: float | None = None
         self._in_hold: bool = False
         logger.debug(
             "PanController initialised "
@@ -263,7 +264,16 @@ class PanController:
         # 3. Delta clamp: cap command change by elapsed time (slew rate limit in deg/s).
         delta_max_this_step = self._delta_max_deg_per_s * dt
         delta = max(-delta_max_this_step, min(delta_max_this_step, scaled))
-        base_pan = measured_pan_deg if measured_pan_deg is not None else self._current_pan_deg
+        if measured_pan_deg is not None:
+            self._last_measured_pan_deg = measured_pan_deg
+            base_pan = measured_pan_deg
+            base_label = "measured"
+        elif self._last_measured_pan_deg is not None:
+            base_pan = self._last_measured_pan_deg
+            base_label = "measured"
+        else:
+            base_pan = self._current_pan_deg
+            base_label = "initialising"
         target_pan = base_pan + delta
         new_pan = clamp_pan(target_pan, self._cmd_min_deg, self._cmd_max_deg)
         self._current_pan_deg = new_pan
@@ -272,7 +282,7 @@ class PanController:
             corrected,
             scaled,
             base_pan,
-            "measured" if measured_pan_deg is not None else "accumulated",
+            base_label,
             delta,
             new_pan,
         )
