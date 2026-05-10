@@ -225,17 +225,30 @@ Current query behavior also prioritizes freshness over continuity:
 
 When this happens repeatedly, `base_pan` remains on cached measurements for many cycles. As visual error changes sign, command output swings around an outdated anchor (`target = base_pan + delta`), which can reintroduce large side-to-side motion even for a stationary target.
 
+**Latest finding (2026-05-10 diagnostic run):**
+
+- Dominant failure mode is **no telemetry reply in the read window** (Option 1), not guard rejection.
+- `query_pan_deg()` repeatedly logged: `timeout after 0.100s (lines_read=0, no valid T=1001 pan)`.
+- `lines_read=0` indicates no serial line arrived during the query window (not malformed JSON, not wrong message type).
+- Only one fresh sample was accepted (`1.49°`), then the controller ran for many cycles on `measured-cached` fallback.
+- No `telemetry guard rejected` logs were observed in this run.
+
+This confirms the immediate bottleneck is telemetry availability/timing on the serial path, not plausibility-threshold tuning.
+
 **Observable signature:**
 
 - Frequent cycles where telemetry query returns `None` (or no accepted measurement update).
 - `base` repeatedly logged as cached source while `corrected` changes materially.
 - Large command reversals with stable/slowly varying target position.
+- Query diagnostics showing `lines_read=0` across consecutive `T=130` requests.
 
 **Goal:** Increase effective true-angle update quality by improving telemetry cadence and freshness correlation with control updates.
 
 Suggested directions:
 
-- Raise query opportunity rate (decouple pan telemetry polling from heavy vision cadence where feasible).
-- Tune timeout and serial read strategy to reduce false `None` cycles without reintroducing stale queue reads.
-- Add response provenance metadata if firmware/protocol allows (sequence number or timestamp).
-- Keep fallback behavior explicit in logs (fresh vs cached vs none) and treat long cached runs as degraded-control mode.
+- Increase `query_pan_deg()` timeout from `0.1s` to `0.25-0.35s` and re-test first; current logs show near-total timeout at `0.1s`.
+- Add telemetry-age/degraded mode guard: if no fresh measurement for N consecutive cycles, clamp delta/gain more aggressively to reduce stale-base command swings.
+- Decouple telemetry polling from the vision loop (dedicated poll path/thread) so pan reads are not starved by inference cadence.
+- Audit firmware response behavior for `T=130` under concurrent traffic (`T=1`, `T=133`) and ensure a prompt `T=1001` is always emitted.
+- If firmware supports it, add request/response correlation metadata (sequence or timestamp) to distinguish late-but-valid responses from stale context.
+- Keep the new logging in place (`measured-fresh` vs `measured-cached`, query timeout/lines_read) and use it as acceptance criteria for fixes.
