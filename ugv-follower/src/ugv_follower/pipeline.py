@@ -99,6 +99,7 @@ class Pipeline:
             delta_max_deg_per_s=settings.pan_tracking_delta_max_deg_per_s,
             hysteresis_enter_deg=settings.pan_tracking_hysteresis_enter_deg,
             hysteresis_exit_deg=settings.pan_tracking_hysteresis_exit_deg,
+            max_measured_velocity_deg_per_s=settings.pan_tracking_max_measured_velocity_deg_per_s,
             tilt_deg=settings.pan_tilt_setpoint_deg,
         )
         self._detector: ObjectDetection | None = (
@@ -348,7 +349,9 @@ class Pipeline:
             Elapsed time in seconds since the previous control iteration.
         """
         measured_pan = self._ugv.query_pan_deg()
-        pan_cmd = self._pan_controller.update(bbox_centre_u, bbox_centre_v, dt, measured_pan)
+        pan_cmd = self._pan_controller.update(
+            bbox_centre_u, bbox_centre_v, dt, measured_pan
+        )
         if pan_cmd is not None:
             self._ugv.set_pan_tilt(pan_cmd, self._settings.pan_tilt_setpoint_deg)
 

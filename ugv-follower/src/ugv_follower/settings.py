@@ -309,6 +309,15 @@ class Settings:
         return float(self._pan_tilt_servo_cfg.get("tracking_hysteresis_exit_deg", 3.0))
 
     @property
+    def pan_tracking_max_measured_velocity_deg_per_s(self) -> float:
+        """Maximum plausible measured pan velocity in deg/s (telemetry jump guard)."""
+        return float(
+            self._pan_tilt_servo_cfg.get(
+                "tracking_max_measured_velocity_deg_per_s", 200.0
+            )
+        )
+
+    @property
     def pan_tilt_setpoint_deg(self) -> float:
         """Fixed tilt servo setpoint in degrees used for horizontal projection correction."""
         return float(self._pan_tilt_servo_cfg.get("tilt_setpoint_deg", 0.0))

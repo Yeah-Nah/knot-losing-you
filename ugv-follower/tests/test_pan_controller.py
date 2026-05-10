@@ -49,6 +49,8 @@ _GAIN_KP = 1.0  # unity gain by default so existing tests are unaffected
 _DELTA_MAX_DEG_PER_S = 900.0
 _HYS_ENTER = 1.5
 _HYS_EXIT = 3.0
+# 900 deg/s max measured velocity — effectively unconstrained so existing tests are unaffected
+_MAX_MEASURED_VEL = 900.0
 
 
 def _make_controller(
@@ -57,6 +59,7 @@ def _make_controller(
     delta_max_deg_per_s: float = _DELTA_MAX_DEG_PER_S,
     hysteresis_enter_deg: float = _HYS_ENTER,
     hysteresis_exit_deg: float = _HYS_EXIT,
+    max_measured_velocity_deg_per_s: float = _MAX_MEASURED_VEL,
 ) -> PanController:
     return PanController(
         K=_K,
@@ -67,6 +70,7 @@ def _make_controller(
         delta_max_deg_per_s=delta_max_deg_per_s,
         hysteresis_enter_deg=hysteresis_enter_deg,
         hysteresis_exit_deg=hysteresis_exit_deg,
+        max_measured_velocity_deg_per_s=max_measured_velocity_deg_per_s,
         tilt_deg=tilt_deg,
     )
 
@@ -328,7 +332,9 @@ def test_update_uses_measured_pan_as_base() -> None:
     result_open_loop = ctrl2.update(_CX + 100.0, _CY, dt=0.1)
     assert result_measured is not None
     assert result_open_loop is not None
-    assert result_measured < result_open_loop  # closed-loop < open-loop when accumulated > 0
+    assert (
+        result_measured < result_open_loop
+    )  # closed-loop < open-loop when accumulated > 0
 
 
 def test_update_initialising_fallback_when_no_measurement_ever_received() -> None:
@@ -341,3 +347,54 @@ def test_update_initialising_fallback_when_no_measurement_ever_received() -> Non
     result_none = ctrl.update(_CX + 100.0, _CY, dt=0.1, measured_pan_deg=None)
     result_default = ctrl2.update(_CX + 100.0, _CY, dt=0.1)
     assert result_none == pytest.approx(result_default)
+
+
+# ---------------------------------------------------------------------------
+# Telemetry jump guard
+# ---------------------------------------------------------------------------
+
+
+class TestTelemetryGuard:
+    def test_first_measurement_always_accepted(self) -> None:
+        """Any value is accepted as the first measurement (no prior state to compare)."""
+        ctrl = _make_controller(max_measured_velocity_deg_per_s=10.0)
+        # 100 px right → heading outside deadband so update() issues a command
+        result = ctrl.update(_CX + 100.0, _CY, dt=0.1, measured_pan_deg=30.0)
+        assert result is not None
+        # base_pan was 30.0 (accepted), so result must be anchored from there
+        assert result == pytest.approx(
+            30.0 + ctrl.current_pan_deg - ctrl.current_pan_deg, abs=50.0
+        )
+
+    def test_plausible_velocity_accepted(self) -> None:
+        """A small delta between consecutive measurements passes the guard."""
+        ctrl = _make_controller(max_measured_velocity_deg_per_s=50.0)
+        u = _CX + 100.0
+        # Accept first measurement at 5.0°
+        ctrl.update(u, _CY, dt=0.1, measured_pan_deg=5.0)
+        # Second measurement: 5.5° — well within 50 deg/s over any realistic elapsed time
+        result = ctrl.update(u, _CY, dt=0.1, measured_pan_deg=5.5)
+        assert result is not None
+        # Result is anchored from the accepted 5.5° base, so it must be > 5.0°
+        assert result > 5.0
+
+    def test_implausible_velocity_rejected_holds_last_accepted(self) -> None:
+        """A jump implying impossible servo velocity is rejected; last accepted value is held.
+
+        Strategy: accept a first measurement at 0.0°, then immediately submit a
+        measurement 120° away.  The near-zero elapsed time makes the implied velocity
+        astronomically high, guaranteeing rejection even with a generous threshold.
+        """
+        ctrl = _make_controller(
+            gain_kp=1.0,
+            delta_max_deg_per_s=900.0,
+            max_measured_velocity_deg_per_s=200.0,
+        )
+        u = _CX + 100.0
+        # First call: 0.0° accepted (no prior state)
+        ctrl.update(u, _CY, dt=0.1, measured_pan_deg=0.0)
+        # Immediate second call: 120° jump — near-zero elapsed time → rejected
+        result_rejected = ctrl.update(u, _CY, dt=0.1, measured_pan_deg=120.0)
+        # Result must be anchored from 0.0° (last accepted), not from 120°
+        assert result_rejected is not None
+        assert result_rejected < 50.0  # well below 120° + any delta

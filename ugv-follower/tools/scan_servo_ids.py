@@ -213,16 +213,16 @@ def _print_diagnosis(
 
     logger.error(f"Failed servo IDs  : {failed_ids}")
     if failed_gimbal:
-        logger.error(f"  Gimbal IDs      : {failed_gimbal}  (firmware expects PAN=2, TILT=1)")
+        logger.error(
+            f"  Gimbal IDs      : {failed_gimbal}  (firmware expects PAN=2, TILT=1)"
+        )
     if failed_drive:
         logger.error(f"  Drive IDs       : {failed_drive}  (wheel motors)")
     if failed_unknown:
         logger.warning(f"  Unknown IDs     : {failed_unknown}")
 
     for sid, count in sorted(failure_counts.items()):
-        logger.error(
-            f"  id={sid} ({_group_label(sid)})  failures={count}"
-        )
+        logger.error(f"  id={sid} ({_group_label(sid)})  failures={count}")
 
     # Check drive servo telemetry (L/R odometry in T=1001).
     drive_active = False
@@ -304,7 +304,9 @@ def main() -> None:
             "reports. Distinguishes wrong gimbal ID from bus-wide RX failure."
         )
     )
-    parser.add_argument("--port", default="/dev/ttyAMA0", help="Serial port (default: /dev/ttyAMA0)")
+    parser.add_argument(
+        "--port", default="/dev/ttyAMA0", help="Serial port (default: /dev/ttyAMA0)"
+    )
     parser.add_argument(
         "--duration",
         type=float,

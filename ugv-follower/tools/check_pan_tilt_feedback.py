@@ -101,7 +101,9 @@ def _print_response(tag: str, data: dict[str, Any]) -> bool:
     if (
         data.get("T") == _BUS_SERVO_ERROR_T
         and data.get("status") == 0
-        and not (isinstance(data.get("id"), int) and data.get("id") in _GIMBAL_SERVO_IDS)
+        and not (
+            isinstance(data.get("id"), int) and data.get("id") in _GIMBAL_SERVO_IDS
+        )
     ):
         return False
 
@@ -113,7 +115,9 @@ def _print_response(tag: str, data: dict[str, Any]) -> bool:
     return False
 
 
-def _poll_t130_for_pan(ser: serial.Serial, polls: int = 10, wait_s: float = 0.2) -> list[float]:
+def _poll_t130_for_pan(
+    ser: serial.Serial, polls: int = 10, wait_s: float = 0.2
+) -> list[float]:
     """Poll `T=130` and return all sampled `T=1001.pan` values."""
     pans: list[float] = []
     for _ in range(polls):
@@ -253,9 +257,15 @@ def probe(port: str, angle_deg: float, duration: float, init_module: bool) -> No
                     got = True
                     try:
                         data = json.loads(raw)
-                        if data.get("T") == _BUS_SERVO_ERROR_T and data.get("status") == 0:
+                        if (
+                            data.get("T") == _BUS_SERVO_ERROR_T
+                            and data.get("status") == 0
+                        ):
                             servo_id = data.get("id")
-                            if isinstance(servo_id, int) and servo_id in _GIMBAL_SERVO_IDS:
+                            if (
+                                isinstance(servo_id, int)
+                                and servo_id in _GIMBAL_SERVO_IDS
+                            ):
                                 gimbal_bus_servo_errors.append(data)
                             else:
                                 non_gimbal_bus_servo_errors.append(data)
@@ -301,7 +311,9 @@ def probe(port: str, angle_deg: float, duration: float, init_module: bool) -> No
                     "No gimbal T=1005 errors seen."
                 )
                 if non_gimbal_bus_servo_errors:
-                    other_ids = sorted({e.get("id") for e in non_gimbal_bus_servo_errors})
+                    other_ids = sorted(
+                        {e.get("id") for e in non_gimbal_bus_servo_errors}
+                    )
                     logger.info(
                         "Observed non-gimbal T=1005 packets for id(s) "
                         f"{other_ids}; ignored for pan/tilt diagnosis."
@@ -326,7 +338,9 @@ def main() -> None:
         description="Probe Waveshare UGV Rover ESP32 for pan servo position feedback."
     )
     parser.add_argument("--port", default="/dev/ttyAMA0")
-    parser.add_argument("--angle", type=float, default=20.0, help="Pan angle to command (degrees)")
+    parser.add_argument(
+        "--angle", type=float, default=20.0, help="Pan angle to command (degrees)"
+    )
     parser.add_argument(
         "--duration",
         type=float,

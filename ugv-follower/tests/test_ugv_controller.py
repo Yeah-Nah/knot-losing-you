@@ -22,7 +22,7 @@ Verbose with short tracebacks::
 from __future__ import annotations
 
 import json
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -38,7 +38,9 @@ class TestQueryPanDeg:
 
     def test_query_pan_deg_flushes_before_write(self) -> None:
         """reset_input_buffer() must be called before write() inside the lock."""
-        with patch("ugv_follower.control.ugv_controller.serial.Serial") as mock_serial_cls:
+        with patch(
+            "ugv_follower.control.ugv_controller.serial.Serial"
+        ) as mock_serial_cls:
             mock_port = MagicMock()
             mock_port.is_open = True
             mock_serial_cls.return_value = mock_port
@@ -63,7 +65,9 @@ class TestQueryPanDeg:
         """Returns the float pan value from a well-formed T=1001 response."""
         response = json.dumps({"T": 1001, "pan": 12.5}).encode() + b"\n"
 
-        with patch("ugv_follower.control.ugv_controller.serial.Serial") as mock_serial_cls:
+        with patch(
+            "ugv_follower.control.ugv_controller.serial.Serial"
+        ) as mock_serial_cls:
             mock_port = MagicMock()
             mock_port.is_open = True
             mock_serial_cls.return_value = mock_port
@@ -85,7 +89,9 @@ class TestQueryPanDeg:
 
     def test_query_pan_deg_returns_none_on_timeout(self) -> None:
         """Returns None when readline yields no data within the timeout."""
-        with patch("ugv_follower.control.ugv_controller.serial.Serial") as mock_serial_cls:
+        with patch(
+            "ugv_follower.control.ugv_controller.serial.Serial"
+        ) as mock_serial_cls:
             mock_port = MagicMock()
             mock_port.is_open = True
             mock_serial_cls.return_value = mock_port

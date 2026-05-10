@@ -9,6 +9,7 @@ Pure helper functions are separated for direct unit testing.
 from __future__ import annotations
 
 import math
+import time
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -141,6 +142,10 @@ class PanController:
     hysteresis_exit_deg : float
         Exit-hold threshold in degrees; motion resumes only when the scaled
         heading error magnitude exceeds this value (must be >= hysteresis_enter_deg).
+    max_measured_velocity_deg_per_s : float
+        Maximum plausible servo angular velocity in degrees per second used by the
+        telemetry jump guard.  Incoming measurements implying a higher velocity are
+        rejected and the last accepted value is held instead.
     tilt_deg : float
         Fixed camera tilt angle in degrees used for horizontal projection correction.
         Defaults to 0.0 (no correction). Hook for future dynamic tilt tracking.
@@ -156,6 +161,7 @@ class PanController:
         delta_max_deg_per_s: float,
         hysteresis_enter_deg: float,
         hysteresis_exit_deg: float,
+        max_measured_velocity_deg_per_s: float,
         tilt_deg: float = 0.0,
     ) -> None:
         self._K = K
@@ -166,20 +172,24 @@ class PanController:
         self._delta_max_deg_per_s = delta_max_deg_per_s
         self._hysteresis_enter_deg = hysteresis_enter_deg
         self._hysteresis_exit_deg = hysteresis_exit_deg
+        self._max_measured_velocity_deg_per_s = max_measured_velocity_deg_per_s
         self._tilt_deg = tilt_deg
         self._current_pan_deg: float = 0.0
-        self._last_measured_pan_deg: float | None = None
+        self._last_accepted_pan_deg: float | None = None
+        self._last_accepted_pan_time_s: float | None = None
         self._in_hold: bool = False
         logger.debug(
             "PanController initialised "
             "(cmd=[{}, {}]°, kp={}, delta_max={:.1f} deg/s, "
-            "hysteresis=[enter={:.1f}°, exit={:.1f}°], tilt={:.1f}°).",
+            "hysteresis=[enter={:.1f}°, exit={:.1f}°], "
+            "max_measured_vel={:.1f} deg/s, tilt={:.1f}°).",
             cmd_min_deg,
             cmd_max_deg,
             gain_kp,
             delta_max_deg_per_s,
             hysteresis_enter_deg,
             hysteresis_exit_deg,
+            max_measured_velocity_deg_per_s,
             tilt_deg,
         )
 
@@ -187,6 +197,32 @@ class PanController:
     def current_pan_deg(self) -> float:
         """Last commanded pan servo position in degrees."""
         return self._current_pan_deg
+
+    def _validate_measured_pan(self, candidate_deg: float | None) -> float | None:
+        """Return *candidate_deg* if plausible, else ``None``.
+
+        Rejects candidates whose implied angular velocity since the last accepted
+        measurement exceeds ``_max_measured_velocity_deg_per_s``.  The first
+        measurement after initialisation is always accepted.
+        """
+        if candidate_deg is None:
+            return None
+        if self._last_accepted_pan_deg is None:
+            return candidate_deg  # first measurement — always accept
+        elapsed_s = time.monotonic() - self._last_accepted_pan_time_s  # type: ignore[operator]
+        if elapsed_s <= 0.0:
+            return candidate_deg
+        implied_vel = abs(candidate_deg - self._last_accepted_pan_deg) / elapsed_s
+        if implied_vel > self._max_measured_velocity_deg_per_s:
+            logger.debug(
+                "Pan: telemetry guard rejected {:.2f}° "
+                "(implied {:.1f} deg/s > max {:.1f} deg/s).",
+                candidate_deg,
+                implied_vel,
+                self._max_measured_velocity_deg_per_s,
+            )
+            return None
+        return candidate_deg
 
     def update(
         self,
@@ -264,12 +300,14 @@ class PanController:
         # 3. Delta clamp: cap command change by elapsed time (slew rate limit in deg/s).
         delta_max_this_step = self._delta_max_deg_per_s * dt
         delta = max(-delta_max_this_step, min(delta_max_this_step, scaled))
-        if measured_pan_deg is not None:
-            self._last_measured_pan_deg = measured_pan_deg
-            base_pan = measured_pan_deg
+        validated_pan = self._validate_measured_pan(measured_pan_deg)
+        if validated_pan is not None:
+            self._last_accepted_pan_deg = validated_pan
+            self._last_accepted_pan_time_s = time.monotonic()
+            base_pan = validated_pan
             base_label = "measured"
-        elif self._last_measured_pan_deg is not None:
-            base_pan = self._last_measured_pan_deg
+        elif self._last_accepted_pan_deg is not None:
+            base_pan = self._last_accepted_pan_deg
             base_label = "measured"
         else:
             base_pan = self._current_pan_deg

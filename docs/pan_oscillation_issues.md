@@ -181,3 +181,13 @@ This lag path is independent of vision lag: it can appear even with stable detec
 - `pan_cmd` jump magnitude matches `base_pan` jump, since `delta` is nearly unchanged.
 
 **Goal:** Add telemetry freshness guards (sample age and jump sanity checks), and only trust measured pan when fresh and physically plausible; otherwise fall back to controlled estimate/cached value.
+
+**Layers of Defence***
+- Flush before you ask (the camera-buffer analogue) - COMPLETE
+Drain the RX buffer immediately before sending the T=130 request. That way any stale T=1001 packets queued from previous cycles are discarded first, and the only thing that can arrive in the read window is the response to this specific request. This is the direct equivalent of CAP_PROP_BUFFERSIZE=1 — you are capping the effective queue depth to one.
+
+- Plausibility / jump guard
+Even after flushing, telemetry can occasionally be wrong (noise, a dropped byte, serial bus contention from concurrent T=133 traffic). Before accepting a new measured value, check whether the implied servo movement is physically possible: if |new_measured − last_accepted| implies a servo velocity that exceeds what the hardware can produce in one dt, reject the sample entirely and fall back to the last accepted value. This bounds the damage from any single bad reading.
+
+- Blend rather than replace (longer term)
+The current design uses measured pan as the full base for the next command. That gives a single stale or wrong sample full authority over the command. A more robust approach is to use the measured value to correct an accumulated estimate rather than replace it outright — similar to how a complementary filter works. The estimate provides continuity and the measurement provides drift correction, so neither can cause a large command jump on its own.
