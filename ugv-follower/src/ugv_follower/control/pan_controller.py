@@ -145,10 +145,18 @@ class PanController:
     max_measured_velocity_deg_per_s : float
         Maximum plausible servo angular velocity in degrees per second used by the
         telemetry jump guard.  Incoming measurements implying a higher velocity are
-        rejected and the last accepted value is held instead.
+        rejected and the last accepted value is held instead.  Also used as the cap
+        on estimate propagation velocity.
     tilt_deg : float
         Fixed camera tilt angle in degrees used for horizontal projection correction.
         Defaults to 0.0 (no correction). Hook for future dynamic tilt tracking.
+    stale_telemetry_threshold_cycles : int
+        Number of consecutive cycles without a fresh valid telemetry sample before
+        the controller enters degraded mode.  Defaults to 5.
+    degraded_delta_scale : float
+        Multiplier applied to ``delta_max_deg_per_s`` when in degraded mode to
+        reduce command aggressiveness while telemetry is unavailable.  Must be in
+        (0, 1].  Defaults to 0.5.
     """
 
     def __init__(
@@ -163,6 +171,8 @@ class PanController:
         hysteresis_exit_deg: float,
         max_measured_velocity_deg_per_s: float,
         tilt_deg: float = 0.0,
+        stale_telemetry_threshold_cycles: int = 5,
+        degraded_delta_scale: float = 0.5,
     ) -> None:
         self._K = K
         self._D = D
@@ -174,15 +184,22 @@ class PanController:
         self._hysteresis_exit_deg = hysteresis_exit_deg
         self._max_measured_velocity_deg_per_s = max_measured_velocity_deg_per_s
         self._tilt_deg = tilt_deg
+        self._stale_threshold_cycles = stale_telemetry_threshold_cycles
+        self._degraded_delta_scale = degraded_delta_scale
         self._current_pan_deg: float = 0.0
         self._last_accepted_pan_deg: float | None = None
         self._last_accepted_pan_time_s: float | None = None
+        self._estimated_pan_deg: float | None = None
+        self._last_pan_cmd_deg: float | None = None
+        self._stale_cycles: int = 0
+        self._degraded: bool = False
         self._in_hold: bool = False
         logger.debug(
             "PanController initialised "
             "(cmd=[{}, {}]°, kp={}, delta_max={:.1f} deg/s, "
             "hysteresis=[enter={:.1f}°, exit={:.1f}°], "
-            "max_measured_vel={:.1f} deg/s, tilt={:.1f}°).",
+            "max_measured_vel={:.1f} deg/s, tilt={:.1f}°, "
+            "stale_threshold={} cycles, degraded_scale={}).",
             cmd_min_deg,
             cmd_max_deg,
             gain_kp,
@@ -191,12 +208,37 @@ class PanController:
             hysteresis_exit_deg,
             max_measured_velocity_deg_per_s,
             tilt_deg,
+            stale_telemetry_threshold_cycles,
+            degraded_delta_scale,
         )
 
     @property
     def current_pan_deg(self) -> float:
         """Last commanded pan servo position in degrees."""
         return self._current_pan_deg
+
+    def _propagate_estimate(self, dt: float) -> None:
+        """Advance the pan position estimate toward the last commanded angle.
+
+        Uses ``_max_measured_velocity_deg_per_s`` to cap the per-cycle motion,
+        modelling the servo ramping toward the last command at maximum speed.
+        No-ops until both the estimate and the last command have been initialised
+        from the first valid telemetry sample and first issued command respectively.
+
+        Parameters
+        ----------
+        dt : float
+            Elapsed time in seconds since the previous cycle.
+        """
+        if self._estimated_pan_deg is None or self._last_pan_cmd_deg is None:
+            return
+        target = self._last_pan_cmd_deg
+        max_move = self._max_measured_velocity_deg_per_s * dt
+        direction = target - self._estimated_pan_deg
+        if abs(direction) <= max_move:
+            self._estimated_pan_deg = target
+        else:
+            self._estimated_pan_deg += math.copysign(max_move, direction)
 
     def _validate_measured_pan(self, candidate_deg: float | None) -> float | None:
         """Return *candidate_deg* if plausible, else ``None``.
@@ -275,6 +317,48 @@ class PanController:
         float | None
             Clamped absolute pan command in degrees, or ``None`` to hold.
         """
+        # ① Propagate estimate toward last commanded position.
+        self._propagate_estimate(dt)
+
+        # ② Validate incoming telemetry; update estimate and stale/degraded state.
+        if measured_pan_deg is not None:
+            logger.debug(
+                "Pan telemetry: candidate measured pan this cycle = {:.2f}°.",
+                measured_pan_deg,
+            )
+        validated_pan = self._validate_measured_pan(measured_pan_deg)
+        if validated_pan is not None:
+            if self._estimated_pan_deg is not None:
+                residual = validated_pan - self._estimated_pan_deg
+                logger.debug(
+                    "Pan estimate residual: {:.2f}° "
+                    "(measured {:.2f}° vs estimate {:.2f}°).",
+                    residual,
+                    validated_pan,
+                    self._estimated_pan_deg,
+                )
+            self._estimated_pan_deg = validated_pan
+            self._last_accepted_pan_deg = validated_pan
+            self._last_accepted_pan_time_s = time.monotonic()
+            if self._stale_cycles > 0:
+                logger.debug(
+                    "Pan telemetry: fresh sample received after {} stale cycle(s).",
+                    self._stale_cycles,
+                )
+            self._stale_cycles = 0
+            if self._degraded:
+                self._degraded = False
+                logger.info("Pan: exiting degraded mode — fresh telemetry restored.")
+        else:
+            self._stale_cycles += 1
+            if not self._degraded and self._stale_cycles >= self._stale_threshold_cycles:
+                self._degraded = True
+                logger.warning(
+                    "Pan: entering degraded mode ({} consecutive stale cycles).",
+                    self._stale_cycles,
+                )
+
+        # ③ No detection — hold current pan position.
         if bbox_centre_u is None or bbox_centre_v is None:
             logger.debug(
                 "Pan: no detection — holding at {:.2f}°.", self._current_pan_deg
@@ -315,34 +399,30 @@ class PanController:
                 return None
 
         # 3. Delta clamp: cap command change by elapsed time (slew rate limit in deg/s).
+        #    In degraded mode, scale down to reduce command swings on a stale base.
         delta_max_this_step = self._delta_max_deg_per_s * dt
+        if self._degraded:
+            delta_max_this_step *= self._degraded_delta_scale
         delta = max(-delta_max_this_step, min(delta_max_this_step, scaled))
-        if measured_pan_deg is not None:
-            logger.debug(
-                "Pan telemetry: candidate measured pan this cycle = {:.2f}°.",
-                measured_pan_deg,
-            )
-        validated_pan = self._validate_measured_pan(measured_pan_deg)
+
+        # 4. Base-pan source: prefer fresh telemetry, then propagated estimate.
         if validated_pan is not None:
-            self._last_accepted_pan_deg = validated_pan
-            self._last_accepted_pan_time_s = time.monotonic()
             base_pan = validated_pan
             base_label = "measured-fresh"
-        elif self._last_accepted_pan_deg is not None:
-            base_pan = self._last_accepted_pan_deg
-            base_label = "measured-cached"
-            logger.debug(
-                "Pan telemetry: falling back to cached measurement {:.2f}°.",
-                base_pan,
-            )
+        elif self._estimated_pan_deg is not None:
+            base_pan = self._estimated_pan_deg
+            base_label = "estimated"
         else:
             base_pan = self._current_pan_deg
             base_label = "initialising"
+
         target_pan = base_pan + delta
         new_pan = clamp_pan(target_pan, self._cmd_min_deg, self._cmd_max_deg)
         self._current_pan_deg = new_pan
+        self._last_pan_cmd_deg = new_pan
         logger.debug(
-            "Pan: corrected={:.2f}°, scaled={:.2f}°, base={:.2f}°({}), delta={:.2f}°, pan_cmd={:.2f}°.",
+            "Pan: corrected={:.2f}°, scaled={:.2f}°, base={:.2f}°({}), "
+            "delta={:.2f}°, pan_cmd={:.2f}°.",
             corrected,
             scaled,
             base_pan,

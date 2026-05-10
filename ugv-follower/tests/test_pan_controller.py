@@ -60,6 +60,8 @@ def _make_controller(
     hysteresis_enter_deg: float = _HYS_ENTER,
     hysteresis_exit_deg: float = _HYS_EXIT,
     max_measured_velocity_deg_per_s: float = _MAX_MEASURED_VEL,
+    stale_telemetry_threshold_cycles: int = 5,
+    degraded_delta_scale: float = 0.5,
 ) -> PanController:
     return PanController(
         K=_K,
@@ -72,6 +74,8 @@ def _make_controller(
         hysteresis_exit_deg=hysteresis_exit_deg,
         max_measured_velocity_deg_per_s=max_measured_velocity_deg_per_s,
         tilt_deg=tilt_deg,
+        stale_telemetry_threshold_cycles=stale_telemetry_threshold_cycles,
+        degraded_delta_scale=degraded_delta_scale,
     )
 
 
@@ -398,3 +402,79 @@ class TestTelemetryGuard:
         # Result must be anchored from 0.0° (last accepted), not from 120°
         assert result_rejected is not None
         assert result_rejected < 50.0  # well below 120° + any delta
+
+
+# ---------------------------------------------------------------------------
+# Estimated pan position — Issue 3
+# ---------------------------------------------------------------------------
+
+
+class TestEstimatedPan:
+    def test_estimate_propagates_during_telemetry_gap(self) -> None:
+        """Estimate advances toward the last command across no-detection hold cycles.
+
+        After a first accepted measurement and one command cycle, subsequent hold
+        cycles with no telemetry should still advance _estimated_pan_deg toward
+        the last commanded position.
+        """
+        # max_measured_velocity_deg_per_s=30.0 so estimate moves 3.0°/cycle at dt=0.1
+        ctrl = _make_controller(
+            gain_kp=1.0,
+            delta_max_deg_per_s=900.0,
+            max_measured_velocity_deg_per_s=30.0,
+        )
+        u = _CX + 100.0
+        # Seed the estimate with a measurement and issue a command.
+        ctrl.update(u, _CY, dt=0.1, measured_pan_deg=0.0)
+        estimate_after_seed = ctrl._estimated_pan_deg
+        assert estimate_after_seed is not None
+
+        # Hold cycles (no detection, no telemetry) — estimate should propagate.
+        for _ in range(5):
+            ctrl.update(None, None, dt=0.1, measured_pan_deg=None)
+
+        assert ctrl._estimated_pan_deg is not None
+        # Estimate must have moved away from the seeded value.
+        assert ctrl._estimated_pan_deg != pytest.approx(estimate_after_seed, abs=0.1)
+
+    def test_fresh_telemetry_hard_replaces_estimate(self) -> None:
+        """A valid fresh measurement replaces the estimate outright (no blending).
+
+        Even if commands have been issued since the last measurement, a new fresh
+        sample resets _estimated_pan_deg exactly to the measured value.
+        """
+        ctrl = _make_controller(
+            gain_kp=1.0,
+            delta_max_deg_per_s=900.0,
+            max_measured_velocity_deg_per_s=900.0,
+        )
+        u = _CX + 100.0
+        # Seed estimate at 5°.
+        ctrl.update(u, _CY, dt=0.1, measured_pan_deg=5.0)
+        # Issue commands without telemetry so estimate drifts from 5°.
+        ctrl.update(u, _CY, dt=0.1, measured_pan_deg=None)
+        ctrl.update(u, _CY, dt=0.1, measured_pan_deg=None)
+        # Fresh measurement at 0° — estimate must snap to exactly 0°.
+        ctrl.update(u, _CY, dt=0.1, measured_pan_deg=0.0)
+        assert ctrl._estimated_pan_deg == pytest.approx(0.0, abs=1e-9)
+
+    def test_degraded_mode_activates_and_deactivates(self) -> None:
+        """Degraded mode activates after threshold stale cycles; clears on fresh telemetry."""
+        threshold = 3
+        ctrl = _make_controller(
+            gain_kp=1.0,
+            delta_max_deg_per_s=900.0,
+            stale_telemetry_threshold_cycles=threshold,
+        )
+        u = _CX + 100.0
+        assert not ctrl._degraded
+
+        # Run threshold cycles without telemetry — degraded should activate.
+        for _ in range(threshold):
+            ctrl.update(u, _CY, dt=0.1, measured_pan_deg=None)
+
+        assert ctrl._degraded, "Expected degraded mode after threshold stale cycles"
+
+        # One fresh measurement — degraded should clear.
+        ctrl.update(u, _CY, dt=0.1, measured_pan_deg=5.0)
+        assert not ctrl._degraded, "Expected degraded mode to clear on fresh telemetry"

@@ -65,7 +65,7 @@ Setting `cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)` after opening the device limits V4
 
 ---
 
-## Issue 3 — Pan position estimate based on dead reckoning (not available when telemetry gaps occur) - PENDING
+## Issue 3 — Pan position estimate based on dead reckoning (not available when telemetry gaps occur) - COMPLETE
 
 **Files:** `ugv-follower/src/ugv_follower/control/pan_controller.py`, `ugv-follower/configs/sensor_config.yaml`
 
@@ -97,6 +97,8 @@ Maintain a continuously-updated estimate of pan position by tracking:
 **Implementation sequence:** Issue 8 Layer 2 (plausibility guard) must be complete first. The guard validates that incoming measurements are trustworthy before the estimate uses them for correction.
 
 **Goal:** Provide continuity between telemetry samples so `base_pan` is always approximately correct, reducing command jumps and allowing fresh telemetry to smoothly correct the estimate rather than create a discontinuity.
+
+**Implementation (no-blend variant):** `_estimated_pan_deg` is propagated each cycle toward `_last_pan_cmd_deg` at a velocity capped by `tracking_max_measured_velocity_deg_per_s`. Fresh valid telemetry hard-replaces the estimate (no blend). Base-pan source priority: `measured-fresh` → `estimated` → `initialising`. Consecutive stale cycles beyond `tracking_stale_telemetry_threshold_cycles` activate degraded mode, scaling `delta_max` by `tracking_degraded_delta_scale` to reduce command aggressiveness. Degraded mode exits automatically on the next fresh measurement.
 
 ---
 

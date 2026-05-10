@@ -56,6 +56,8 @@ pan_tilt_servo:
   tracking_hysteresis_enter_deg: 3  # Enter-hold threshold in degrees
   tracking_hysteresis_exit_deg: 4.5   # Exit-hold threshold in degrees
   tracking_max_measured_velocity_deg_per_s: 270.0  # Max plausible measured pan velocity deg/s (telemetry jump guard). No load speed taken from Waveshare docs.
+  tracking_stale_telemetry_threshold_cycles: 5     # Consecutive cycles without fresh telemetry before entering degraded mode
+  tracking_degraded_delta_scale: 0.5               # Delta multiplier applied in degraded mode to reduce command aggressiveness
   dead_band_pos_deg: 1.0
   dead_band_neg_deg: -1.0
   cmd_min: -60.0

@@ -101,6 +101,8 @@ class Pipeline:
             hysteresis_exit_deg=settings.pan_tracking_hysteresis_exit_deg,
             max_measured_velocity_deg_per_s=settings.pan_tracking_max_measured_velocity_deg_per_s,
             tilt_deg=settings.pan_tilt_setpoint_deg,
+            stale_telemetry_threshold_cycles=settings.pan_tracking_stale_telemetry_threshold_cycles,
+            degraded_delta_scale=settings.pan_tracking_degraded_delta_scale,
         )
         self._detector: ObjectDetection | None = (
             # settings.model_config comes from validated YAML settings.

@@ -318,6 +318,20 @@ class Settings:
         )
 
     @property
+    def pan_tracking_stale_telemetry_threshold_cycles(self) -> int:
+        """Consecutive cycles without fresh telemetry before entering degraded mode."""
+        return int(
+            self._pan_tilt_servo_cfg.get("tracking_stale_telemetry_threshold_cycles", 5)
+        )
+
+    @property
+    def pan_tracking_degraded_delta_scale(self) -> float:
+        """Delta multiplier applied in degraded mode to reduce command aggressiveness."""
+        return float(
+            self._pan_tilt_servo_cfg.get("tracking_degraded_delta_scale", 0.5)
+        )
+
+    @property
     def pan_tilt_setpoint_deg(self) -> float:
         """Fixed tilt servo setpoint in degrees used for horizontal projection correction."""
         return float(self._pan_tilt_servo_cfg.get("tilt_setpoint_deg", 0.0))
