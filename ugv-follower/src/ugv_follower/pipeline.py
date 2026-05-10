@@ -17,6 +17,7 @@ from .control.motion_command import (
     apply_motion_command,
 )
 from .control.pan_controller import PanController
+from .control.pan_telemetry import PanTelemetryPoller
 from .control.ugv_controller import UGVController
 from .inference.object_detection import (
     ModelConfig,
@@ -115,6 +116,13 @@ class Pipeline:
         self._mjpeg_server: MjpegServer | None = (
             MjpegServer(settings.stream_port) if settings.stream_port else None
         )
+        self._pan_poller = PanTelemetryPoller(
+            ugv_controller=self._ugv,
+            stale_threshold_s=settings.pan_telemetry_stale_threshold_s,
+            expired_threshold_s=settings.pan_telemetry_expired_threshold_s,
+            poll_interval_tracking_s=settings.pan_telemetry_poll_interval_tracking_s,
+            poll_interval_idle_s=settings.pan_telemetry_poll_interval_idle_s,
+        )
         logger.info("Pipeline initialised.")
 
     def run(self) -> None:
@@ -137,6 +145,10 @@ class Pipeline:
         # Home pan-tilt before perception starts so camera begins centred.
         self._ugv.set_pan_tilt(0.0, self._settings.pan_tilt_setpoint_deg)
         logger.info("Pan-tilt homed to startup setpoint.")
+
+        # Start pan telemetry poller at the cadence appropriate for the initial mode.
+        self._pan_poller.set_tracking_mode(self._mode == PipelineMode.AUTONOMOUS)
+        self._pan_poller.start()
 
         # -- Camera: wait for first frame --
         self._camera.start()
@@ -247,6 +259,7 @@ class Pipeline:
         old_mode = self._mode
         self._mode = new_mode
         self._mode_transition_stop_pending = True
+        self._pan_poller.set_tracking_mode(new_mode == PipelineMode.AUTONOMOUS)
         logger.info(f"Mode changed: {old_mode.value} -> {new_mode.value}")
 
     def _apply_mode_transition_stop(self, command: MotionCommand) -> MotionCommand:
@@ -350,7 +363,11 @@ class Pipeline:
         dt : float
             Elapsed time in seconds since the previous control iteration.
         """
-        measured_pan = self._ugv.query_pan_deg()
+        telemetry = self._pan_poller.get_snapshot()
+        if telemetry.status in ("expired", "initialising"):
+            logger.debug("Pan: telemetry {} — holding pan position.", telemetry.status)
+            return
+        measured_pan = telemetry.pan_deg if telemetry.valid else None
         pan_cmd = self._pan_controller.update(
             bbox_centre_u, bbox_centre_v, dt, measured_pan
         )
@@ -371,11 +388,13 @@ class Pipeline:
     def request_estop(self) -> None:
         """Latch emergency-stop override until explicitly cleared."""
         self._estop_active = True
+        self._pan_poller.set_tracking_mode(False)
         logger.warning("Emergency-stop requested; motion commands now overridden.")
 
     def clear_estop(self) -> None:
         """Clear emergency-stop override latch."""
         self._estop_active = False
+        self._pan_poller.set_tracking_mode(self._mode == PipelineMode.AUTONOMOUS)
         logger.info("Emergency-stop cleared.")
 
     def _apply_estop_override(self, command: MotionCommand) -> MotionCommand:
@@ -390,6 +409,10 @@ class Pipeline:
     def _shutdown(self) -> None:
         """Release all hardware resources on exit."""
         logger.info("Shutting down pipeline...")
+        try:
+            self._pan_poller.stop()
+        except Exception as exc:
+            logger.warning(f"Pan telemetry poller stop error: {exc}")
         if self._mjpeg_server is not None:
             try:
                 self._mjpeg_server.stop()

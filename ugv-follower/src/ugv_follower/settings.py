@@ -336,6 +336,34 @@ class Settings:
         """Fixed tilt servo setpoint in degrees used for horizontal projection correction."""
         return float(self._pan_tilt_servo_cfg.get("tilt_setpoint_deg", 0.0))
 
+    @property
+    def pan_telemetry_poll_interval_tracking_s(self) -> float:
+        """Pan telemetry poll interval in seconds during autonomous/tracking mode."""
+        return float(
+            self._pan_tilt_servo_cfg.get("telemetry_poll_interval_tracking_s", 0.05)
+        )
+
+    @property
+    def pan_telemetry_poll_interval_idle_s(self) -> float:
+        """Pan telemetry poll interval in seconds during manual/idle/estop mode."""
+        return float(
+            self._pan_tilt_servo_cfg.get("telemetry_poll_interval_idle_s", 0.2)
+        )
+
+    @property
+    def pan_telemetry_stale_threshold_s(self) -> float:
+        """Seconds after last valid reading before pan telemetry is classified as stale."""
+        return float(
+            self._pan_tilt_servo_cfg.get("telemetry_stale_threshold_s", 0.15)
+        )
+
+    @property
+    def pan_telemetry_expired_threshold_s(self) -> float:
+        """Seconds after last valid reading before pan telemetry is classified as expired."""
+        return float(
+            self._pan_tilt_servo_cfg.get("telemetry_expired_threshold_s", 1.0)
+        )
+
     # ------------------------------------------------------------------
     # Rover drive calibration properties
     # ------------------------------------------------------------------
