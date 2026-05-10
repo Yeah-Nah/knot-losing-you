@@ -211,6 +211,7 @@ class UGVController:
         if self._serial is None or not self._serial.is_open:
             return None
         with self._serial_lock:
+            self._serial.reset_input_buffer()
             self._serial.write(b'{"T":130}\n')
         deadline = time.monotonic() + timeout_s
         while time.monotonic() < deadline:
