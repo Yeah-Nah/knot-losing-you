@@ -209,20 +209,38 @@ class UGVController:
         or the response does not contain a numeric pan field.
         """
         if self._serial is None or not self._serial.is_open:
+            logger.debug("Pan query: serial port not open; returning None.")
             return None
         with self._serial_lock:
             self._serial.reset_input_buffer()
             self._serial.write(b'{"T":130}\n')
+        logger.debug("Pan query: sent T=130 (timeout={:.3f}s).", timeout_s)
         deadline = time.monotonic() + timeout_s
+        lines_read = 0
         while time.monotonic() < deadline:
             raw = self._serial.readline().decode("utf-8", errors="replace").strip()
             if raw:
+                lines_read += 1
                 try:
                     data = json.loads(raw)
                     if data.get("T") == 1001:
                         pan = data.get("pan")
                         if isinstance(pan, (int, float)):
+                            logger.debug(
+                                "Pan query: received fresh pan {:.2f}° (lines_read={}).",
+                                float(pan),
+                                lines_read,
+                            )
                             return float(pan)
+                        logger.debug(
+                            "Pan query: T=1001 without numeric pan field; payload={}.",
+                            data,
+                        )
                 except json.JSONDecodeError:
-                    pass
+                    logger.debug("Pan query: ignored non-JSON line: {!r}.", raw)
+        logger.debug(
+            "Pan query: timeout after {:.3f}s (lines_read={}, no valid T=1001 pan).",
+            timeout_s,
+            lines_read,
+        )
         return None

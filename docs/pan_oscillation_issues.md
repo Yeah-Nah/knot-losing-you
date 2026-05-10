@@ -1,6 +1,6 @@
 # Pan Oscillation — Open Issues
 
-Eight root causes identified for the remaining pan servo overcompensation and damped oscillation. Each is independent and can be tackled in isolation.
+Nine root causes identified for the remaining pan servo overcompensation and damped oscillation. Each is independent and can be tackled in isolation.
 
 ## Quick Diagnostic Checklist (single run)
 
@@ -208,3 +208,34 @@ Even after flushing, telemetry can occasionally be wrong (noise, a dropped byte,
 
 - Blend rather than replace (longer term)
 The current design uses measured pan as the full base for the next command. That gives a single stale or wrong sample full authority over the command. A more robust approach is to use the measured value to correct an accumulated estimate rather than replace it outright — similar to how a complementary filter works. The estimate provides continuity and the measurement provides drift correction, so neither can cause a large command jump on its own.
+
+---
+
+## Issue 9 — True pan-angle reads are too sparse and weakly correlated to control updates
+
+**Files:** `ugv-follower/src/ugv_follower/pipeline.py`, `ugv-follower/src/ugv_follower/control/ugv_controller.py`, `ugv-follower/src/ugv_follower/control/pan_controller.py`
+
+The control loop requests pan telemetry once per loop (`query_pan_deg()`), then immediately computes the next command. In practice, loop cadence can be around 2 Hz under load, while the servo can traverse a large angle between samples. A fast-moving servo can therefore move substantially before the next trusted angle read arrives.
+
+Current query behavior also prioritizes freshness over continuity:
+
+- RX buffer is flushed before query, which removes queued stale packets but can discard delayed valid responses.
+- Query timeout is short (`timeout_s=0.1`), so a late response becomes `None` for that cycle.
+- The protocol path has no request ID/timestamp correlation between `T=130` request and `T=1001` response.
+
+When this happens repeatedly, `base_pan` remains on cached measurements for many cycles. As visual error changes sign, command output swings around an outdated anchor (`target = base_pan + delta`), which can reintroduce large side-to-side motion even for a stationary target.
+
+**Observable signature:**
+
+- Frequent cycles where telemetry query returns `None` (or no accepted measurement update).
+- `base` repeatedly logged as cached source while `corrected` changes materially.
+- Large command reversals with stable/slowly varying target position.
+
+**Goal:** Increase effective true-angle update quality by improving telemetry cadence and freshness correlation with control updates.
+
+Suggested directions:
+
+- Raise query opportunity rate (decouple pan telemetry polling from heavy vision cadence where feasible).
+- Tune timeout and serial read strategy to reduce false `None` cycles without reintroducing stale queue reads.
+- Add response provenance metadata if firmware/protocol allows (sequence number or timestamp).
+- Keep fallback behavior explicit in logs (fresh vs cached vs none) and treat long cached runs as degraded-control mode.

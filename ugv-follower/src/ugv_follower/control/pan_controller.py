@@ -206,11 +206,20 @@ class PanController:
         measurement after initialisation is always accepted.
         """
         if candidate_deg is None:
+            logger.debug("Pan telemetry: query returned None this cycle.")
             return None
         if self._last_accepted_pan_deg is None:
+            logger.debug(
+                "Pan telemetry: accepting first measurement {:.2f}°.", candidate_deg
+            )
             return candidate_deg  # first measurement — always accept
         elapsed_s = time.monotonic() - self._last_accepted_pan_time_s  # type: ignore[operator]
         if elapsed_s <= 0.0:
+            logger.debug(
+                "Pan telemetry: non-positive elapsed_s={:.6f}; accepting {:.2f}°.",
+                elapsed_s,
+                candidate_deg,
+            )
             return candidate_deg
         implied_vel = abs(candidate_deg - self._last_accepted_pan_deg) / elapsed_s
         if implied_vel > self._max_measured_velocity_deg_per_s:
@@ -222,6 +231,14 @@ class PanController:
                 self._max_measured_velocity_deg_per_s,
             )
             return None
+        logger.debug(
+            "Pan telemetry: accepted {:.2f}° "
+            "(implied {:.1f} deg/s <= max {:.1f} deg/s, elapsed={:.3f}s).",
+            candidate_deg,
+            implied_vel,
+            self._max_measured_velocity_deg_per_s,
+            elapsed_s,
+        )
         return candidate_deg
 
     def update(
@@ -300,15 +317,24 @@ class PanController:
         # 3. Delta clamp: cap command change by elapsed time (slew rate limit in deg/s).
         delta_max_this_step = self._delta_max_deg_per_s * dt
         delta = max(-delta_max_this_step, min(delta_max_this_step, scaled))
+        if measured_pan_deg is not None:
+            logger.debug(
+                "Pan telemetry: candidate measured pan this cycle = {:.2f}°.",
+                measured_pan_deg,
+            )
         validated_pan = self._validate_measured_pan(measured_pan_deg)
         if validated_pan is not None:
             self._last_accepted_pan_deg = validated_pan
             self._last_accepted_pan_time_s = time.monotonic()
             base_pan = validated_pan
-            base_label = "measured"
+            base_label = "measured-fresh"
         elif self._last_accepted_pan_deg is not None:
             base_pan = self._last_accepted_pan_deg
-            base_label = "measured"
+            base_label = "measured-cached"
+            logger.debug(
+                "Pan telemetry: falling back to cached measurement {:.2f}°.",
+                base_pan,
+            )
         else:
             base_pan = self._current_pan_deg
             base_label = "initialising"
