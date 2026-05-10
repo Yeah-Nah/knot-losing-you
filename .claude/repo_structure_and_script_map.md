@@ -9,12 +9,11 @@ knot-losing-you/
 ├─ .claude/
 │  ├─ code_standards.md
 │  ├─ pyright_type_hints_reference.md
-│  ├─ repo_structure_and_script_map.md
-│  └─ settings.json
+│  └─ repo_structure_and_script_map.md
 ├─ .github/
 │  ├─ .instructions.md
 │  ├─ pull_request_template.md
-│  ├─ prompts/               (create-claude-prompt, create-pr, create-progress-entry)
+│  ├─ prompts/               (create-claude-prompt.prompt.md, create-pr.prompt.md, create-progress-entry.prompt.md)
 │  └─ workflows/
 │     └─ linting_validation.yaml
 ├─ .gitignore
@@ -22,7 +21,6 @@ knot-losing-you/
 ├─ README.md
 ├─ PROGRESS_UPDATES.md
 ├─ planning.md
-├─ manual_validation_testing.md
 ├─ docs/
 │  ├─ pan_oscillation_issues.md        (active investigation into pan servo oscillation)
 │  ├─ pan_servo_feedback_investigation.md
@@ -68,15 +66,15 @@ knot-losing-you/
    │  ├─ check_camera_access.py      (OAK-D smoke test)
    │  ├─ check_lidar_access.py       (LiDAR packet + distance stats smoke test)
    │  ├─ check_ugv_controller.py     (rover move/stop sequence smoke test)
-   │  ├─ check_pan_tilt_feedback.py  (NEW: pan-tilt servo feedback smoke test)
-   │  ├─ scan_servo_ids.py           (NEW: servo ID discovery utility)
+   │  ├─ check_pan_tilt_feedback.py  (pan-tilt servo feedback smoke test)
+   │  ├─ scan_servo_ids.py           (servo ID discovery utility)
    │  └─ calibration/
    │     ├─ capture_calibration_images.py     (Pi MJPEG server + live corner detect)
    │     ├─ calibrate_waveshare_camera.py     (intrinsic fisheye; writes sensor_config)
    │     ├─ calibrate_pantilt_servo.py        (pan sweep; fit model; writes sensor_config + CSV)
    │     ├─ calibrate_angular_offset.py       (LiDAR↔pan-tilt extrinsic; writes sensor_config)
    │     └─ calibrate_ugv_drive.py            (turn-rate + dead-band; block-ordered sweep; writes sensor_config + CSV)
-   └─ tests/                         (10 test modules; heavy pan/drive/mjpeg/camera coverage)
+   └─ tests/                         (11 test modules; heavy pan/drive/mjpeg/camera coverage)
 ```
 
 ## 2) Runtime Architecture Snapshot
@@ -220,11 +218,11 @@ knot-losing-you/
   - Basic motor sanity check before full follower runs.
 
 - `tools/check_pan_tilt_feedback.py`
-  - NEW: Hardware smoke script for pan-tilt servo feedback and position verification.
+  - Hardware smoke script for pan-tilt servo feedback and position verification.
   - Tests servo ID discovery and position readback.
 
 - `tools/scan_servo_ids.py`
-  - NEW: Servo ID discovery utility for pan-tilt servos.
+  - Servo ID discovery utility for pan-tilt servos.
   - Scans servo bus to identify active servo addresses.
 
 #### Calibration Tools
@@ -283,6 +281,12 @@ knot-losing-you/
 - `tests/test_mjpeg_server.py`
   - Unit tests for MJPEG frame storage, server lifecycle, and `/stream` versus 404 HTTP responses.
 
+- `tests/test_check_battery.py`
+  - Unit tests for battery telemetry parsing, probe fallback flow, and preflight-driven serial access handling.
+
+- `tests/test_ugv_controller.py`
+  - Unit tests for controller serial command encoding, motion conversion, and stop/pan-tilt command behaviour.
+
 - `tests/test_waveshare_camera.py`
   - Unit tests for `WaveshareCamera`: pre-start guard, start/stop lifecycle, frame acquisition, and read-failure handling (mocked cv2.VideoCapture).
 
@@ -291,7 +295,6 @@ knot-losing-you/
 - `README.md`: operator workflow, setup, and calibration runbook.
 - `planning.md`: implementation roadmap and phase progress.
 - `PROGRESS_UPDATES.md`: execution log / milestone narrative.
-- `manual_validation_testing.md`: manual validation procedures.
 - `docs/pan_oscillation_issues.md`: **ACTIVE**: investigation into stationary-target pan oscillation (intrinsic to control loop; Issues 2/3 are stronger candidates than Issue 1).
 - `docs/pan_servo_feedback_investigation.md`: feedback path analysis and servo readback investigation.
 - `docs/engineering_theory/*`: calibration/control theory docs (9 total; covers angular calibration, coordinate transforms, extrinsic/intrinsic calibration, servo curves, control loop rate theory, etc.).
