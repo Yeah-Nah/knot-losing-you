@@ -31,15 +31,21 @@ _INTERVAL_TRACKING = 0.02   # 50 Hz — fast enough to accumulate calls in tests
 _INTERVAL_IDLE = 0.10        # 10 Hz
 
 
+_QUERY_TIMEOUT = 0.05
+
+
 def _make_poller(query_fn=None) -> PanTelemetryPoller:
     ugv = MagicMock(spec=UGVController)
-    ugv.query_pan_deg.side_effect = query_fn if query_fn is not None else (lambda: None)
+    _fn = query_fn if query_fn is not None else (lambda: None)
+    # Wrap so the poller can call query_pan_deg(timeout_s=...) without TypeError.
+    ugv.query_pan_deg.side_effect = lambda timeout_s=None: _fn()
     return PanTelemetryPoller(
         ugv_controller=ugv,
         stale_threshold_s=_STALE_S,
         expired_threshold_s=_EXPIRED_S,
         poll_interval_tracking_s=_INTERVAL_TRACKING,
         poll_interval_idle_s=_INTERVAL_IDLE,
+        query_timeout_s=_QUERY_TIMEOUT,
     )
 
 
@@ -381,3 +387,51 @@ class TestConcurrencyGuardrails:
             snap.pan_deg = 0.0  # type: ignore[misc]
         with pytest.raises((AttributeError, TypeError)):
             snap.seq = 99  # type: ignore[misc]
+
+
+# ---------------------------------------------------------------------------
+# Serial worker and configuration wiring tests
+# ---------------------------------------------------------------------------
+
+
+class TestSerialWorkerDecoupling:
+    def test_query_timeout_forwarded_to_controller(self) -> None:
+        """query_pan_deg is called with query_timeout_s, not a hardcoded default."""
+        ugv = MagicMock(spec=UGVController)
+        ugv.query_pan_deg.return_value = 5.0
+        custom_timeout = 0.077
+        poller = PanTelemetryPoller(
+            ugv_controller=ugv,
+            stale_threshold_s=_STALE_S,
+            expired_threshold_s=_EXPIRED_S,
+            poll_interval_tracking_s=_INTERVAL_TRACKING,
+            poll_interval_idle_s=_INTERVAL_IDLE,
+            query_timeout_s=custom_timeout,
+        )
+        poller.set_tracking_mode(True)
+        poller.start()
+        time.sleep(_INTERVAL_TRACKING * 5)
+        poller.stop()
+
+        assert ugv.query_pan_deg.call_count >= 1
+        for call in ugv.query_pan_deg.call_args_list:
+            timeout_arg = call.kwargs.get("timeout_s", call.args[0] if call.args else None)
+            assert timeout_arg == pytest.approx(custom_timeout)
+
+    def test_serial_thread_is_daemon_and_named(self) -> None:
+        """The serial worker thread is a daemon with the expected name."""
+        poller = _make_poller(query_fn=lambda: None)
+        poller.start()
+        try:
+            assert poller._serial_thread is not None
+            assert poller._serial_thread.daemon is True
+            assert poller._serial_thread.name == "PanTelemetrySerialWorker"
+        finally:
+            poller.stop()
+
+    def test_stop_joins_serial_thread(self) -> None:
+        """stop() sets _serial_thread to None after joining."""
+        poller = _make_poller(query_fn=lambda: None)
+        poller.start()
+        poller.stop()
+        assert poller._serial_thread is None

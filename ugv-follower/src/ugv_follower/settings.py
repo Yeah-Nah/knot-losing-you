@@ -364,6 +364,13 @@ class Settings:
             self._pan_tilt_servo_cfg.get("telemetry_expired_threshold_s", 1.0)
         )
 
+    @property
+    def pan_telemetry_query_timeout_s(self) -> float:
+        """Serial read timeout for each pan angle query in seconds."""
+        return float(
+            self._pan_tilt_servo_cfg.get("telemetry_query_timeout_s", 0.1)
+        )
+
     # ------------------------------------------------------------------
     # Rover drive calibration properties
     # ------------------------------------------------------------------

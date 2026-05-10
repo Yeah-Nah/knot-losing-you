@@ -1,28 +1,33 @@
 """Pan servo telemetry polling — decoupled from the vision loop.
 
-Provides an immutable snapshot type and a background polling thread that owns
-the serial pan-angle query path (single serial arbiter).  The vision/control
-loop reads the latest snapshot once per cycle without touching serial directly.
+Provides an immutable snapshot type and a two-thread background poller:
 
-Concurrency guardrails implemented here
----------------------------------------
-- Threading coordination  : daemon thread with Event stop signal and bounded join.
-- Shared-state sync       : threading.Lock protects the snapshot reference; held
-                            only for the atomic pointer swap, not during I/O.
+- Cadence thread  : sleeps for exactly ``poll_interval_*_s`` then signals
+                    the serial worker.  Never blocks on I/O, so the polling
+                    interval is independent of serial timing.
+- Serial worker   : waits for the cadence trigger then performs a single
+                    blocking ``query_pan_deg()`` call and publishes the
+                    result.
+
+The vision/control loop reads the latest snapshot once per cycle via
+:meth:`PanTelemetryPoller.get_snapshot` without touching serial directly.
+
+Concurrency guardrails
+----------------------
+- Threading coordination  : two daemon threads (cadence + serial worker) each
+                            with an Event stop signal and bounded join.
+- Trigger handoff         : threading.Event — idempotent set; worker clears
+                            after pickup; cadence fires and forgets.
+- Shared-state sync       : threading.Lock protects the snapshot reference;
+                            held only for the atomic pointer swap, not during I/O.
 - Race conditions         : PanTelemetrySnapshot is frozen — the writer replaces
                             the reference atomically; the reader copies the ref
                             before releasing the lock and uses only that copy.
-- Poll thread idle load   : set_tracking_mode(False) reduces cadence to 5 Hz when
-                            control is idle (MANUAL mode or estop active).
-
-Project-specific guardrails
----------------------------
-- Single serial arbiter : only this module calls query_pan_deg().
-- Snapshot object       : PanTelemetrySnapshot bundles pan_deg, timestamp, seq,
-                          valid flag, and freshness status in one frozen record.
-- Mode-aware polling    : tracking (20 Hz) vs idle (5 Hz) via set_tracking_mode().
-- Late reply handling   : publish only if snap.seq > self._snapshot.seq; stale
-                          responses from the serial bus cannot overwrite newer state.
+- Poll thread idle load   : set_tracking_mode(False) reduces cadence to idle Hz
+                            when control is idle (MANUAL mode or estop active).
+- Late reply handling     : publish only if snap.seq > self._snapshot.seq; stale
+                            responses from the serial bus cannot overwrite newer
+                            state.
 """
 
 from __future__ import annotations
@@ -132,12 +137,20 @@ def _classify(
 
 
 class PanTelemetryPoller:
-    """Background thread that owns the pan servo telemetry query path.
+    """Background poller that owns the pan servo telemetry query path.
 
-    The poller runs independently of the vision/control loop, querying the
-    hardware at a mode-appropriate cadence and publishing the result as an
-    immutable :class:`PanTelemetrySnapshot`.  Consumers call
-    :meth:`get_snapshot` once per control cycle to obtain the latest reading.
+    Internally uses two daemon threads:
+
+    - **Cadence thread** (``_run_loop``): sleeps for ``poll_interval_*_s``
+      and signals the serial worker via a :class:`threading.Event`.  Its sleep
+      is purely temporal — independent of serial timing.
+    - **Serial worker** (``_serial_worker_loop``): waits for the cadence
+      trigger then calls :meth:`~ugv_follower.control.ugv_controller.UGVController.query_pan_deg`
+      with the configured ``query_timeout_s`` and publishes the result as an
+      immutable :class:`PanTelemetrySnapshot`.
+
+    Consumers call :meth:`get_snapshot` once per control cycle to obtain the
+    latest reading without ever waiting on serial I/O.
 
     On timeout or serial error the old snapshot is left in place so that
     ``sample_time_monotonic`` naturally ages — causing the snapshot's status to
@@ -159,6 +172,8 @@ class PanTelemetryPoller:
         Target interval between polls in tracking mode (fast cadence).
     poll_interval_idle_s : float
         Target interval between polls in idle/manual mode (slow cadence).
+    query_timeout_s : float
+        Serial read timeout passed to ``query_pan_deg()`` on every poll.
     """
 
     def __init__(
@@ -168,12 +183,14 @@ class PanTelemetryPoller:
         expired_threshold_s: float,
         poll_interval_tracking_s: float,
         poll_interval_idle_s: float,
+        query_timeout_s: float,
     ) -> None:
         self._ugv = ugv_controller
         self._stale_threshold_s = stale_threshold_s
         self._expired_threshold_s = expired_threshold_s
         self._poll_interval_tracking_s = poll_interval_tracking_s
         self._poll_interval_idle_s = poll_interval_idle_s
+        self._query_timeout_s = query_timeout_s
 
         # Shared state — protected by _lock
         self._snapshot: PanTelemetrySnapshot = _INITIALISING_SNAPSHOT
@@ -186,20 +203,24 @@ class PanTelemetryPoller:
 
         # Thread lifecycle
         self._stop_event = threading.Event()
+        self._trigger_event = threading.Event()
         self._thread: threading.Thread | None = None
+        self._serial_thread: threading.Thread | None = None
 
         logger.debug(
             "PanTelemetryPoller initialised "
             "(stale={:.3f}s, expired={:.3f}s, "
-            "tracking_interval={:.3f}s, idle_interval={:.3f}s).",
+            "tracking_interval={:.3f}s, idle_interval={:.3f}s, "
+            "query_timeout={:.3f}s).",
             stale_threshold_s,
             expired_threshold_s,
             poll_interval_tracking_s,
             poll_interval_idle_s,
+            query_timeout_s,
         )
 
     def start(self) -> None:
-        """Start the background polling thread.
+        """Start the background cadence and serial worker threads.
 
         Raises
         ------
@@ -209,24 +230,39 @@ class PanTelemetryPoller:
         if self._thread is not None and self._thread.is_alive():
             raise RuntimeError("PanTelemetryPoller is already running.")
         self._stop_event.clear()
+        self._trigger_event.clear()
         self._thread = threading.Thread(
             target=self._run_loop,
             name="PanTelemetryPollThread",
             daemon=True,
         )
+        self._serial_thread = threading.Thread(
+            target=self._serial_worker_loop,
+            name="PanTelemetrySerialWorker",
+            daemon=True,
+        )
         self._thread.start()
+        self._serial_thread.start()
         logger.info("PanTelemetryPoller started.")
 
     def stop(self) -> None:
-        """Signal the polling thread to exit and wait for it to finish."""
+        """Signal both threads to exit and wait for them to finish."""
         self._stop_event.set()
+        self._trigger_event.set()  # wake serial worker if blocked on wait()
         if self._thread is not None:
             self._thread.join(timeout=2.0)
             if self._thread.is_alive():
                 logger.warning(
-                    "PanTelemetryPoller thread did not exit within 2 s timeout."
+                    "PanTelemetryPoller cadence thread did not exit within 2 s timeout."
                 )
             self._thread = None
+        if self._serial_thread is not None:
+            self._serial_thread.join(timeout=2.0)
+            if self._serial_thread.is_alive():
+                logger.warning(
+                    "PanTelemetryPoller serial worker did not exit within 2 s timeout."
+                )
+            self._serial_thread = None
         logger.info("PanTelemetryPoller stopped.")
 
     def set_tracking_mode(self, tracking: bool) -> None:
@@ -261,8 +297,12 @@ class PanTelemetryPoller:
         return _classify(snap, self._stale_threshold_s, self._expired_threshold_s)
 
     def _run_loop(self) -> None:
-        """Main poll loop — runs on the dedicated daemon thread."""
-        logger.debug("PanTelemetryPoller thread running.")
+        """Cadence thread — fires the serial trigger at the configured interval.
+
+        Sleeps for exactly ``poll_interval_*_s`` on each iteration.  Serial
+        timing does not affect this sleep.
+        """
+        logger.debug("PanTelemetryPoller cadence thread running.")
         while not self._stop_event.is_set():
             with self._mode_lock:
                 tracking = self._tracking_mode
@@ -271,9 +311,25 @@ class PanTelemetryPoller:
                 if tracking
                 else self._poll_interval_idle_s
             )
+            self._trigger_event.set()
+            self._stop_event.wait(interval)
+        logger.debug("PanTelemetryPoller cadence thread exiting.")
 
-            poll_start = time.monotonic()
-            pan_deg = self._ugv.query_pan_deg()
+    def _serial_worker_loop(self) -> None:
+        """Serial worker thread — performs blocking pan angle queries.
+
+        Waits for the cadence trigger, then calls ``query_pan_deg()`` with
+        the configured ``query_timeout_s`` and publishes a fresh snapshot.
+        On timeout the snapshot is left unchanged so it ages naturally.
+        """
+        logger.debug("PanTelemetryPoller serial worker running.")
+        while not self._stop_event.is_set():
+            triggered = self._trigger_event.wait(timeout=1.0)
+            if not triggered or self._stop_event.is_set():
+                continue
+            self._trigger_event.clear()
+
+            pan_deg = self._ugv.query_pan_deg(timeout_s=self._query_timeout_s)
 
             if pan_deg is not None:
                 with self._lock:
@@ -286,7 +342,6 @@ class PanTelemetryPoller:
                     status="fresh",
                 )
                 with self._lock:
-                    # Late-reply guard: only publish if this seq is newer than stored.
                     if snap.seq > self._snapshot.seq:
                         self._snapshot = snap
                 logger.debug(
@@ -294,10 +349,4 @@ class PanTelemetryPoller:
                 )
             else:
                 logger.debug("Pan telemetry: query timed out — snapshot unchanged.")
-
-            elapsed = time.monotonic() - poll_start
-            sleep_remaining = max(0.0, interval - elapsed)
-            if sleep_remaining > 0.0:
-                self._stop_event.wait(sleep_remaining)
-
-        logger.debug("PanTelemetryPoller thread exiting.")
+        logger.debug("PanTelemetryPoller serial worker exiting.")

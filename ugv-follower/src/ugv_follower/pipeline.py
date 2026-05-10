@@ -122,6 +122,7 @@ class Pipeline:
             expired_threshold_s=settings.pan_telemetry_expired_threshold_s,
             poll_interval_tracking_s=settings.pan_telemetry_poll_interval_tracking_s,
             poll_interval_idle_s=settings.pan_telemetry_poll_interval_idle_s,
+            query_timeout_s=settings.pan_telemetry_query_timeout_s,
         )
         logger.info("Pipeline initialised.")
 
