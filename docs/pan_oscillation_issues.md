@@ -250,7 +250,7 @@ Suggested directions:
 
 - Increase `query_pan_deg()` timeout from `0.1s` to `0.25-0.35s` and re-test first; current logs show near-total timeout at `0.1s`.
 - Add telemetry-age/degraded mode guard: if no fresh measurement for N consecutive cycles, clamp delta/gain more aggressively to reduce stale-base command swings.
-- Decouple telemetry polling from the vision loop (dedicated poll path/thread) so pan reads are not starved by inference cadence.
+- Decouple telemetry polling from the vision loop (dedicated poll path/thread) so pan reads are not starved by inference cadence. - COMPLETE
 - Audit firmware response behavior for `T=130` under concurrent traffic (`T=1`, `T=133`) and ensure a prompt `T=1001` is always emitted.
 - If firmware supports it, add request/response correlation metadata (sequence or timestamp) to distinguish late-but-valid responses from stale context.
 - Keep the new logging in place (`measured-fresh` vs `measured-cached`, query timeout/lines_read) and use it as acceptance criteria for fixes.
