@@ -63,7 +63,7 @@ pan_tilt_servo:
   telemetry_poll_interval_idle_s: 0.2         # 5 Hz during manual/idle/estop
   telemetry_stale_threshold_s: 0.15           # Classify stale after 150 ms without fresh sample
   telemetry_expired_threshold_s: 1.0          # Classify expired (hold) after 1 s without fresh sample
-  telemetry_query_timeout_s: 0.2             # Serial read timeout per pan query (seconds)
+  telemetry_query_timeout_s: 0.35             # Serial read timeout per pan query (seconds)
   dead_band_pos_deg: 1.0
   dead_band_neg_deg: -1.0
   cmd_min: -60.0
