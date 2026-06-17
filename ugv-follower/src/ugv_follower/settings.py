@@ -92,14 +92,14 @@ class Settings:
                 f"pan_tilt_servo.tracking_gain_kp must be > 0, "
                 f"got {self.pan_tracking_gain_kp}."
             )
-        if self.pan_tracking_delta_max_deg <= 0:
+        if self.pan_tracking_delta_max_deg_per_s <= 0:
             logger.error(
-                f"pan_tilt_servo.tracking_delta_max_deg must be > 0, "
-                f"got {self.pan_tracking_delta_max_deg}."
+                f"pan_tilt_servo.tracking_delta_max_deg_per_s must be > 0, "
+                f"got {self.pan_tracking_delta_max_deg_per_s}."
             )
             raise ValueError(
-                f"pan_tilt_servo.tracking_delta_max_deg must be > 0, "
-                f"got {self.pan_tracking_delta_max_deg}."
+                f"pan_tilt_servo.tracking_delta_max_deg_per_s must be > 0, "
+                f"got {self.pan_tracking_delta_max_deg_per_s}."
             )
         if self.pan_tracking_hysteresis_enter_deg < 0:
             logger.error(
@@ -149,6 +149,11 @@ class Settings:
     def stream_port(self) -> int:
         """HTTP port for the MJPEG stream endpoint. 0 disables streaming."""
         return int(self.pipeline_config.get("stream_port", 0))
+
+    @property
+    def loop_period_s(self) -> float:
+        """Main control-loop period in seconds."""
+        return float(self.pipeline_config.get("loop_period_s", 0.01))
 
     @property
     def dev_or_pi(self) -> str:
@@ -289,9 +294,9 @@ class Settings:
         return float(self._pan_tilt_servo_cfg.get("tracking_gain_kp", 0.4))
 
     @property
-    def pan_tracking_delta_max_deg(self) -> float:
-        """Maximum per-cycle pan command change in degrees (slew rate cap)."""
-        return float(self._pan_tilt_servo_cfg.get("tracking_delta_max_deg", 2.5))
+    def pan_tracking_delta_max_deg_per_s(self) -> float:
+        """Maximum pan command change in degrees per second (slew rate cap)."""
+        return float(self._pan_tilt_servo_cfg.get("tracking_delta_max_deg_per_s", 25.0))
 
     @property
     def pan_tracking_hysteresis_enter_deg(self) -> float:
@@ -304,9 +309,67 @@ class Settings:
         return float(self._pan_tilt_servo_cfg.get("tracking_hysteresis_exit_deg", 3.0))
 
     @property
+    def pan_tracking_max_measured_velocity_deg_per_s(self) -> float:
+        """Maximum plausible measured pan velocity in deg/s (telemetry jump guard)."""
+        return float(
+            self._pan_tilt_servo_cfg.get(
+                "tracking_max_measured_velocity_deg_per_s", 200.0
+            )
+        )
+
+    @property
+    def pan_tracking_stale_telemetry_threshold_cycles(self) -> int:
+        """Consecutive cycles without fresh telemetry before entering degraded mode."""
+        return int(
+            self._pan_tilt_servo_cfg.get("tracking_stale_telemetry_threshold_cycles", 5)
+        )
+
+    @property
+    def pan_tracking_degraded_delta_scale(self) -> float:
+        """Delta multiplier applied in degraded mode to reduce command aggressiveness."""
+        return float(
+            self._pan_tilt_servo_cfg.get("tracking_degraded_delta_scale", 0.5)
+        )
+
+    @property
     def pan_tilt_setpoint_deg(self) -> float:
         """Fixed tilt servo setpoint in degrees used for horizontal projection correction."""
         return float(self._pan_tilt_servo_cfg.get("tilt_setpoint_deg", 0.0))
+
+    @property
+    def pan_telemetry_poll_interval_tracking_s(self) -> float:
+        """Pan telemetry poll interval in seconds during autonomous/tracking mode."""
+        return float(
+            self._pan_tilt_servo_cfg.get("telemetry_poll_interval_tracking_s", 0.05)
+        )
+
+    @property
+    def pan_telemetry_poll_interval_idle_s(self) -> float:
+        """Pan telemetry poll interval in seconds during manual/idle/estop mode."""
+        return float(
+            self._pan_tilt_servo_cfg.get("telemetry_poll_interval_idle_s", 0.2)
+        )
+
+    @property
+    def pan_telemetry_stale_threshold_s(self) -> float:
+        """Seconds after last valid reading before pan telemetry is classified as stale."""
+        return float(
+            self._pan_tilt_servo_cfg.get("telemetry_stale_threshold_s", 0.15)
+        )
+
+    @property
+    def pan_telemetry_expired_threshold_s(self) -> float:
+        """Seconds after last valid reading before pan telemetry is classified as expired."""
+        return float(
+            self._pan_tilt_servo_cfg.get("telemetry_expired_threshold_s", 1.0)
+        )
+
+    @property
+    def pan_telemetry_query_timeout_s(self) -> float:
+        """Serial read timeout for each pan angle query in seconds."""
+        return float(
+            self._pan_tilt_servo_cfg.get("telemetry_query_timeout_s", 0.1)
+        )
 
     # ------------------------------------------------------------------
     # Rover drive calibration properties

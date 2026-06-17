@@ -16,6 +16,12 @@ This project builds an autonomous person-following rover for use in a marina env
 
 ---
 
+## Firmware
+
+The stock firmware in the Waveshare UGV Rover's drive controller has a serial communication bug that prevents this project from working correctly. The [`waveshareteam/ugv_base_general`](https://github.com/waveshareteam/ugv_base_general) repository was forked and patched to add flushing functionality to `wFlushSCS` in the SCServo library, and the ESP32 drive controller was reflashed with the updated firmware. The patched fork is available at [`Yeah-Nah/ugv_base_general`](https://github.com/Yeah-Nah/ugv_base_general). **The drive controller must be flashed from this fork before any of the software in this repo will function correctly.**
+
+---
+
 ## Setup
 
 ### Development Machine
