@@ -126,7 +126,7 @@ None of this is currently read by the runtime pan pipeline. `Settings` only expo
 
 **File:** `ugv-follower/src/ugv_follower/pipeline.py`
 
-Although `dt` is now measured per iteration and pan delta is scaled by elapsed time, the main loop still ends with a fixed sleep (`time.sleep(self._loop_period_s)` with `_loop_period_s = 0.1`). This enforces an additional 100 ms idle delay every cycle regardless of how quickly camera read and inference complete.
+Although `dt` is now measured per iteration and pan delta is scaled by elapsed time, the main loop still ends with a fixed sleep (`time.sleep(self._loop_period_s)` where `_loop_period_s` comes from `Settings.loop_period_s`). This enforces additional idle delay every cycle regardless of how quickly camera read and inference complete.
 
 In practice this limits the control update rate and increases reaction lag when the target changes direction quickly. The system can therefore still feel hesitant even after stale-frame buffering and `dt` scaling improvements.
 

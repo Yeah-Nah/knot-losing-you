@@ -1,9 +1,9 @@
 """Scan the ST3215 servo bus to identify which IDs respond and which do not.
 
 The ESP32 firmware periodically calls ``FeedBack()`` on every servo it knows
-about — gimbal pan (ID 2), gimbal tilt (ID 1), and all four wheel drive servos
-(IDs 11, 12, 13, 14, 15). When ``FeedBack()`` fails for any of those IDs the
-firmware emits::
+about — gimbal pan (ID 2), gimbal tilt (ID 1), and any other serial-bus servos
+present in the active firmware profile (often IDs 11–15). When ``FeedBack()``
+fails for any of those IDs the firmware emits::
 
     {"T":1005,"id":<servo_id>,"status":0}
 
@@ -56,7 +56,7 @@ _DRIVE_IDS: frozenset[int] = frozenset({11, 12, 13, 14, 15})
 _T_TELEMETRY = 1001
 _T_BUS_ERROR = 1005
 
-# How many T=130 polls to fire per second during the listen window.
+# Interval between T=130 polls during the listen window.
 _POLL_INTERVAL_S = 0.5
 
 

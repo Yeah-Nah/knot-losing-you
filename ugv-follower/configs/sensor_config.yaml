@@ -59,9 +59,9 @@ pan_tilt_servo:
   tracking_stale_telemetry_threshold_cycles: 5     # Consecutive cycles without fresh telemetry before entering degraded mode
   tracking_degraded_delta_scale: 0.5               # Delta multiplier applied in degraded mode to reduce command aggressiveness
   # Decoupled telemetry polling — PanTelemetryPoller cadence and freshness thresholds
-  telemetry_poll_interval_tracking_s: 0.2   # 20 Hz during autonomous/tracking mode
+  telemetry_poll_interval_tracking_s: 0.05   # 20 Hz during autonomous/tracking mode
   telemetry_poll_interval_idle_s: 0.2         # 5 Hz during manual/idle/estop
-  telemetry_stale_threshold_s: 0.2           # Classify stale after 150 ms without fresh sample
+  telemetry_stale_threshold_s: 0.2           # Classify stale after 200 ms without fresh sample
   telemetry_expired_threshold_s: 1.0          # Classify expired (hold) after 1 s without fresh sample
   telemetry_query_timeout_s: 0.2             # Serial read timeout per pan query (seconds)
   dead_band_pos_deg: 1.0
