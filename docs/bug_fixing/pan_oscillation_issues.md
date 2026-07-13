@@ -269,6 +269,38 @@ This run strengthens the prior conclusion: immediate bottleneck is still telemet
 - Fresh telemetry arrives in bursts with repeating long gaps. Measured fresh inter-arrival pattern includes multiple `~7.02s` gaps (examples: `7.019s`, `7.092s`, `7.018s`, `7.022s`, `7.076s`, `7.020s`).
 - Between long gaps, short sub-second clusters occur (`~0.07s` to `~0.20s` between fresh samples), indicating intermittent windows where replies are briefly available.
 
+**Latest finding (2026-07-13 telemetry-only serial test, `timeout=0.300s`, no `T=1`/`T=133` traffic):**
+
+- Telemetry remained highly sparse even without mixed traffic: `103` total queries, `4` successes, `99` timeouts (**3.9%** success).
+- Timeout signature stayed dominant and clean: timeout entries were consistently `lines_read=0` and `non_telemetry_lines=0` (no serial line received during most query windows).
+- Fresh replies appeared at near-regular long intervals (success IDs `20`, `45`, `70`, `95`), implying about `25` timeout-paced queries between successes (approximately `7.2s` cadence at this run's effective query period).
+- Successful reply latency stayed low once a reply actually arrived (`54.74-117.80 ms`, median `57.90 ms`), and reported pan angle was stable (`10.3736 deg`) across all successes.
+
+This telemetry-only run weakens the mixed-traffic contention hypothesis as the primary cause. The dominant bottleneck now points more strongly to response scheduling/rate-limiting on the firmware/device side, or to host-side query/flush timing that systematically misses reply windows.
+
+**Latest finding (2026-07-13 telemetry-only request-rate/timeout sweep):**
+
+- Four telemetry-only runs were compared.
+- `poll=2.0s, timeout=0.3s`: `1/15` success (**6.7%**)
+- `poll=0.2s, timeout=0.3s`: `4/103` success (**3.9%**)
+- `poll=2.0s, timeout=2.0s`: `4/15` success (**26.7%**)
+- `poll=0.5s, timeout=2.0s`: `4/17` success (**23.5%**)
+- Across all four runs, successful samples remained sparse with a consistent long-gap pattern (roughly **7-8 s** between accepted replies in the multi-success runs).
+- Increasing request rate alone (`2.0s` to `0.2s` poll) did not improve telemetry availability at `timeout=0.3s`; success ratio slightly worsened.
+- Increasing timeout to `2.0s` improved capture probability and raised success ratio, but successes still arrived with similar multi-second spacing and often near the tail of the read window (`~0.86-1.95 s` latency in one run, `~1.00 s` in another).
+
+**Latest finding (2026-07-13 telemetry-only fixed-timeout request-rate matrix, `timeout=2.0s`) — COMPLETE:**
+
+- Fixed-timeout matrix now includes all planned poll rates (`2.0s`, `1.0s`, `0.5s`, `0.2s`) at `timeout=2.0s` in telemetry-only mode.
+- `poll=2.0s, timeout=2.0s`: `4/15` success (**26.7%**)
+- `poll=1.0s, timeout=2.0s`: `4/17` success (**23.5%**)
+- `poll=0.5s, timeout=2.0s`: `4/17` success (**23.5%**)
+- `poll=0.2s, timeout=2.0s`: `5/18` success (**27.8%**)
+- Success ratio stayed in a narrow band (`23.5-27.8%`) across the full poll-rate range, showing no meaningful improvement from higher host request rate at fixed long timeout.
+- Long inter-success gaps remained essentially unchanged at about `~7s` (`7.280s` in the `poll=1.0s` run, `7.045s` in the `poll=0.2s` run), consistent with an upstream cadence bottleneck rather than host poll cadence.
+
+Interpretation: current evidence points to a cadence/availability bottleneck upstream of host poll rate (firmware scheduling, device-side rate limit, or host request-window alignment). The host can improve probability of catching replies with longer waits, but this does not yet demonstrate one reply per request.
+
 **Code-path interpretation for this run (important):**
 
 - Poller tracking cadence is configured to `0.05s`, but the serial worker can only issue one query roughly every timeout period when no reply arrives. In this run the effective query period is about `0.30s`, matching the timeout-dominated loop.
@@ -284,19 +316,18 @@ This run strengthens the prior conclusion: immediate bottleneck is still telemet
 
 **Goal:** Increase effective true-angle update quality by improving telemetry cadence and freshness correlation with control updates.
 
-Suggested directions:
+**Consolidated finding and current status:**
 
-- Timeout increase to `0.3s` has now been tested and still shows dominant `lines_read=0`; next step is to instrument reply latency/correlation, not just increase timeout again blindly.
-- Add telemetry-age/degraded mode guard: if no fresh measurement for N consecutive cycles, clamp delta/gain more aggressively to reduce stale-base command swings.
-- Decouple telemetry polling from the vision loop (dedicated poll path/thread) so pan reads are not starved by inference cadence. - COMPLETE
-- Audit firmware response behavior for `T=130` under concurrent traffic (`T=1`, `T=133`) and ensure a prompt `T=1001` is always emitted.
-- If firmware supports it, add request/response correlation metadata (sequence or timestamp) to distinguish late-but-valid responses from stale context.
-- Keep the new logging in place (`measured-fresh` vs `measured-cached`, query timeout/lines_read) and use it as acceptance criteria for fixes.
+- Timeout extension to `0.300s` has been explicitly tested and did not resolve sparsity; dominant failure remains timeout with `lines_read=0`, so further small timeout-only tuning is unlikely to fix root cause.
+- Mixed-traffic contention is no longer the leading hypothesis: telemetry-only testing still showed severe sparsity, shifting primary suspicion toward firmware/device-side response scheduling or host-side query/flush timing mismatch.
+- Request-rate increase alone did not improve telemetry density, while longer timeout improved capture ratio without removing the long inter-success gap. This suggests better "catch" behavior, not restored per-request response behavior.
+- Mitigations that reduce control impact are already in place (degraded-mode behavior during stale telemetry and decoupled telemetry polling path/thread), but they do not restore true-angle sample density.
+- Existing diagnostics (`measured-fresh` vs `measured-cached`, timeout details including `lines_read`) should be retained as acceptance criteria for any telemetry-path fix.
 
-Focused next investigation to isolate root cause of intermittent pan telemetry:
+**Focused next investigation (single plan):**
 
-- Run a **telemetry-only serial test** (no `T=1`, no `T=133`; send only `T=130` at fixed rate) and measure success ratio plus reply latency histogram. If the 7 s pattern disappears, contention from mixed traffic is implicated.
-- Add temporary per-query IDs in logs (host-side `query_id`, send timestamp, receive timestamp, elapsed) even if protocol payload cannot carry ID. This will show whether fresh reads are late arrivals relative to earlier sends.
-- Capture and log all non-`T=1001` serial lines during query windows with timestamps to see whether the bus is active but with other message types.
-- Perform an A/B run with pre-query flush disabled for diagnostics only. Compare stale-rate vs success-rate to test whether late replies are being discarded by `reset_input_buffer()`.
-- If available, capture firmware-side UART logs for `T=130` receive and `T=1001` transmit timestamps. This is the decisive check for whether delay is host-side read-window loss or firmware-side response scheduling.
+- Controlled **request-rate matrix at fixed long timeout** (`poll=2.0s`, `1.0s`, `0.5s`, `0.2s` with `timeout=2.0s`, telemetry-only, 30 s window) — **COMPLETE (2026-07-13)**. Result: success ratio remained flat (~`23.5-27.8%`) with persistent `~7s` inter-success gaps, so host request-rate increase alone does not resolve sparse telemetry.
+- Run A/B at each selected poll rate with **pre-query RX flush ON vs OFF** while keeping all else fixed. Record success ratio, inter-success gap, and whether `non_telemetry_lines` rises when flush is disabled.
+- Add explicit host-side edge timing logs per query (`send_ts`, `first_byte_ts`, `parse_ts`, `timeout_ts`) and persist raw line timestamps to determine whether replies are absent or regularly late relative to query windows.
+- If possible, instrument firmware UART handling (`T=130` receive timestamp, `T=1001` transmit timestamp/counter) to verify whether device emit cadence itself is ~7-8 s or whether host-side handling is dropping/missing intermediate replies.
+- If firmware cannot provide correlation metadata, temporarily add a lightweight request/response correlation field (sequence ID or echoed host token) so late responses can be matched to originating queries and flush-drop behavior can be proven/disproven.

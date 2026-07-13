@@ -10,6 +10,8 @@ knot-losing-you/
 │  ├─ code_standards.md
 │  ├─ pyright_type_hints_reference.md
 │  └─ repo_structure_and_script_map.md
+├─ .vscode/
+│  └─ markdown-pdf.css
 ├─ .github/
 │  ├─ .instructions.md
 │  ├─ pull_request_template.md
@@ -47,7 +49,8 @@ knot-losing-you/
    │  │  ├─ motion_command.py        (canonical MotionCommand contract + adapter)
    │  │  ├─ ugv_controller.py        (serial rover API + differential wheel solver)
    │  │  ├─ command_shaper.py        (rate-limit + reversal dwell background thread)
-   │  │  └─ pan_controller.py        (bbox → pan command: bearing, tilt, deadband, clamp)
+   │  │  ├─ pan_controller.py        (bbox + measured pan telemetry → pan command: bearing, tilt, deadband, clamp)
+   │  │  └─ pan_telemetry.py         (decoupled background pan telemetry poller with snapshot freshness states)
    │  ├─ perception/
    │  │  ├─ waveshare_camera.py      (V4L2 RGB pan-tilt; runtime frame source; preflight guard)
    │  │  ├─ lidar_access.py          (D500 serial packet parsing; 12-point scans)
@@ -66,6 +69,7 @@ knot-losing-you/
    │  ├─ check_camera_access.py      (OAK-D smoke test)
    │  ├─ check_lidar_access.py       (LiDAR packet + distance stats smoke test)
    │  ├─ check_ugv_controller.py     (rover move/stop sequence smoke test)
+   │  ├─ check_pan_telemetry_only.py (isolated T=130→T=1001 latency/timeout diagnostic)
    │  ├─ check_pan_tilt_feedback.py  (pan-tilt servo feedback smoke test)
    │  ├─ scan_servo_ids.py           (servo ID discovery utility)
    │  └─ calibration/
@@ -74,7 +78,7 @@ knot-losing-you/
    │     ├─ calibrate_pantilt_servo.py        (pan sweep; fit model; writes sensor_config + CSV)
    │     ├─ calibrate_angular_offset.py       (LiDAR↔pan-tilt extrinsic; writes sensor_config)
    │     └─ calibrate_ugv_drive.py            (turn-rate + dead-band; block-ordered sweep; writes sensor_config + CSV)
-   └─ tests/                         (11 test modules; heavy pan/drive/mjpeg/camera coverage)
+   └─ tests/                         (13 test modules; heavy pan/drive/mjpeg/camera/telemetry coverage)
 ```
 
 ## 2) Runtime Architecture Snapshot
@@ -97,8 +101,11 @@ knot-losing-you/
 - **Frame Source**: Waveshare RGB pan-tilt camera (`WaveshareCamera`, V4L2, preflight-guarded).
   - Runs camera preflight (`ensure_camera_device_available`) on startup to detect/release busy V4L2 devices.
   - Feeds object detection, pan servo tracking, and MJPEG streaming.
-- **Pan Servo Tracking**: `PanController` converts detection bbox centroids → pan servo commands.
-  - Math: fisheye bearing + tilt correction + deadband suppression + clamp logic.
+- **Pan Servo Tracking**: `PanController` converts detection bbox centroids + measured pan telemetry → pan commands.
+  - Math/control path: fisheye bearing + tilt correction + hysteresis + slew cap + telemetry-based degraded-mode handling.
+- **Pan Telemetry Polling**: `PanTelemetryPoller` decouples `T=130` serial queries from the vision loop.
+  - Two-thread design (cadence + serial worker), immutable snapshots, and freshness states (`fresh`/`stale`/`expired`/`initialising`).
+  - Pipeline holds pan updates when telemetry is `expired` or still `initialising`.
   - **Active Issue**: pan oscillation with stationary target; see `docs/pan_oscillation_issues.md` for investigation.
 - **MJPEG Streaming**: `MjpegServer` provides thread-safe frame streaming at `/stream` (JPEG-encoded, daemon thread).
 - **LiDAR Input**: D500 over serial; `lidar_access.py` parses packets (CRC, sync, angle interp); returns 12-point scans.
@@ -108,6 +115,7 @@ knot-losing-you/
 
 ### UART/Serial Preflight
 - Battery check (`check_battery.py`) and UGV controller use generic character-device preflight guards to detect/release busy UART holders (e.g., active follower pipeline).
+- Pan telemetry diagnostics (`check_pan_tilt_feedback.py`, `check_pan_telemetry_only.py`, `scan_servo_ids.py`) follow the same serial preflight pattern.
 - This ensures smoke tests can run without manually stopping the main follower or releasing V4L2/serial devices.
 
 ## 3) Script Breakdown (All Python Files)
@@ -129,11 +137,13 @@ knot-losing-you/
   - Main orchestrator for camera/LiDAR/controller lifecycle.
   - Runs startup smoke checks (frame + scan availability).
   - Implements Phase 3A-lite control shell: mode switching, one-shot transition stop, estop override, thin-run scenario, and command logging.
+  - Integrates decoupled pan telemetry polling and pan hold-on-expired/initialising guardrails.
 
 - `src/ugv_follower/settings.py`
   - Loads `pipeline_config.yaml`, `model_config.yaml`, and `sensor_config.yaml`.
   - Resolves project-relative paths and validates key runtime constraints.
   - Provides structured accessors for UGV, camera, LiDAR, and calibration-derived parameters.
+  - Exposes pan telemetry cadence/freshness/timeout settings read from `sensor_config.yaml`.
 
 #### Control
 
@@ -151,8 +161,12 @@ knot-losing-you/
   - Single adapter that applies validated commands to controller.
 
 - `src/ugv_follower/control/pan_controller.py`
-  - Converts detection bounding-box centroids into absolute pan servo commands.
-  - Applies fisheye-derived bearing estimation, tilt correction, deadband suppression, and clamp logic.
+  - Converts detection centroids + measured pan state into absolute pan servo commands.
+  - Applies fisheye-derived bearing estimation, tilt correction, hysteresis deadband, slew capping, and telemetry-degraded behavior.
+
+- `src/ugv_follower/control/pan_telemetry.py`
+  - Decoupled pan telemetry poller (`T=130` query path) with cadence + serial worker threads.
+  - Publishes immutable freshness-classified snapshots consumed by `pipeline.py` each loop.
 
 #### Perception and Inference
 
@@ -219,11 +233,15 @@ knot-losing-you/
 
 - `tools/check_pan_tilt_feedback.py`
   - Hardware smoke script for pan-tilt servo feedback and position verification.
-  - Tests servo ID discovery and position readback.
+  - Commands pan and validates `T=1001.pan` response path while tracking `T=1005` bus-servo errors.
+
+- `tools/check_pan_telemetry_only.py`
+  - Telemetry-only diagnostic that sends recurring `T=130` polls without drive/pan-command traffic.
+  - Reports success ratio, latency distribution, timeout count, and longest fresh-sample gap.
 
 - `tools/scan_servo_ids.py`
-  - Servo ID discovery utility for pan-tilt servos.
-  - Scans servo bus to identify active servo addresses.
+  - Servo bus health scanner using `T=1005` failure packets and `T=1001` telemetry context.
+  - Distinguishes likely wrong gimbal-ID mapping from bus-wide RX/direction failures.
 
 #### Calibration Tools
 
@@ -267,7 +285,13 @@ knot-losing-you/
   - Unit tests for object-detection wrapper configuration and placeholder runtime behaviour.
 
 - `tests/test_pan_controller.py`
-  - Unit tests for heading sign, tilt correction, deadband handling, clamp logic, and pan command updates.
+  - Unit tests for heading sign, tilt correction, deadband handling, clamp logic, and telemetry-informed pan command updates.
+
+- `tests/test_pan_telemetry.py`
+  - Unit tests for snapshot classification and threaded `PanTelemetryPoller` lifecycle/publication behavior.
+
+- `tests/test_check_pan_telemetry_only.py`
+  - Unit tests for telemetry-only diagnostic loop timing, serial query parsing, and summary statistics.
 
 - `tests/test_calibrate_pantilt_servo.py`
   - Unit tests for pan-tilt calibration math/fit/quality/csv/config helper functions.
@@ -306,6 +330,7 @@ knot-losing-you/
 - **Calibration tooling**: Substantial and heavily exercised (camera intrinsic, pan-tilt, angular offset, drive model).
 - **Hardware access layers**: Implemented and test-covered (camera, LiDAR, UGV controller, preflight guards).
 - **Pan servo command generation**: Fully implemented with bearing, tilt correction, deadband, clamp logic; unit tested.
+- **Decoupled pan telemetry subsystem**: Implemented with freshness-state snapshots and mode-aware polling cadence; integrated into runtime pipeline.
 - **MJPEG streaming**: Thread-safe server with frame pooling and HTTP serving; unit tested.
 - **Motion command contract & adapter**: Canonical interface for all commands; normalized source tagging and validation.
 - **Phase 3A control shell**: Mode switching, estop latch, transition-stop, command logging all implemented and working.
@@ -313,6 +338,7 @@ knot-losing-you/
 
 ### Active Issues & Investigations
 - **Pan oscillation with stationary target**: Confirmed intrinsic to control loop (not target motion). See `docs/pan_oscillation_issues.md`; Issues 2 and 3 are primary candidates (feedback delay, control gain).
+- **Pan telemetry query reliability under load**: Telemetry-only diagnostics and poller tuning are active to isolate timeout bursts vs bus-contention effects.
 - **UGV drive calibration challenges**:
   - Directional dead-band asymmetry (CCW vs CW thresholds differ by ~0.75–1.25 rad/s).
   - Near-stall readings corrupt OLS fit; quality gate insufficient.
@@ -352,6 +378,11 @@ knot-losing-you/
 - Oscillation confirmed intrinsic (not target motion related).
 - Primary suspects: feedback path latency, proportional gain, control loop timing.
 - See `docs/pan_oscillation_issues.md` for detailed investigation; pan_controller.py includes extensive comments on tilt correction and deadband.
+
+### Pan Telemetry Polling & Diagnostics
+- Runtime uses `PanTelemetryPoller` to decouple pan telemetry from the vision loop (mode-aware cadence + freshness thresholds).
+- Key `sensor_config.yaml` controls: `telemetry_poll_interval_tracking_s`, `telemetry_poll_interval_idle_s`, `telemetry_stale_threshold_s`, `telemetry_expired_threshold_s`, `telemetry_query_timeout_s`.
+- Diagnostic split: `check_pan_tilt_feedback.py` (mixed traffic behavior) vs `check_pan_telemetry_only.py` (isolated query path) to separate contention effects from base serial-response issues.
 
 ### UGV Drive Calibration Challenges
 - Directional dead-band asymmetry is real and load-dependent; do not assume symmetric thresholds.
