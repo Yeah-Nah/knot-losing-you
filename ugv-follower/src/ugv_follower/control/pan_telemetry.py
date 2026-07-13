@@ -227,7 +227,10 @@ class PanTelemetryPoller:
         RuntimeError
             If the poller is already running.
         """
-        if self._thread is not None and self._thread.is_alive():
+        if any(
+            t is not None and t.is_alive()
+            for t in (self._thread, self._serial_thread)
+        ):
             raise RuntimeError("PanTelemetryPoller is already running.")
         self._stop_event.clear()
         self._trigger_event.clear()

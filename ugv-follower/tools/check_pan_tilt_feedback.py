@@ -165,7 +165,7 @@ def probe(port: str, angle_deg: float, duration: float, init_module: bool) -> No
         )
         return
     try:
-        ser_conn = serial.Serial(port, 115200, timeout=1)
+        ser_conn = serial.Serial(port, 115200, timeout=0.05)
     except serial.SerialException as exc:
         logger.error(
             f"Could not open {port}: {exc}\n"

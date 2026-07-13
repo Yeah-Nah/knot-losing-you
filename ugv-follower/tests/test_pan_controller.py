@@ -365,10 +365,10 @@ class TestTelemetryGuard:
         # 100 px right → heading outside deadband so update() issues a command
         result = ctrl.update(_CX + 100.0, _CY, dt=0.1, measured_pan_deg=30.0)
         assert result is not None
-        # base_pan was 30.0 (accepted), so result must be anchored from there
-        assert result == pytest.approx(
-            30.0 + ctrl.current_pan_deg - ctrl.current_pan_deg, abs=50.0
-        )
+        # Verify the first measurement is accepted and seeds the estimator/base.
+        assert ctrl._last_accepted_pan_deg == pytest.approx(30.0)
+        assert ctrl._estimated_pan_deg == pytest.approx(30.0)
+        assert result > 30.0
 
     def test_plausible_velocity_accepted(self) -> None:
         """A small delta between consecutive measurements passes the guard."""
