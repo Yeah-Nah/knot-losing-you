@@ -261,6 +261,20 @@ This confirms the immediate bottleneck is telemetry availability/timing on the s
 
 This run strengthens the prior conclusion: immediate bottleneck is still telemetry availability/timing, now confirmed under the newer 0.2 s query timeout and threaded poller design.
 
+**Latest finding (2026-07-13 diagnostic run, `timeout=0.300s`):**
+
+- Increasing `query_pan_deg()` timeout from `0.2s` to `0.3s` did **not** resolve sparse telemetry updates.
+- Parsed run stats: `T=130 sent=209`, `query timeouts=195`, `fresh samples=14` (about **6.7%** query success).
+- Timeout signature remains dominant: `194/195` timeouts were `lines_read=0` (no serial line arrived in the read window).
+- Fresh telemetry arrives in bursts with repeating long gaps. Measured fresh inter-arrival pattern includes multiple `~7.02s` gaps (examples: `7.019s`, `7.092s`, `7.018s`, `7.022s`, `7.076s`, `7.020s`).
+- Between long gaps, short sub-second clusters occur (`~0.07s` to `~0.20s` between fresh samples), indicating intermittent windows where replies are briefly available.
+
+**Code-path interpretation for this run (important):**
+
+- Poller tracking cadence is configured to `0.05s`, but the serial worker can only issue one query roughly every timeout period when no reply arrives. In this run the effective query period is about `0.30s`, matching the timeout-dominated loop.
+- `query_pan_deg()` flushes RX (`reset_input_buffer()`) immediately before each `T=130`. This protects freshness, but if replies are often delayed beyond the active read window, delayed-but-valid `T=1001` packets can be dropped by the next pre-query flush.
+- Combined with concurrent traffic (`T=1` drive commands and `T=133` pan commands), logs support that the immediate bottleneck is still serial reply availability/correlation, not telemetry plausibility guard rejection.
+
 **Observable signature:**
 
 - Frequent cycles where telemetry query returns `None` (or no accepted measurement update).
@@ -272,9 +286,17 @@ This run strengthens the prior conclusion: immediate bottleneck is still telemet
 
 Suggested directions:
 
-- Increase `query_pan_deg()` timeout from `0.2s` to `0.3-0.5s` and re-test first; current logs still show dominant `lines_read=0` at `0.2s`.
+- Timeout increase to `0.3s` has now been tested and still shows dominant `lines_read=0`; next step is to instrument reply latency/correlation, not just increase timeout again blindly.
 - Add telemetry-age/degraded mode guard: if no fresh measurement for N consecutive cycles, clamp delta/gain more aggressively to reduce stale-base command swings.
 - Decouple telemetry polling from the vision loop (dedicated poll path/thread) so pan reads are not starved by inference cadence. - COMPLETE
 - Audit firmware response behavior for `T=130` under concurrent traffic (`T=1`, `T=133`) and ensure a prompt `T=1001` is always emitted.
 - If firmware supports it, add request/response correlation metadata (sequence or timestamp) to distinguish late-but-valid responses from stale context.
 - Keep the new logging in place (`measured-fresh` vs `measured-cached`, query timeout/lines_read) and use it as acceptance criteria for fixes.
+
+Focused next investigation to isolate root cause of intermittent pan telemetry:
+
+- Run a **telemetry-only serial test** (no `T=1`, no `T=133`; send only `T=130` at fixed rate) and measure success ratio plus reply latency histogram. If the 7 s pattern disappears, contention from mixed traffic is implicated.
+- Add temporary per-query IDs in logs (host-side `query_id`, send timestamp, receive timestamp, elapsed) even if protocol payload cannot carry ID. This will show whether fresh reads are late arrivals relative to earlier sends.
+- Capture and log all non-`T=1001` serial lines during query windows with timestamps to see whether the bus is active but with other message types.
+- Perform an A/B run with pre-query flush disabled for diagnostics only. Compare stale-rate vs success-rate to test whether late replies are being discarded by `reset_input_buffer()`.
+- If available, capture firmware-side UART logs for `T=130` receive and `T=1001` transmit timestamps. This is the decisive check for whether delay is host-side read-window loss or firmware-side response scheduling.

@@ -294,4 +294,7 @@ ugv-check-lidar
 
 # Test motor control — drives forward 0.2 m over 1 s
 ugv-check-controller
+
+# Telemetry-only pan query test — isolates T=130 -> T=1001.pan behavior
+ugv-check-pan-telemetry-only
 ```
