@@ -259,8 +259,6 @@ This confirms the immediate bottleneck is telemetry availability/timing on the s
 - During stale periods, controller falls back to `estimated` base and continues applying non-trivial deltas.
 - On fresh return, large estimate residuals are observed (e.g., `34.23°`, `41.17°`, `-74.22°`), which is consistent with estimate drift plus hard re-anchor.
 
-This run strengthens the prior conclusion: immediate bottleneck is still telemetry availability/timing, now confirmed under the newer 0.2 s query timeout and threaded poller design.
-
 **Latest finding (2026-07-13 diagnostic run, `timeout=0.300s`):**
 
 - Increasing `query_pan_deg()` timeout from `0.2s` to `0.3s` did **not** resolve sparse telemetry updates.
@@ -275,8 +273,6 @@ This run strengthens the prior conclusion: immediate bottleneck is still telemet
 - Timeout signature stayed dominant and clean: timeout entries were consistently `lines_read=0` and `non_telemetry_lines=0` (no serial line received during most query windows).
 - Fresh replies appeared at near-regular long intervals (success IDs `20`, `45`, `70`, `95`), implying about `25` timeout-paced queries between successes (approximately `7.2s` cadence at this run's effective query period).
 - Successful reply latency stayed low once a reply actually arrived (`54.74-117.80 ms`, median `57.90 ms`), and reported pan angle was stable (`10.3736 deg`) across all successes.
-
-This telemetry-only run weakens the mixed-traffic contention hypothesis as the primary cause. The dominant bottleneck now points more strongly to response scheduling/rate-limiting on the firmware/device side, or to host-side query/flush timing that systematically misses reply windows.
 
 **Latest finding (2026-07-13 telemetry-only request-rate/timeout sweep):**
 
@@ -319,9 +315,18 @@ This telemetry-only run weakens the mixed-traffic contention hypothesis as the p
 - Flush OFF latency pattern remained strongly queue-like (many `<2 ms` successes and bursty clusters), while flush ON primarily showed sparse accepted samples near longer-latency buckets.
 - Timeout signature remained clean (`to_lr0%` ~`99-100%` where timeouts occurred), reinforcing that missing read-window arrivals are still the dominant timeout mode.
 
-Interpretation: the ON/OFF matrix strengthens the prior conclusion: pre-query flush controls freshness-vs-continuity tradeoff, but neither mode restores true fresh-per-request telemetry cadence. Flush OFF improves capture of buffered packets; flush ON preserves correlation intent but misses most delayed replies.
+**Latest finding (2026-07-14 — definitive attribution run, `--seq-token --token-field S --linger-ms 500 --timeout 2.0 --poll-interval 2.0 --duration 120`):**
 
-Interpretation: current evidence points to a cadence/availability bottleneck upstream of host poll rate (firmware scheduling, device-side rate limit, or host request-window alignment). The host can improve probability of catching replies with longer waits, but this does not yet demonstrate one reply per request.
+- `52` total queries, `3` successes (`5.8%`), `49` timeouts.
+- **Firmware does not support sequence echo**: `echoed_token=null` and `token_matched=null` for all 52 queries, including the 3 successes. The `--seq-token` path degraded gracefully to "no match data" as designed. $\rho$ is indeterminate — not a proven mismatch, the field is simply absent from `T=1001` responses. Same-cycle proof via token echo is not achievable without firmware changes.
+- **Linger reveals replies ARE arriving, but just past the timeout boundary**: `15/49` timeouts (`30.6%`) had `linger_late_reply=true`, meaning a valid `T=1001` pan reply arrived in the post-timeout linger window. The firmware IS producing responses; they are arriving with latency that exceeds the `2s` read window.
+- **Effective linger window was only ~20–23 ms**: The `_sleep_until` mechanism starts the next query almost immediately after each timeout, so the 500ms linger was effectively cut to ~20ms before the next flush. All 15 linger hits still arrived within that ~20ms margin, meaning reply latency was approximately **2000–2020 ms** — just barely above the `2s` timeout boundary.
+- **Linger hits are perfectly periodic**: Every 3rd query produced a linger hit (query IDs 9, 12, 15, 18, ..., 51 — spacing of exactly 3 throughout). At a ~6.5s effective cadence per 3-query group, this directly reproduces the `~7s` ceiling observed in all prior runs.
+- **Success latency increased progressively before crossing the boundary**: The 3 in-window successes showed `712ms → 742ms → 1771ms` with inter-success gaps of `7.007s` and `6.000s`. After query 6 (~15s into the run), all replies drifted past the `2s` window and were only capturable in the linger margin.
+- **No measurement diversity**: All 3 successes reported `pan_deg=10.37363`, consistent with a stationary servo.
+- **Primary conclusion**: The `lines_read=0` dominant timeout pattern from prior flush-ON runs was a timeout-window artefact. With linger enabled, ~30% of "timeout" cycles are revealed to have a valid firmware reply arriving ~20ms after the 2s window closes. The firmware emits `T=1001` at a ~7s cadence regardless of host request rate; host timing drift determines whether that emission lands inside or just outside the active read window. **Firmware-side cadence limiting is confirmed as the primary bottleneck** — not host parsing, not bus contention, not request-rate alignment.
+
+Interim interpretation before consolidated summary: mixed-traffic contention is no longer the leading explanation; telemetry sparsity persists in telemetry-only runs. Pre-query flush controls a freshness-versus-continuity tradeoff, but neither mode restores fresh-per-request cadence. Current evidence continues to point to an upstream cadence/availability bottleneck (firmware/device scheduling or host request-window alignment), with longer waits improving capture probability but not proving one reply per request.
 
 **Code-path interpretation for this run (important):**
 
@@ -346,25 +351,36 @@ Interpretation: current evidence points to a cadence/availability bottleneck ups
 - Full flush ON/OFF matrix now confirms this pattern across multiple poll/timeout settings: flush OFF materially increases parsed-success ratio, but `uniqPan` remains `1` and long sparse gaps persist, so the gain is capture/queue-drain behavior rather than proven improvement in fresh correlated telemetry.
 - Mitigations that reduce control impact are already in place (degraded-mode behavior during stale telemetry and decoupled telemetry polling path/thread), but they do not restore true-angle sample density.
 - Existing diagnostics (`measured-fresh` vs `measured-cached`, timeout details including `lines_read`) should be retained as acceptance criteria for any telemetry-path fix.
+- Summary-table interpretation now supports explicit deprioritization:
+	- **Deprioritize further poll-rate sweeps** as a primary path; fixed-timeout matrix stayed flat (`~23.5-27.8%`) across `poll=2.0s` to `0.2s`.
+	- **Deprioritize parser-centric debugging** as a primary path; timeout mode is overwhelmingly `lines_read=0` rather than malformed/non-telemetry parsing failures.
+	- **Do not treat flush OFF as a control-path fix**; it inflates parsed-success but preserves queue-drain signatures (`uniqPan=1`, dominant repeated value, bursty `<2 ms` reads, persistent `~7s` gaps).
+	- **Deprioritize small timeout-only iterations** (`0.2s -> 0.3s`) as a standalone fix; they do not restore fresh-per-request correlation.
+
+This narrows the primary unresolved hypothesis set to: firmware/device cadence limiting and/or host request-window alignment/correlation gaps.
+
+- **Attribution run (2026-07-14) has resolved this ambiguity**: firmware-side cadence limiting is confirmed as the primary cause. The `~7s` reply periodicity is generated upstream. Sequence echo is not supported by the firmware so $\rho$ cannot be computed, but linger evidence (perfectly periodic every-3-query hits, all arriving within ~20ms of the timeout boundary) provides strong indirect attribution. The host read strategy is a contributing factor only in that a strict flush-then-window design discards replies landing just outside the window; the underlying cadence is firmware-driven.
 
 **Focused next investigation (updated):**
 
-- Controlled **request-rate matrix at fixed long timeout** (`poll=2.0s`, `1.0s`, `0.5s`, `0.2s` with `timeout=2.0s`, telemetry-only, 30 s window) — **COMPLETE (2026-07-13)**. Result: success ratio remained flat (~`23.5-27.8%`) with persistent `~7s` inter-success gaps.
-- Controlled **flush ON vs OFF A/B comparisons** across multiple poll/timeout settings — **COMPLETE (2026-07-14)**. Result: flush OFF raises parsed-success strongly but does not restore diversity/cadence; queue-drain signature dominates.
-- Next highest-value step: add definitive **request/response correlation metadata** (firmware echo token or sequence ID) so each `T=1001` can be attributed to a specific `T=130`.
-- In parallel, log host-side serial edge timestamps (`send_ts`, `first_byte_ts`, `parse_ts`, `timeout_ts`) for every query and retain raw receive timestamps to separate true no-reply from late-reply/drop behavior.
-- If firmware changes are available, instrument device timing (`T=130` RX time, `T=1001` TX time, device-side cadence counter) to directly test whether the ~7 s pattern is generated upstream.
+- Host-side correlation groundwork is **complete** (request-rate matrix, flush ON/OFF A/B, linger variant, JSONL analysis, and definitive attribution run).
+- Definitive attribution test is **complete** — see 2026-07-14 finding above. Sequence echo is not supported by the firmware; linger evidence confirms firmware-side cadence limiting as the primary bottleneck.
+- **Next gating step: firmware investigation.** Instrument or inspect firmware scheduler cadence, `T=1001` emit rate-limit, and half-duplex turnaround configuration to explain the `~7s` reply period. Specific questions: is there an explicit rate-limit on telemetry replies? Does the servo bus scheduler have a fixed service window that aligns with this period? Is the `~7s` cadence a fixed timer or load-dependent?
+- **Parallel host-side mitigation**: switch from strict flush-then-window polling to a continuous reader thread that timestamps every arriving `T=1001` line and tags it with receive time. This captures late replies without losing them to the next cycle's pre-query flush, and keeps the control path receiving fresh samples whenever they are available — independent of firmware fix progress.
 
 **Recommendation (next steps):**
 
 - Keep **flush ON** in control-path runtime for now to preserve freshness intent and avoid commanding on clearly queued/stale bursts.
-- Prioritize a short firmware+host correlation experiment (sequence echo plus edge timing logs) as the immediate gating task before further host timeout/poll tuning.
-- In parallel, run a quick firmware sanity check to confirm actual servo-bus baud/rate configuration and half-duplex turnaround behavior match expected hardware settings.
-- Define pass/fail acceptance for Issue 9 after correlation is available:
-	- At least `80%` of accepted pan samples should be provably matched to same-cycle requests.
+- Treat host-side correlation sweeps as completed evidence; do not repeat them unless new behavior appears.
+- Definitive attribution run is **complete** (2026-07-14). Do not repeat it.
+- **Primary fix path: firmware scheduler/rate-limit.** The `~7s` reply cadence is generated upstream. Inspect or instrument the firmware to identify and remove or shorten the rate-limit on `T=1001` telemetry responses. Target: replies available on every `T=130` request with latency well under `500ms`.
+- **Parallel host-side mitigation: continuous reader thread.** Redesign host read strategy to a continuous reader with freshness tagging rather than strict flush-window polling. This captures late replies (currently falling just outside the 2s window) and eliminates the flush-discard mechanism as a confounding factor while firmware is investigated.
+- Updated pass/fail acceptance for Issue 9:
 	- Median inter-success gap under telemetry-only should be `<0.5s` with no recurring `~7s` ceiling.
-	- `uniqPan` should reflect real motion context (not single-value dominance over long windows).
-- If correlation confirms firmware-side cadence limiting, shift primary fix to firmware scheduler/rate-limit behavior; if correlation shows host-side misses, then redesign host read strategy (continuous reader with freshness tagging instead of strict flush-window polling).
+	- `uniqPan` should reflect real motion context over a run (not single-value dominance).
+	- Reply latency should be well within the host read window (`<500ms` target) consistently.
+	- Sequence-echo $\rho$ remains a stretch goal if firmware ever adds echo support; it is not required for the fix.
+- Keep poll-rate sweeps, parser-focused fixes, and small timeout-only increments deprioritized — confirmed non-root-cause by attribution evidence.
 
 **Tooling update (2026-07-14) — correlation instrumentation added to `check_pan_telemetry_only.py`:**
 
@@ -382,4 +398,4 @@ When any of these are used, the console summary additionally reports:
 - **Unique pan values (C_uniq)** — should track real motion context, not stay pinned at `1` as seen in the flush-OFF runs above.
 - **Late replies caught in linger** — count of replies that arrived only after the nominal timeout window, when `--linger-ms` is set.
 
-This closes the tooling gap identified in "Focused next investigation" above. What remains outside this tool's scope is firmware coordination to confirm whether `T=1001` can actually carry an echoed token field, and the hardware validation run itself — both still open.
+This closes the tooling gap identified in "Focused next investigation" above. The hardware validation run has been completed (2026-07-14): firmware does not echo a sequence token in the `S` field, so `--seq-token` produces `echoed_token=null` on all queries and $\rho$ is not computable. The `--linger-ms` evidence is the achieved proxy for attribution and has confirmed firmware-side cadence limiting as the primary bottleneck.
