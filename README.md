@@ -13,6 +13,7 @@ This project builds an autonomous person-following rover for use in a marina env
 - Waveshare UGV Rover (6WD chassis)
 - LDRobot D500 LiDAR
 - Waveshare Pan-Tilt Module
+- ST3215 serial bus servo for the pan-tilt mechanism
 
 ---
 

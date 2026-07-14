@@ -299,6 +299,28 @@ This telemetry-only run weakens the mixed-traffic contention hypothesis as the p
 - Success ratio stayed in a narrow band (`23.5-27.8%`) across the full poll-rate range, showing no meaningful improvement from higher host request rate at fixed long timeout.
 - Long inter-success gaps remained essentially unchanged at about `~7s` (`7.280s` in the `poll=1.0s` run, `7.045s` in the `poll=0.2s` run), consistent with an upstream cadence bottleneck rather than host poll cadence.
 
+**Latest finding (2026-07-14 telemetry-only serial test, defaults with pre-query RX flush OFF):**
+
+- Run produced `509` total queries with `433` successes and `76` timeouts (**85.1%** success), a large increase in returned `T=1001` parses versus prior flush-ON telemetry-only runs.
+- Despite higher success count, long sparse windows still exist: longest measured inter-success gap was `7.213s` (`send_t 158.082 -> 165.295`), consistent with the previously observed `~7s` cadence ceiling.
+- Returned values were overwhelmingly repeated: `428/433` successes reported `pan_deg=10.3736` and only `5/433` reported `-179.9560`, indicating very low measurement diversity.
+- Success latency profile was dominated by near-immediate reads (`318/433` with `latency_ms < 2`), with many bursty back-to-back successes, which is consistent with draining queued replies rather than proving one fresh reply per request.
+- Interpretation: disabling pre-query flush increases apparent query success/capture, but weakens freshness correlation and does not remove the long-gap cadence bottleneck.
+
+**Latest finding (2026-07-14 flush ON vs OFF comparative matrix across runs):**
+
+- Comparative summary now includes four ON/OFF pairs:
+	- `default_30s`: flush ON `3.9%` (`4/103`) vs flush OFF `85.0%` (`431/507`)
+	- `default_t2p0`: flush ON `23.5%` (`4/17`) vs flush OFF `79.4%` (`50/63`)
+	- `poll0p2_t0p3`: flush ON `2.9%` (`3/103`) vs flush OFF `77.3%` (`116/150`)
+	- `poll2p0_t0p3`: flush ON `6.7%` (`1/15`) vs flush OFF `100.0%` (`15/15`, very small sample)
+- Flush OFF consistently raised parsed-success ratio, but **all eight runs** reported `uniqPan=1` with dominant value `10.3736`, indicating near-zero measurement diversity.
+- Long sparse windows persisted in both modes. Max inter-success gaps remained multi-second (`~5.6-7.9s` in most runs), so higher parsed-success under flush OFF did not eliminate cadence sparsity.
+- Flush OFF latency pattern remained strongly queue-like (many `<2 ms` successes and bursty clusters), while flush ON primarily showed sparse accepted samples near longer-latency buckets.
+- Timeout signature remained clean (`to_lr0%` ~`99-100%` where timeouts occurred), reinforcing that missing read-window arrivals are still the dominant timeout mode.
+
+Interpretation: the ON/OFF matrix strengthens the prior conclusion: pre-query flush controls freshness-vs-continuity tradeoff, but neither mode restores true fresh-per-request telemetry cadence. Flush OFF improves capture of buffered packets; flush ON preserves correlation intent but misses most delayed replies.
+
 Interpretation: current evidence points to a cadence/availability bottleneck upstream of host poll rate (firmware scheduling, device-side rate limit, or host request-window alignment). The host can improve probability of catching replies with longer waits, but this does not yet demonstrate one reply per request.
 
 **Code-path interpretation for this run (important):**
@@ -321,13 +343,43 @@ Interpretation: current evidence points to a cadence/availability bottleneck ups
 - Timeout extension to `0.300s` has been explicitly tested and did not resolve sparsity; dominant failure remains timeout with `lines_read=0`, so further small timeout-only tuning is unlikely to fix root cause.
 - Mixed-traffic contention is no longer the leading hypothesis: telemetry-only testing still showed severe sparsity, shifting primary suspicion toward firmware/device-side response scheduling or host-side query/flush timing mismatch.
 - Request-rate increase alone did not improve telemetry density, while longer timeout improved capture ratio without removing the long inter-success gap. This suggests better "catch" behavior, not restored per-request response behavior.
+- Full flush ON/OFF matrix now confirms this pattern across multiple poll/timeout settings: flush OFF materially increases parsed-success ratio, but `uniqPan` remains `1` and long sparse gaps persist, so the gain is capture/queue-drain behavior rather than proven improvement in fresh correlated telemetry.
 - Mitigations that reduce control impact are already in place (degraded-mode behavior during stale telemetry and decoupled telemetry polling path/thread), but they do not restore true-angle sample density.
 - Existing diagnostics (`measured-fresh` vs `measured-cached`, timeout details including `lines_read`) should be retained as acceptance criteria for any telemetry-path fix.
 
-**Focused next investigation (single plan):**
+**Focused next investigation (updated):**
 
-- Controlled **request-rate matrix at fixed long timeout** (`poll=2.0s`, `1.0s`, `0.5s`, `0.2s` with `timeout=2.0s`, telemetry-only, 30 s window) — **COMPLETE (2026-07-13)**. Result: success ratio remained flat (~`23.5-27.8%`) with persistent `~7s` inter-success gaps, so host request-rate increase alone does not resolve sparse telemetry.
-- Run A/B at each selected poll rate with **pre-query RX flush ON vs OFF** while keeping all else fixed. Record success ratio, inter-success gap, and whether `non_telemetry_lines` rises when flush is disabled.
-- Add explicit host-side edge timing logs per query (`send_ts`, `first_byte_ts`, `parse_ts`, `timeout_ts`) and persist raw line timestamps to determine whether replies are absent or regularly late relative to query windows.
-- If possible, instrument firmware UART handling (`T=130` receive timestamp, `T=1001` transmit timestamp/counter) to verify whether device emit cadence itself is ~7-8 s or whether host-side handling is dropping/missing intermediate replies.
-- If firmware cannot provide correlation metadata, temporarily add a lightweight request/response correlation field (sequence ID or echoed host token) so late responses can be matched to originating queries and flush-drop behavior can be proven/disproven.
+- Controlled **request-rate matrix at fixed long timeout** (`poll=2.0s`, `1.0s`, `0.5s`, `0.2s` with `timeout=2.0s`, telemetry-only, 30 s window) — **COMPLETE (2026-07-13)**. Result: success ratio remained flat (~`23.5-27.8%`) with persistent `~7s` inter-success gaps.
+- Controlled **flush ON vs OFF A/B comparisons** across multiple poll/timeout settings — **COMPLETE (2026-07-14)**. Result: flush OFF raises parsed-success strongly but does not restore diversity/cadence; queue-drain signature dominates.
+- Next highest-value step: add definitive **request/response correlation metadata** (firmware echo token or sequence ID) so each `T=1001` can be attributed to a specific `T=130`.
+- In parallel, log host-side serial edge timestamps (`send_ts`, `first_byte_ts`, `parse_ts`, `timeout_ts`) for every query and retain raw receive timestamps to separate true no-reply from late-reply/drop behavior.
+- If firmware changes are available, instrument device timing (`T=130` RX time, `T=1001` TX time, device-side cadence counter) to directly test whether the ~7 s pattern is generated upstream.
+
+**Recommendation (next steps):**
+
+- Keep **flush ON** in control-path runtime for now to preserve freshness intent and avoid commanding on clearly queued/stale bursts.
+- Prioritize a short firmware+host correlation experiment (sequence echo plus edge timing logs) as the immediate gating task before further host timeout/poll tuning.
+- In parallel, run a quick firmware sanity check to confirm actual servo-bus baud/rate configuration and half-duplex turnaround behavior match expected hardware settings.
+- Define pass/fail acceptance for Issue 9 after correlation is available:
+	- At least `80%` of accepted pan samples should be provably matched to same-cycle requests.
+	- Median inter-success gap under telemetry-only should be `<0.5s` with no recurring `~7s` ceiling.
+	- `uniqPan` should reflect real motion context (not single-value dominance over long windows).
+- If correlation confirms firmware-side cadence limiting, shift primary fix to firmware scheduler/rate-limit behavior; if correlation shows host-side misses, then redesign host read strategy (continuous reader with freshness tagging instead of strict flush-window polling).
+
+**Tooling update (2026-07-14) — correlation instrumentation added to `check_pan_telemetry_only.py`:**
+
+`ugv-follower/tools/check_pan_telemetry_only.py` now supports the edge-timing and correlation instrumentation this section calls for, all opt-in and off by default so existing recorded runs remain comparable:
+
+- `--seq-token` (with `--token-field NAME`, default `S`) — attach a host-generated token to each `T=130` and check whether `T=1001` echoes it back. Degrades gracefully to "no match data" (not an error) if the firmware doesn't support it, since the field name/support is still unconfirmed (see `docs/engineering_theory/firmware_host_correlation_experiment.md` §1).
+- `--linger-ms N` — keep reading up to `N` extra milliseconds past the nominal `--timeout`, to separate true no-reply from late-reply, without changing `success`/`timeout` accounting. Keep well under `--poll-interval`.
+- `--retain-raw-lines` — keep every raw line and timestamp seen per query, for post-hoc audit.
+- `--log-jsonl PATH` — write the extended per-query schema (edge timestamps, token fields, raw lines) as JSONL for offline analysis.
+
+When any of these are used, the console summary additionally reports:
+
+- **Matched ratio (rho)** — fraction of successful queries with a proven token match; only shown when `--seq-token` was used. Target: `>= 0.8` per the acceptance criteria above.
+- **Median inter-success gap (g~)** — distinct from the pre-existing "longest gap" line; target `<0.5s` with no recurring `~7s` ceiling.
+- **Unique pan values (C_uniq)** — should track real motion context, not stay pinned at `1` as seen in the flush-OFF runs above.
+- **Late replies caught in linger** — count of replies that arrived only after the nominal timeout window, when `--linger-ms` is set.
+
+This closes the tooling gap identified in "Focused next investigation" above. What remains outside this tool's scope is firmware coordination to confirm whether `T=1001` can actually carry an echoed token field, and the hardware validation run itself — both still open.
