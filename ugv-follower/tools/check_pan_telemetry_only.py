@@ -28,6 +28,9 @@ Usage
     # Skip the T=900 init to compare behaviour with/without module re-init
     ugv-check-pan-telemetry-only --no-init
 
+    # Skip the RX flush before each T=130 write, to test flush-strategy impact
+    ugv-check-pan-telemetry-only --no-flush
+
     # Log every non-T=1001 line seen during the loop
     ugv-check-pan-telemetry-only --verbose-lines
 
@@ -152,13 +155,14 @@ def _send_and_await_pan(
     query_id: int,
     timeout_s: float,
     verbose_lines: bool,
+    flush_before_query: bool = True,
 ) -> QueryResult:
     """Send one `T=130` query and wait for a valid `T=1001` pan reply.
 
-    Mirrors ``UGVController.query_pan_deg`` semantics (flush RX -> write
-    `T=130` -> poll ``readline()`` until a valid pan value or timeout) while
-    additionally tracking ``lines_read`` and ``non_telemetry_lines``, which
-    ``query_pan_deg`` does not expose to its caller.
+    Mirrors ``UGVController.query_pan_deg`` semantics (optionally flush RX ->
+    write `T=130` -> poll ``readline()`` until a valid pan value or timeout)
+    while additionally tracking ``lines_read`` and ``non_telemetry_lines``,
+    which ``query_pan_deg`` does not expose to its caller.
 
     Parameters
     ----------
@@ -171,6 +175,8 @@ def _send_and_await_pan(
     verbose_lines : bool
         When ``True``, log the raw content of every non-pan line at debug
         level.
+    flush_before_query : bool, default True
+        Whether to flush the RX input buffer before writing `T=130`.
 
     Returns
     -------
@@ -178,7 +184,8 @@ def _send_and_await_pan(
         The measured outcome of this single query.
     """
     send_time = time.monotonic()
-    ser.reset_input_buffer()
+    if flush_before_query:
+        ser.reset_input_buffer()
     ser.write(b'{"T":130}\n')
 
     deadline = send_time + timeout_s
@@ -243,6 +250,7 @@ def _run_measurement_loop(
     poll_interval_s: float,
     timeout_s: float,
     verbose_lines: bool,
+    flush_before_query: bool = True,
 ) -> list[QueryResult]:
     """Send fixed-cadence `T=130` queries for *duration_s* and collect results.
 
@@ -268,6 +276,8 @@ def _run_measurement_loop(
         Per-query timeout passed to `_send_and_await_pan`.
     verbose_lines : bool
         Forwarded to `_send_and_await_pan`.
+    flush_before_query : bool, default True
+        Forwarded to `_send_and_await_pan`.
 
     Returns
     -------
@@ -279,7 +289,9 @@ def _run_measurement_loop(
     end_time = time.monotonic() + duration_s
     next_slot = time.monotonic()
     while time.monotonic() < end_time:
-        result = _send_and_await_pan(ser, query_id, timeout_s, verbose_lines)
+        result = _send_and_await_pan(
+            ser, query_id, timeout_s, verbose_lines, flush_before_query
+        )
         results.append(result)
         _log_query_result(result)
         query_id += 1
@@ -484,6 +496,7 @@ def run(
     timeout_s: float,
     init_module: bool,
     verbose_lines: bool,
+    flush_before_query: bool = True,
 ) -> None:
     """Run the telemetry-only measurement window and print the summary.
 
@@ -501,6 +514,8 @@ def run(
         Send `T=900` module init before timing begins.
     verbose_lines : bool
         Log every non-`T=1001` line seen during the loop.
+    flush_before_query : bool, default True
+        Whether to flush the RX input buffer before each `T=130` write.
     """
     logger.info(
         f"Opening {port} at 115200 baud — telemetry-only window: "
@@ -514,7 +529,12 @@ def run(
         _maybe_init(ser, init_module)
         try:
             results = _run_measurement_loop(
-                ser, duration_s, poll_interval_s, timeout_s, verbose_lines
+                ser,
+                duration_s,
+                poll_interval_s,
+                timeout_s,
+                verbose_lines,
+                flush_before_query,
             )
         except serial.SerialException as exc:
             logger.error(
@@ -541,6 +561,8 @@ def main() -> None:
         Per-query timeout in seconds.
     --no-init : flag
         Skip the `T=900` module init before timing begins.
+    --no-flush : flag
+        Skip the RX buffer flush before each `T=130` write.
     --verbose-lines : flag
         Log every non-`T=1001` line seen during the loop.
     """
@@ -577,6 +599,11 @@ def main() -> None:
         help="Skip sending T=900 module init before timing begins.",
     )
     parser.add_argument(
+        "--no-flush",
+        action="store_true",
+        help="Skip the RX buffer flush before each T=130 write.",
+    )
+    parser.add_argument(
         "--verbose-lines",
         action="store_true",
         help="Log every non-T=1001 line seen during the measurement loop.",
@@ -589,6 +616,7 @@ def main() -> None:
         args.timeout,
         init_module=not args.no_init,
         verbose_lines=args.verbose_lines,
+        flush_before_query=not args.no_flush,
     )
 
 

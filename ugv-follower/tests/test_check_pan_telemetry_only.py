@@ -286,6 +286,18 @@ def test_send_and_await_pan_flushes_before_write() -> None:
     assert call_names.index("reset_input_buffer") < call_names.index("write")
 
 
+def test_send_and_await_pan_flush_disabled_skips_reset() -> None:
+    ser = MagicMock()
+    ser.readline.side_effect = _readline_sequence([b'{"T":1001,"pan":1.0}\n'])
+
+    _send_and_await_pan(
+        ser, query_id=0, timeout_s=0.3, verbose_lines=False, flush_before_query=False
+    )
+
+    ser.reset_input_buffer.assert_not_called()
+    ser.write.assert_called_once()
+
+
 @patch("tools.check_pan_telemetry_only.logger")
 def test_send_and_await_pan_verbose_logs_non_pan_lines(mock_logger: MagicMock) -> None:
     ser = MagicMock()
@@ -387,4 +399,16 @@ def test_main_uses_documented_defaults(mock_run: MagicMock, monkeypatch: pytest.
         0.3,
         init_module=True,
         verbose_lines=False,
+        flush_before_query=True,
     )
+
+
+@patch("tools.check_pan_telemetry_only.run")
+def test_main_no_flush_flag_disables_flush(
+    mock_run: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(sys, "argv", ["ugv-check-pan-telemetry-only", "--no-flush"])
+
+    main()
+
+    assert mock_run.call_args.kwargs["flush_before_query"] is False
