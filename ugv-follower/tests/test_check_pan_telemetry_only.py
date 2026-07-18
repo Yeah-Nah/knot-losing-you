@@ -14,24 +14,30 @@ From ``ugv-follower/``::
 from __future__ import annotations
 
 import json
+import pathlib
 import sys
 from collections.abc import Callable
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 
 from tools.check_pan_telemetry_only import (
     QueryResult,
     SummaryStats,
+    _build_pre_commands,
     _compute_summary,
+    _load_pre_command_jsonl,
     _log_query_result,
     _log_summary,
+    _maybe_init,
     _matched_ratio,
     _median_inter_success_gap_s,
     _open_serial,
+    _parse_command_payload,
     _run_measurement_loop,
     _send_and_await_pan,
     _unique_pan_count,
+    _write_command,
     _write_jsonl_record,
     main,
     run,
@@ -413,6 +419,10 @@ def test_main_uses_documented_defaults(mock_run: MagicMock, monkeypatch: pytest.
         linger_s=0.0,
         retain_raw_lines=False,
         log_jsonl_path=None,
+        pre_cmd_json=None,
+        pre_cmd_jsonl=None,
+        pre_cmd_delay_s=0.1,
+        tx_log_jsonl_path=None,
     )
 
 
@@ -824,3 +834,304 @@ def test_compute_summary_includes_late_reply_count() -> None:
     )
     stats = _compute_summary([late])
     assert stats.late_reply_after_timeout_count == 1
+
+
+# ---------------------------------------------------------------------------
+# _parse_command_payload / _load_pre_command_jsonl / _build_pre_commands
+# ---------------------------------------------------------------------------
+
+
+def test_parse_command_payload_rejects_invalid_json() -> None:
+    with pytest.raises(ValueError, match="--pre-cmd-json"):
+        _parse_command_payload("not valid json{", source="--pre-cmd-json")
+
+
+def test_parse_command_payload_rejects_missing_t() -> None:
+    with pytest.raises(ValueError, match="--pre-cmd-json"):
+        _parse_command_payload('{"cmd":0}', source="--pre-cmd-json")
+
+
+def test_parse_command_payload_rejects_non_integer_t() -> None:
+    with pytest.raises(ValueError, match="--pre-cmd-json"):
+        _parse_command_payload('{"T":"130"}', source="--pre-cmd-json")
+
+
+def test_parse_command_payload_rejects_bool_t() -> None:
+    """`bool` is an `int` subclass in Python, so it needs an explicit reject."""
+    with pytest.raises(ValueError, match="--pre-cmd-json"):
+        _parse_command_payload('{"T":true}', source="--pre-cmd-json")
+
+
+def test_parse_command_payload_accepts_valid_command() -> None:
+    result = _parse_command_payload('{"T":123,"cmd":0}', source="--pre-cmd-json")
+    assert result == {"T": 123, "cmd": 0}
+
+
+def test_load_pre_command_jsonl_invalid_line_reports_line_number(
+    tmp_path: pathlib.Path,
+) -> None:
+    path = tmp_path / "cmds.jsonl"
+    path.write_text('{"T":1}\nnot valid json{\n')
+
+    with pytest.raises(ValueError, match=r"--pre-cmd-jsonl.*line 2"):
+        _load_pre_command_jsonl(str(path))
+
+
+def test_build_pre_commands_empty_when_no_sources() -> None:
+    assert _build_pre_commands(None, None) == []
+
+
+def test_build_pre_commands_single_json_only() -> None:
+    commands = _build_pre_commands('{"T":123,"cmd":0}', None)
+    assert commands == [{"T": 123, "cmd": 0}]
+
+
+def test_build_pre_commands_jsonl_only_in_file_order(tmp_path: pathlib.Path) -> None:
+    path = tmp_path / "cmds.jsonl"
+    path.write_text('{"T":1}\n{"T":2}\n{"T":3}\n')
+
+    commands = _build_pre_commands(None, str(path))
+
+    assert commands == [{"T": 1}, {"T": 2}, {"T": 3}]
+
+
+def test_build_pre_commands_json_first_then_jsonl(tmp_path: pathlib.Path) -> None:
+    path = tmp_path / "cmds.jsonl"
+    path.write_text('{"T":2}\n{"T":3}\n')
+
+    commands = _build_pre_commands('{"T":1}', str(path))
+
+    assert commands == [{"T": 1}, {"T": 2}, {"T": 3}]
+
+
+def test_build_pre_commands_skips_blank_jsonl_lines(tmp_path: pathlib.Path) -> None:
+    path = tmp_path / "cmds.jsonl"
+    path.write_text('{"T":1}\n\n   \n{"T":2}\n')
+
+    commands = _build_pre_commands(None, str(path))
+
+    assert commands == [{"T": 1}, {"T": 2}]
+
+
+# ---------------------------------------------------------------------------
+# _write_command
+# ---------------------------------------------------------------------------
+
+
+def test_write_command_writes_compact_json_and_newline() -> None:
+    ser = MagicMock()
+
+    _write_command(ser, {"T": 130}, phase="query")
+
+    ser.write.assert_called_once_with(b'{"T":130}\n')
+
+
+def test_write_command_appends_tx_log_record_when_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import tools.check_pan_telemetry_only as module
+
+    monkeypatch.setattr(module.time, "monotonic", lambda: 42.0)
+    ser = MagicMock()
+    tx_log_file = MagicMock()
+
+    _write_command(ser, {"T": 130}, phase="query", tx_log_file=tx_log_file)
+
+    written = tx_log_file.write.call_args.args[0]
+    record = json.loads(written)
+    assert record["ts_monotonic"] == pytest.approx(42.0)
+    assert record["phase"] == "query"
+    assert record["payload"] == {"T": 130}
+    assert written.endswith("\n")
+
+
+def test_write_command_skips_tx_log_when_disabled() -> None:
+    ser = MagicMock()
+
+    _write_command(ser, {"T": 130}, phase="query", tx_log_file=None)
+
+    ser.write.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Wire-format regression — locks in the _write_command refactor as a no-op
+# ---------------------------------------------------------------------------
+
+
+def test_send_and_await_pan_default_query_wire_format_unchanged() -> None:
+    ser = MagicMock()
+    ser.readline.side_effect = _readline_sequence([b'{"T":1001,"pan":1.0}\n'])
+
+    _send_and_await_pan(ser, query_id=0, timeout_s=0.3, verbose_lines=False)
+
+    ser.write.assert_called_once_with(b'{"T":130}\n')
+
+
+@patch("tools.check_pan_telemetry_only._write_command")
+def test_maybe_init_writes_via_write_command_with_init_phase(
+    mock_write_command: MagicMock,
+) -> None:
+    ser = MagicMock()
+
+    _maybe_init(ser, True)
+
+    mock_write_command.assert_called_once_with(
+        ser, {"T": 900, "main": 2, "module": 2}, phase="init", tx_log_file=None
+    )
+
+
+# ---------------------------------------------------------------------------
+# run() — pre-command dispatch and TX logging integration
+# ---------------------------------------------------------------------------
+
+
+def _fake_serial_context() -> MagicMock:
+    """A MagicMock serial connection that is its own context manager."""
+    ser = MagicMock()
+    ser.__enter__.return_value = ser
+    return ser
+
+
+@patch("tools.check_pan_telemetry_only._open_serial")
+def test_run_sends_single_pre_command_before_first_query(
+    mock_open_serial: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import tools.check_pan_telemetry_only as module
+
+    clock = _FakeClock()
+    monkeypatch.setattr(module.time, "monotonic", clock.monotonic)
+    monkeypatch.setattr(module.time, "sleep", clock.sleep)
+
+    ser = _fake_serial_context()
+    ser.readline.side_effect = lambda: b'{"T":1001,"pan":1.0}\n'
+    mock_open_serial.return_value = ser
+
+    run(
+        "/dev/ttyAMA0",
+        0.01,
+        0.05,
+        0.3,
+        init_module=False,
+        verbose_lines=False,
+        pre_cmd_json='{"T":123,"cmd":0}',
+    )
+
+    assert ser.write.call_args_list[0] == call(b'{"T":123,"cmd":0}\n')
+    assert ser.write.call_args_list[1] == call(b'{"T":130}\n')
+
+
+@patch("tools.check_pan_telemetry_only._open_serial")
+def test_run_sends_jsonl_pre_commands_in_file_order(
+    mock_open_serial: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: pathlib.Path,
+) -> None:
+    import tools.check_pan_telemetry_only as module
+
+    clock = _FakeClock()
+    monkeypatch.setattr(module.time, "monotonic", clock.monotonic)
+    monkeypatch.setattr(module.time, "sleep", clock.sleep)
+
+    path = tmp_path / "cmds.jsonl"
+    path.write_text('{"T":1}\n{"T":2}\n{"T":3}\n')
+
+    ser = _fake_serial_context()
+    mock_open_serial.return_value = ser
+
+    run(
+        "/dev/ttyAMA0",
+        0.0,
+        0.05,
+        0.3,
+        init_module=False,
+        verbose_lines=False,
+        pre_cmd_jsonl=str(path),
+        pre_cmd_delay_s=0.02,
+    )
+
+    assert ser.write.call_args_list == [
+        call(b'{"T":1}\n'),
+        call(b'{"T":2}\n'),
+        call(b'{"T":3}\n'),
+    ]
+    assert clock.sleep_calls[-3:] == pytest.approx([0.02, 0.02, 0.02])
+
+
+@patch("tools.check_pan_telemetry_only._run_measurement_loop")
+@patch("tools.check_pan_telemetry_only._open_serial")
+def test_run_invalid_pre_cmd_json_aborts_before_serial_open(
+    mock_open_serial: MagicMock, mock_loop: MagicMock
+) -> None:
+    with pytest.raises(SystemExit):
+        run(
+            "/dev/ttyAMA0",
+            1.0,
+            0.05,
+            0.3,
+            init_module=True,
+            verbose_lines=False,
+            pre_cmd_json="not valid json{",
+        )
+
+    mock_open_serial.assert_not_called()
+    mock_loop.assert_not_called()
+
+
+@patch("tools.check_pan_telemetry_only._open_serial")
+def test_run_tx_log_captures_init_pre_cmd_and_query_phases(
+    mock_open_serial: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: pathlib.Path,
+) -> None:
+    import tools.check_pan_telemetry_only as module
+
+    clock = _FakeClock()
+    monkeypatch.setattr(module.time, "monotonic", clock.monotonic)
+    monkeypatch.setattr(module.time, "sleep", clock.sleep)
+
+    ser = _fake_serial_context()
+    ser.readline.side_effect = lambda: b'{"T":1001,"pan":1.0}\n'
+    mock_open_serial.return_value = ser
+
+    tx_log_path = tmp_path / "tx.jsonl"
+
+    run(
+        "/dev/ttyAMA0",
+        0.01,
+        0.05,
+        0.3,
+        init_module=True,
+        verbose_lines=False,
+        pre_cmd_json='{"T":123}',
+        tx_log_jsonl_path=str(tx_log_path),
+    )
+
+    records = [json.loads(line) for line in tx_log_path.read_text().splitlines()]
+    assert [r["phase"] for r in records] == ["init", "pre_cmd", "query"]
+    assert records[0]["payload"] == {"T": 900, "main": 2, "module": 2}
+    assert records[1]["payload"] == {"T": 123}
+    assert records[2]["payload"] == {"T": 130}
+
+
+@patch("tools.check_pan_telemetry_only._open_serial")
+def test_run_default_flags_preserve_write_sequence(
+    mock_open_serial: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import tools.check_pan_telemetry_only as module
+
+    clock = _FakeClock()
+    monkeypatch.setattr(module.time, "monotonic", clock.monotonic)
+    monkeypatch.setattr(module.time, "sleep", clock.sleep)
+
+    ser = _fake_serial_context()
+    ser.readline.side_effect = lambda: b'{"T":1001,"pan":1.0}\n'
+    mock_open_serial.return_value = ser
+
+    run("/dev/ttyAMA0", 0.12, 0.05, 0.3, init_module=True, verbose_lines=False)
+
+    assert ser.write.call_args_list == [
+        call(b'{"T":900,"main":2,"module":2}\n'),
+        call(b'{"T":130}\n'),
+        call(b'{"T":130}\n'),
+        call(b'{"T":130}\n'),
+    ]

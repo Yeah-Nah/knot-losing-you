@@ -60,6 +60,13 @@ Usage
     # analysis
     ugv-check-pan-telemetry-only --log-jsonl run.jsonl
 
+    # Send a one-off setup command before the measurement loop starts
+    ugv-check-pan-telemetry-only --pre-cmd-json '{"T":123,"cmd":0}'
+
+    # Send a batch of setup commands from a file, one JSON object per line,
+    # and record every outbound command (init/pre_cmd/query) to a TX log
+    ugv-check-pan-telemetry-only --pre-cmd-jsonl setup.jsonl --tx-log-jsonl tx.jsonl
+
     # Or via python -m:
     python -m tools.check_pan_telemetry_only
 """
@@ -69,6 +76,7 @@ from __future__ import annotations
 import argparse
 import json
 import statistics
+import sys
 import time
 from contextlib import nullcontext
 from dataclasses import dataclass
@@ -348,6 +356,7 @@ def _send_and_await_pan(
     token_field: str = "S",
     linger_s: float = 0.0,
     retain_raw_lines: bool = False,
+    tx_log_file: TextIO | None = None,
 ) -> QueryResult:
     """Send one `T=130` query and wait for a valid `T=1001` pan reply.
 
@@ -386,6 +395,8 @@ def _send_and_await_pan(
     retain_raw_lines : bool, default False
         When ``True``, retain every raw line and timestamp seen (including
         during any linger window) on the returned result.
+    tx_log_file : TextIO | None, default None
+        When set, append a TX log record for the outgoing `T=130` write.
 
     Returns
     -------
@@ -395,13 +406,10 @@ def _send_and_await_pan(
     send_time = time.monotonic()
     if flush_before_query:
         ser.reset_input_buffer()
-    if seq_token is None:
-        ser.write(b'{"T":130}\n')
-    else:
-        payload = json.dumps(
-            {"T": 130, token_field: seq_token}, separators=(",", ":")
-        )
-        ser.write((payload + "\n").encode())
+    payload: dict[str, Any] = {"T": 130}
+    if seq_token is not None:
+        payload[token_field] = seq_token
+    _write_command(ser, payload, phase="query", tx_log_file=tx_log_file)
 
     deadline = send_time + timeout_s
     timeout_ts = deadline
@@ -539,6 +547,7 @@ def _run_measurement_loop(
     linger_s: float = 0.0,
     retain_raw_lines: bool = False,
     jsonl_path: str | None = None,
+    tx_log_file: TextIO | None = None,
 ) -> list[QueryResult]:
     """Send fixed-cadence `T=130` queries for *duration_s* and collect results.
 
@@ -578,6 +587,9 @@ def _run_measurement_loop(
     jsonl_path : str | None, default None
         When set, write one extended-schema JSON record per query to this
         path via `_write_jsonl_record`.
+    tx_log_file : TextIO | None, default None
+        When set, forwarded to `_send_and_await_pan` so every outgoing
+        `T=130` write is appended to this open TX log file.
 
     Returns
     -------
@@ -601,6 +613,7 @@ def _run_measurement_loop(
                 token_field=token_field,
                 linger_s=linger_s,
                 retain_raw_lines=retain_raw_lines,
+                tx_log_file=tx_log_file,
             )
             results.append(result)
             _log_query_result(result)
@@ -874,6 +887,127 @@ def _log_extended_summary(stats: SummaryStats) -> None:
         )
 
 
+def _parse_command_payload(raw: str, source: str) -> dict[str, Any]:
+    """Parse and validate one JSON pre-command string.
+
+    Parameters
+    ----------
+    raw : str
+        A single JSON command string, e.g. ``'{"T":123,"cmd":0}'``.
+    source : str
+        Human-readable origin of *raw*, prefixed onto any error message
+        (e.g. ``"--pre-cmd-json"`` or ``"--pre-cmd-jsonl line 2"``).
+
+    Returns
+    -------
+    dict[str, Any]
+        The parsed command payload, guaranteed to have an integer ``T``.
+
+    Raises
+    ------
+    ValueError
+        If *raw* is not valid JSON, does not decode to a JSON object, or
+        its ``T`` field is missing or not a (non-bool) integer.
+    """
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{source}: invalid JSON: {exc}") from exc
+    if not isinstance(data, dict):
+        raise ValueError(f"{source}: command must be a JSON object, got {data!r}")
+    t_value = data.get("T")
+    if isinstance(t_value, bool) or not isinstance(t_value, int):
+        raise ValueError(f"{source}: 'T' must be an integer, got {t_value!r}")
+    return data
+
+
+def _load_pre_command_json(text: str) -> dict[str, Any]:
+    """Parse a single ``--pre-cmd-json`` command string.
+
+    Parameters
+    ----------
+    text : str
+        The raw ``--pre-cmd-json`` argument value.
+
+    Returns
+    -------
+    dict[str, Any]
+        The parsed, validated command payload.
+
+    Raises
+    ------
+    ValueError
+        If *text* fails `_parse_command_payload` validation.
+    """
+    return _parse_command_payload(text, source="--pre-cmd-json")
+
+
+def _load_pre_command_jsonl(path: str) -> list[dict[str, Any]]:
+    """Parse a ``--pre-cmd-jsonl`` file into an ordered list of commands.
+
+    Parameters
+    ----------
+    path : str
+        Path to a file with one JSON command per non-blank line.
+
+    Returns
+    -------
+    list[dict[str, Any]]
+        Parsed, validated command payloads, in file order.
+
+    Raises
+    ------
+    ValueError
+        If *path* cannot be opened, or any non-blank line fails
+        `_parse_command_payload` validation.
+    """
+    try:
+        with open(path, encoding="utf-8") as jsonl_file:
+            lines = jsonl_file.readlines()
+    except OSError as exc:
+        raise ValueError(f"--pre-cmd-jsonl: could not read {path!r}: {exc}") from exc
+    commands: list[dict[str, Any]] = []
+    for line_number, line in enumerate(lines, start=1):
+        if not line.strip():
+            continue
+        commands.append(
+            _parse_command_payload(line, source=f"--pre-cmd-jsonl line {line_number}")
+        )
+    return commands
+
+
+def _build_pre_commands(
+    pre_cmd_json: str | None, pre_cmd_jsonl: str | None
+) -> list[dict[str, Any]]:
+    """Combine `--pre-cmd-json` and `--pre-cmd-jsonl` into one ordered list.
+
+    Parameters
+    ----------
+    pre_cmd_json : str | None
+        The raw ``--pre-cmd-json`` argument value, or ``None`` if unset.
+    pre_cmd_jsonl : str | None
+        Path to a ``--pre-cmd-jsonl`` file, or ``None`` if unset.
+
+    Returns
+    -------
+    list[dict[str, Any]]
+        The single `--pre-cmd-json` command first (if set), followed by
+        every `--pre-cmd-jsonl` command in file order. Empty if both
+        arguments are ``None``.
+
+    Raises
+    ------
+    ValueError
+        If either source fails validation.
+    """
+    commands: list[dict[str, Any]] = []
+    if pre_cmd_json is not None:
+        commands.append(_load_pre_command_json(pre_cmd_json))
+    if pre_cmd_jsonl is not None:
+        commands.extend(_load_pre_command_jsonl(pre_cmd_jsonl))
+    return commands
+
+
 def _open_serial(port: str) -> serial.Serial | None:
     """Run device preflight then open the serial port.
 
@@ -900,7 +1034,40 @@ def _open_serial(port: str) -> serial.Serial | None:
         return None
 
 
-def _maybe_init(ser: serial.Serial, init_module: bool) -> None:
+def _write_command(
+    ser: serial.Serial,
+    payload: dict[str, Any],
+    phase: str,
+    tx_log_file: TextIO | None = None,
+) -> None:
+    """Serialise and write one JSON command, optionally logging it.
+
+    Parameters
+    ----------
+    ser : serial.Serial
+        Open serial connection to the UGV controller.
+    payload : dict[str, Any]
+        The JSON-serialisable command to send.
+    phase : str
+        Label identifying which stage sent this command (e.g. ``"init"``,
+        ``"pre_cmd"``, ``"query"``), recorded in the TX log only.
+    tx_log_file : TextIO | None, default None
+        When set, append one JSON record for this write to this open file.
+    """
+    line = json.dumps(payload, separators=(",", ":"))
+    ser.write((line + "\n").encode())
+    if tx_log_file is not None:
+        record = {
+            "ts_monotonic": time.monotonic(),
+            "phase": phase,
+            "payload": payload,
+        }
+        tx_log_file.write(json.dumps(record) + "\n")
+
+
+def _maybe_init(
+    ser: serial.Serial, init_module: bool, tx_log_file: TextIO | None = None
+) -> None:
     """Optionally send `T=900` module init, then clear the startup buffer.
 
     Parameters
@@ -910,17 +1077,43 @@ def _maybe_init(ser: serial.Serial, init_module: bool) -> None:
     init_module : bool
         Whether to send `T=900` (UGV Rover + pan-tilt module init) before
         clearing the buffer.
+    tx_log_file : TextIO | None, default None
+        When set, append a TX log record for the `T=900` write, if sent.
     """
     if init_module:
-        ser.write(
-            json.dumps(
-                {"T": 900, "main": 2, "module": 2}, separators=(",", ":")
-            ).encode()
-            + b"\n"
+        _write_command(
+            ser,
+            {"T": 900, "main": 2, "module": 2},
+            phase="init",
+            tx_log_file=tx_log_file,
         )
         logger.debug("Sent T=900 (module init, UGV Rover + pan-tilt)")
         time.sleep(0.3)
     ser.reset_input_buffer()
+
+
+def _apply_pre_commands(
+    ser: serial.Serial,
+    commands: list[dict[str, Any]],
+    delay_s: float,
+    tx_log_file: TextIO | None = None,
+) -> None:
+    """Send each pre-run command in order, pausing between sends.
+
+    Parameters
+    ----------
+    ser : serial.Serial
+        Open serial connection to the UGV controller.
+    commands : list[dict[str, Any]]
+        Commands to send, in order, before the measurement loop starts.
+    delay_s : float
+        Delay in seconds after every send, including the last.
+    tx_log_file : TextIO | None, default None
+        When set, append a TX log record for each command sent.
+    """
+    for payload in commands:
+        _write_command(ser, payload, phase="pre_cmd", tx_log_file=tx_log_file)
+        time.sleep(delay_s)
 
 
 def run(
@@ -936,6 +1129,10 @@ def run(
     linger_s: float = 0.0,
     retain_raw_lines: bool = False,
     log_jsonl_path: str | None = None,
+    pre_cmd_json: str | None = None,
+    pre_cmd_jsonl: str | None = None,
+    pre_cmd_delay_s: float = 0.1,
+    tx_log_jsonl_path: str | None = None,
 ) -> None:
     """Run the telemetry-only measurement window and print the summary.
 
@@ -967,7 +1164,23 @@ def run(
     log_jsonl_path : str | None, default None
         When set, write one extended-schema JSON record per query to this
         path.
+    pre_cmd_json : str | None, default None
+        A single JSON command to send before the measurement loop starts.
+    pre_cmd_jsonl : str | None, default None
+        Path to a file of JSON commands (one per non-blank line) to send
+        before the measurement loop starts, after *pre_cmd_json*.
+    pre_cmd_delay_s : float, default 0.1
+        Delay in seconds after each pre-command send.
+    tx_log_jsonl_path : str | None, default None
+        When set, write one JSON record per outbound command (init,
+        pre_cmd, query) to this path.
     """
+    try:
+        pre_commands = _build_pre_commands(pre_cmd_json, pre_cmd_jsonl)
+    except ValueError as exc:
+        logger.error(f"Invalid pre-command input: {exc}")
+        sys.exit(1)
+
     logger.info(
         f"Opening {port} at 115200 baud — telemetry-only window: "
         f"{duration_s:.1f}s, poll={poll_interval_s:.3f}s, timeout={timeout_s:.3f}s"
@@ -977,28 +1190,38 @@ def run(
         return
     with ser_conn as ser:
         time.sleep(0.1)
-        _maybe_init(ser, init_module)
-        try:
-            results = _run_measurement_loop(
-                ser,
-                duration_s,
-                poll_interval_s,
-                timeout_s,
-                verbose_lines,
-                flush_before_query,
-                use_seq_token=use_seq_token,
-                token_field=token_field,
-                linger_s=linger_s,
-                retain_raw_lines=retain_raw_lines,
-                jsonl_path=log_jsonl_path,
-            )
-        except serial.SerialException as exc:
-            logger.error(
-                f"Serial read failed mid-session: {exc}\n"
-                "The port may have been grabbed by another process (e.g. ugv_rpi).\n"
-                "Stop it with: sudo systemctl stop ugv_rpi"
-            )
-            return
+        tx_log_cm = (
+            open(tx_log_jsonl_path, "w", encoding="utf-8")
+            if tx_log_jsonl_path
+            else nullcontext()
+        )
+        with tx_log_cm as tx_log_file:
+            _maybe_init(ser, init_module, tx_log_file=tx_log_file)
+            try:
+                _apply_pre_commands(
+                    ser, pre_commands, pre_cmd_delay_s, tx_log_file=tx_log_file
+                )
+                results = _run_measurement_loop(
+                    ser,
+                    duration_s,
+                    poll_interval_s,
+                    timeout_s,
+                    verbose_lines,
+                    flush_before_query,
+                    use_seq_token=use_seq_token,
+                    token_field=token_field,
+                    linger_s=linger_s,
+                    retain_raw_lines=retain_raw_lines,
+                    jsonl_path=log_jsonl_path,
+                    tx_log_file=tx_log_file,
+                )
+            except serial.SerialException as exc:
+                logger.error(
+                    f"Serial read failed mid-session: {exc}\n"
+                    "The port may have been grabbed by another process (e.g. ugv_rpi).\n"
+                    "Stop it with: sudo systemctl stop ugv_rpi"
+                )
+                return
     show_extended = (
         use_seq_token or linger_s > 0 or retain_raw_lines or log_jsonl_path is not None
     )
@@ -1038,6 +1261,16 @@ def main() -> None:
         Retain every raw serial line and timestamp seen per query.
     --log-jsonl : str, default ``None``
         Write one extended-schema JSON record per query to this path.
+    --pre-cmd-json : str, default ``None``
+        Send one JSON command before the measurement loop starts.
+    --pre-cmd-jsonl : str, default ``None``
+        Send one JSON command per non-blank line, in file order, before the
+        measurement loop starts.
+    --pre-cmd-delay-ms : float, default ``100.0``
+        Delay in milliseconds after each pre-command send.
+    --tx-log-jsonl : str, default ``None``
+        Write one JSON record per outbound command (init/pre_cmd/query) to
+        this path.
     """
     parser = argparse.ArgumentParser(
         description=(
@@ -1125,6 +1358,33 @@ def main() -> None:
         metavar="PATH",
         help="Write one extended-schema JSON record per query to PATH.",
     )
+    parser.add_argument(
+        "--pre-cmd-json",
+        default=None,
+        metavar="TEXT",
+        help="Send one JSON command before the measurement loop starts.",
+    )
+    parser.add_argument(
+        "--pre-cmd-jsonl",
+        default=None,
+        metavar="PATH",
+        help=(
+            "Send one JSON command per non-blank line, in file order, "
+            "before the measurement loop starts."
+        ),
+    )
+    parser.add_argument(
+        "--pre-cmd-delay-ms",
+        type=float,
+        default=100.0,
+        help="Delay in milliseconds after each pre-command send (default: 100).",
+    )
+    parser.add_argument(
+        "--tx-log-jsonl",
+        default=None,
+        metavar="PATH",
+        help="Write one JSON record per outbound command (init/pre_cmd/query) to PATH.",
+    )
     args = parser.parse_args()
     run(
         args.port,
@@ -1139,6 +1399,10 @@ def main() -> None:
         linger_s=args.linger_ms / 1000.0,
         retain_raw_lines=args.retain_raw_lines,
         log_jsonl_path=args.log_jsonl,
+        pre_cmd_json=args.pre_cmd_json,
+        pre_cmd_jsonl=args.pre_cmd_jsonl,
+        pre_cmd_delay_s=args.pre_cmd_delay_ms / 1000.0,
+        tx_log_jsonl_path=args.tx_log_jsonl,
     )
 
 
