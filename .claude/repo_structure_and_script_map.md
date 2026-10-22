@@ -52,7 +52,7 @@ knot-losing-you/
    │  │  ├─ pan_controller.py        (bbox + measured pan telemetry → pan command: bearing, tilt, deadband, clamp)
    │  │  └─ pan_telemetry.py         (decoupled background pan telemetry poller with snapshot freshness states)
    │  ├─ perception/
-   │  │  ├─ waveshare_camera.py      (V4L2 RGB pan-tilt; runtime frame source; preflight guard)
+   │  │  ├─ waveshare_camera.py      (V4L2 RGB pan-tilt; background grabber thread → latest CameraFrame + capture timestamp; preflight guard)
    │  │  ├─ lidar_access.py          (D500 serial packet parsing; 12-point scans)
    │  │  ├─ lidar_geometry.py        (polar→Cartesian; forward-arc filtering)
    │  │  └─ camera_access.py         (OAK-D; used only in check_camera_access.py smoke tool)
@@ -100,6 +100,7 @@ knot-losing-you/
 ### Sensor I/O & Pan Tracking
 - **Frame Source**: Waveshare RGB pan-tilt camera (`WaveshareCamera`, V4L2, preflight-guarded).
   - Runs camera preflight (`ensure_camera_device_available`) on startup to detect/release busy V4L2 devices.
+  - Capture runs on a daemon grabber thread at camera rate; the control loop reads the newest `CameraFrame` (`image`, `capture_time_monotonic`, `seq`) via `get_frame()` without blocking.
   - Feeds object detection, pan servo tracking, and MJPEG streaming.
 - **Pan Servo Tracking**: `PanController` converts detection bbox centroids + measured pan telemetry → pan commands.
   - Math/control path: fisheye bearing + tilt correction + hysteresis + slew cap + telemetry-based degraded-mode handling.
@@ -178,6 +179,7 @@ knot-losing-you/
   - cv2.VideoCapture wrapper for the Waveshare RGB pan-tilt camera (V4L2).
   - Runtime frame source for the follower pipeline: inference, pan servo control, and MJPEG streaming.
   - Calls `camera_preflight.ensure_camera_device_available` on start.
+  - Background grabber thread publishes a frozen `CameraFrame` snapshot under a lock (`PanTelemetryPoller` pattern); `release()` is only called after the thread has joined.
 
 - `src/ugv_follower/perception/lidar_access.py`
   - D500 packet parsing over serial (sync, CRC, angle interpolation, point extraction).
@@ -312,7 +314,7 @@ knot-losing-you/
   - Unit tests for controller serial command encoding, motion conversion, and stop/pan-tilt command behaviour.
 
 - `tests/test_waveshare_camera.py`
-  - Unit tests for `WaveshareCamera`: pre-start guard, start/stop lifecycle, frame acquisition, and read-failure handling (mocked cv2.VideoCapture).
+  - Unit tests for `WaveshareCamera`: pre-start guard, start/stop and grabber-thread lifecycle, `_capture_once` snapshot publication/timestamps, and read-failure handling (mocked cv2.VideoCapture).
 
 ## 4) Non-Script Context Files Worth Keeping in View
 
@@ -378,6 +380,7 @@ knot-losing-you/
 - Oscillation confirmed intrinsic (not target motion related).
 - Primary suspects: feedback path latency, proportional gain, control loop timing.
 - See `docs/pan_oscillation_issues.md` for detailed investigation; pan_controller.py includes extensive comments on tilt correction and deadband.
+- Current diagnosis: `docs/bug_fixing/pan_oscillation_vision_latency.md` (vision latency × gain). Step 2 newest-frame capture is done (grabber thread in `waveshare_camera.py`); `CameraFrame.capture_time_monotonic` is the hook for Step 3 time-aligned `pan_at(t_capture)`.
 
 ### Pan Telemetry Polling & Diagnostics
 - Runtime uses `PanTelemetryPoller` to decouple pan telemetry from the vision loop (mode-aware cadence + freshness thresholds).

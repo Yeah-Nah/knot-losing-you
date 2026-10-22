@@ -217,6 +217,8 @@ ugv-calibrate-drive --replay calibration/ugv_drive/<timestamp>.csv --save
 ugv-run
 ```
 
+- `http://<pi-ip>:8080/stream` — To watch the video stream live.
+
 Optional config overrides:
 
 ```bash
