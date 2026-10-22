@@ -62,6 +62,37 @@ pi@raspberrypi:~ $
 
 You are now running commands on the rover, not on your Windows computer.
 
+## Check the branch and pull the latest changes
+
+From the rover's shell, go to the repository and check which branch is checked out:
+
+```bash
+cd ~/knot-losing-you
+git branch --show-current
+```
+
+Check the branch and whether there are local changes or commits to synchronize:
+
+```bash
+git status -sb
+```
+
+If the working tree is clean, pull the latest changes for the current branch:
+
+```bash
+git pull
+```
+
+The commit must be pushed to the remote repository before the rover can pull it. If you only committed it on your development computer, push it from there first. If `git status` shows local changes on the rover, review them before pulling; Git may refuse to pull if they conflict with incoming changes.
+
+If project dependencies changed, reinstall the project in its virtual environment:
+
+```bash
+cd ~/knot-losing-you/ugv-follower
+source .venv/bin/activate
+pip install -e .
+```
+
 ## Exit the SSH session
 
 When you are finished, run:

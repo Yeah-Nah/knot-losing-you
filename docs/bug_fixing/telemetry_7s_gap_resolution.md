@@ -1,6 +1,6 @@
 # Pan Telemetry ~7 s Gaps: Root Cause, Fix and Validation
 
-**Status:** the main issue (Issue 9, ~7 s telemetry gaps) is fixed and validated on hardware as of 2026-10-21. Two smaller follow-ups remain (see [Next steps](#next-steps)).
+**Status:** the main issue (Issue 9, ~7 s telemetry gaps) is fixed and validated on hardware as of 2026-10-21. End-to-end validation with the follower passed on 2026-10-22 (§6.4). The ~50 ms reply gate in §4.3 was traced to Waveshare's stock `app.py` running alongside the follower and no longer occurs. The IMU hardware fault and some small cleanups remain (see [Next steps](#6-next-steps)).
 
 **Repositories:**
 - Host: `knot-losing-you`. The Python follower runs on the Raspberry Pi.
@@ -101,7 +101,15 @@ Neither figure is true request→reply latency.
 
 With the stream off, every reply is a direct answer to `T=130`. The true round-trip time is **11.6–16.1 ms** (median about 13 ms).
 
-### 4.3 New finding: the firmware ignores `T=130` sent within ~50 ms of the previous reply
+### 4.3 The ~50 ms reply gate (caused by Waveshare's `app.py`; resolved 2026-10-22)
+
+> **Update 2026-10-22: caused by `app.py`, now gone.** Waveshare's stock `~/ugv_rpi/app.py` was being started at every boot by an `@reboot` line in the `ws` user's crontab, and it held `/dev/ttyAMA0` open alongside our code (see [pan_telemetry_serial_worker_crash.md](pan_telemetry_serial_worker_crash.md)). The runs below were almost certainly made while it was running. It has been disabled.
+>
+> In the first follower run without it ([logs/post_port_release.jsonl](logs/post_port_release.jsonl)), **871 of 871** `T=130` queries were sent 9–45 ms (median 36 ms) after the previous reply, and **every one was answered** (round trip median 15 ms, max 63 ms). Under the gate described below, all of them would have been dropped. So `feedbackFlowExtraDelay` was effectively 0 in that run.
+>
+> This fits the open question at the end of this section: the stock `ugv_rpi` service was the most likely thing setting `feedbackFlowExtraDelay` to about 50 ms at runtime. A second reader on the same UART would also have consumed some replies. Which of the two produced the alternation hasn't been separated, and doesn't need to be while `app.py` stays disabled. The gate code in the firmware is real, so it will come back if anything sends `T=142` with a non-zero interval.
+>
+> The original analysis is kept below as evidence.
 
 `ugv-check-pan-tilt-feedback` sends a bare `{"T":131}` in its probe list. That defaults to `cmd=0` and **turns the feedback stream off**. With the stream off, the telemetry-only tool showed strict success/timeout alternation:
 
@@ -119,7 +127,7 @@ if (millis() - last_feedback_time < feedbackFlowExtraDelay) {
 }
 ```
 
-On this rover `feedbackFlowExtraDelay` is about **50 ms** at runtime. That matches both the cut-off above and the 51 ms stream period. The source default is `0` (`ugv_config.h:359`), and nothing in the host repo sends `T=142` (`CMD_FEEDBACK_FLOW_INTERVAL`). So something else sets it at runtime, most likely the stock `ugv_rpi` service or the boot mission. This hasn't been confirmed yet.
+In these runs `feedbackFlowExtraDelay` was about **50 ms** at runtime. That matches both the cut-off above and the 51 ms stream period. The source default is `0` (`ugv_config.h:359`), and nothing in the host repo sends `T=142` (`CMD_FEEDBACK_FLOW_INTERVAL`). So something else sets it at runtime, most likely the stock `ugv_rpi` service or the boot mission. (See the update at the top of this section.)
 
 This isn't a regression from the IMU fix. Before the fix, replies inside a burst arrived 17 ms apart, so the gate was 0 during those earlier runs. And the 7 s stall would have hidden it anyway. It doesn't affect `T=1` or `T=133` commands.
 
@@ -136,7 +144,7 @@ Each of these was suspected at some point and has now been ruled out:
 | Host timeout too short | Going from 0.2 to 0.3 to 2.0 s improved capture odds but never removed the gaps. |
 | RX flush strategy | Flush off only drained queued replies (under 2 ms, one repeated value, gaps still present). Flush on stays the right choice. |
 | Host JSON parsing | Timeouts were `lines_read=0`: nothing arrived to parse. |
-| `feedbackFlowExtraDelay` gate (as the 7 s cause) | The command echo was also missing during gaps, and in-burst replies were 17 ms apart, so the gate was effectively 0. It does cause the separate ~50 ms effect in §4.3. |
+| `feedbackFlowExtraDelay` gate (as the 7 s cause) | The command echo was also missing during gaps, and in-burst replies were 17 ms apart, so the gate was effectively 0. The separate ~50 ms effect in §4.3 almost certainly came from Waveshare's `app.py` running alongside the follower. |
 | "Replies arriving ~2 s late" | The 2026-07-14 linger run read late hits at about 2000 ms as delayed replies. They were actually queued requests being served the moment the loop unblocked. |
 | Sequence-token mismatch | The firmware never echoes a token. ρ was indeterminate, not a mismatch. |
 | Servo-bus starvation (`FeedBack`/`ReadMode` timeouts) | Capped at about 0.2 s per pass with no `T=1005` lines, so it can't produce a fixed 7.0 s block. Fixing only the IMU removed the gaps. |
@@ -155,24 +163,22 @@ The breaker hides the fault; it doesn't fix it. Roll, pitch and yaw are unavaila
 - Check the I2C wiring and addresses. Optionally have `imuInit()` return the result of `qmi8658_.begin()`, so polling is skipped when init fails.
 - If the IMU is repaired, leave the breaker in place as a safeguard.
 
-### 6.2 Decide how the host gets telemetry, given the ~50 ms gate
-Pick one of these:
-1. **Recommended: use the stream.** Enable it with `{"T":131,"cmd":1}` and build the planned **continuous serial reader**. It reads every line, timestamps each `T=1001` and gives the controller the latest sample plus its age. That yields a fresh sample about every 51 ms without polling, and makes the pre-query flush unnecessary.
-2. **Keep polling `T=130`,** but no faster than about every 60 ms. Treat a missing reply as possibly caused by the gate.
-3. **Firmware change:** let `CMD_BASE_FEEDBACK` bypass the interval check, for example with a `force` argument to `baseInfoFeedback()`, so that direct requests always get a reply.
-
-Also find out what sets `feedbackFlowExtraDelay` to about 50 ms at runtime. Check what the `ugv_rpi` service sends at startup, and check the on-device `/boot.mission`.
+### 6.2 Keep `app.py` off the UART
+With Waveshare's `app.py` disabled, polling `T=130` every 50 ms works: 873 of 873 queries answered, with a fresh sample about every 50 ms. The continuous stream reader is no longer needed to work around the gate. It is still an option later, if it turns out to be simpler than polling.
+- Keep the `app.py` line in the `ws` crontab commented out. Run `fuser -v /dev/ttyAMA0` before a test if in doubt.
+- The code hardening in [pan_telemetry_serial_worker_crash.md](pan_telemetry_serial_worker_crash.md) (check the port before opening it; keep the serial worker alive on errors) makes a second process on the UART fail loudly instead of silently.
+- **Optional firmware hardening:** let `CMD_BASE_FEEDBACK` bypass the interval check, for example with a `force` argument to `baseInfoFeedback()`, so direct requests always get a reply even if something sets `T=142` again.
 
 ### 6.3 Fix the probe tool so it stops turning the stream off
 In `ugv-follower/tools/check_pan_tilt_feedback.py`, `_PROBE_COMMANDS` includes `{"T": 131}`, which disables the stream until reboot. Either remove that probe or restore the stream at the end of the run with `{"T":131,"cmd":1}`. Until then, power-cycle the ESP32 or send `{"T":131,"cmd":1}` after running it.
 
-### 6.4 End-to-end validation with the follower
-All validation so far was telemetry-only with a stationary gimbal. Next:
-- Run the full follower with `T=1` and `T=133` traffic.
-- Confirm that pan oscillation and hard re-anchors are gone.
-- Confirm that `measured-fresh` dominates `measured-cached`.
-- Confirm that `C_uniq` follows real motion.
-- Revisit the stale-telemetry mitigations (estimated pan, degraded mode) now that fresh data arrives about every 51 ms. Their tuning may no longer be needed.
+### 6.4 End-to-end validation with the follower (passed 2026-10-22)
+[logs/post_port_release.jsonl](logs/post_port_release.jsonl): the full follower with `T=1` and `T=133` traffic, the person moving across the frame.
+- [x] No telemetry gaps: fresh samples every ~50 ms (max 93 ms), no timeouts, no stale or degraded mode.
+- [x] Every control cycle used `measured-fresh` as its base. No `estimated` or cached bases, and no hard re-anchors.
+- [x] Measured pan followed the commands, for example 1° → 24° → 51° → 58° for commands of 29° → 54° → 58°.
+- [ ] Pan oscillation is smaller but still present. It is now caused by vision latency and the controller, not telemetry. See [pan_oscillation_vision_latency.md](pan_oscillation_vision_latency.md).
+- [ ] Revisit the stale-telemetry mitigations (estimated pan, degraded mode). They never triggered in this run, so they may be simplified or removed.
 
 ### 6.5 Firmware cleanups found during review (not related to the gaps)
 - **Wrong status field.** `gimbal_module.h:90` and `:112` set `servoFeedback[0/1].status` (the arm's array) on a failed gimbal read, instead of `gimbalFeedback[n].status`. A stale `pos` is then reported as valid.

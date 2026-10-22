@@ -380,7 +380,7 @@ knot-losing-you/
 - Oscillation confirmed intrinsic (not target motion related).
 - Primary suspects: feedback path latency, proportional gain, control loop timing.
 - See `docs/pan_oscillation_issues.md` for detailed investigation; pan_controller.py includes extensive comments on tilt correction and deadband.
-- Current diagnosis: `docs/bug_fixing/pan_oscillation_vision_latency.md` (vision latency × gain). Step 2 newest-frame capture is done (grabber thread in `waveshare_camera.py`); `CameraFrame.capture_time_monotonic` is the hook for Step 3 time-aligned `pan_at(t_capture)`.
+- Current diagnosis: `docs/bug_fixing/pan_oscillation_vision_latency.md` (vision latency × gain). The grabber thread in `waveshare_camera.py` is done and validated (§3); next are the camera frame rate (MJPG, §5 Step 1) and time-aligned `pan_at(t_capture)` using `CameraFrame.capture_time_monotonic` (§5 Step 2). UART conflict with Waveshare `app.py`: `docs/bug_fixing/pan_telemetry_serial_worker_crash.md`.
 
 ### Pan Telemetry Polling & Diagnostics
 - Runtime uses `PanTelemetryPoller` to decouple pan telemetry from the vision loop (mode-aware cadence + freshness thresholds).
