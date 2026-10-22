@@ -153,18 +153,21 @@ class Pipeline:
 
         # -- Camera: wait for first frame --
         self._camera.start()
-        frame = None
+        camera_frame = None
         timeout = 5.0  # seconds
         import time  # noqa: PLC0415
 
         start = time.monotonic()
-        while frame is None:
-            frame = self._camera.get_frame()
-            if frame is None:
+        while camera_frame is None:
+            camera_frame = self._camera.get_frame()
+            if camera_frame is None:
                 time.sleep(0.01)  # 10ms backoff
             if (time.monotonic() - start) >= timeout:
                 raise TimeoutError(f"Camera failed to produce frame within {timeout}s")
-        logger.success(f"frame received ✓  shape={frame.shape}  dtype={frame.dtype}")
+        logger.success(
+            f"frame received ✓  shape={camera_frame.image.shape}  "
+            f"dtype={camera_frame.image.dtype}"
+        )
 
         # -- LiDAR: wait for first packet --
         self._lidar.start()
@@ -206,7 +209,7 @@ class Pipeline:
             cmd = self._apply_mode_transition_stop(cmd)
             cmd = self._apply_estop_override(cmd)
             self._apply_motion_command(cmd)
-            frame = self._camera.get_frame()
+            frame = self._read_latest_frame()
             results = self._run_inference(frame)
             if not self._estop_active:
                 bbox_u, bbox_v = self._extract_centroid(results)
@@ -281,6 +284,25 @@ class Pipeline:
     def _apply_motion_command(self, command: MotionCommand) -> None:
         """Apply one normalised motion command to the controller."""
         apply_motion_command(self._ugv, command)
+
+    def _read_latest_frame(self) -> NDArray[np.uint8] | None:
+        """Return the newest camera image and log its sequence and age.
+
+        Returns
+        -------
+        NDArray[np.uint8] | None
+            Latest BGR image from the grabber thread, or ``None`` if no frame
+            has been captured yet.
+        """
+        camera_frame = self._camera.get_frame()
+        if camera_frame is None:
+            return None
+        logger.debug(
+            "camera frame seq={} age={:.3f}s",
+            camera_frame.seq,
+            camera_frame.age_s,
+        )
+        return camera_frame.image
 
     def _run_inference(self, frame: NDArray[np.uint8] | None) -> Any | None:
         """Run YOLO inference on *frame* and return the Results, or None.

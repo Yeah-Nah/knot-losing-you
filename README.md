@@ -13,6 +13,7 @@ This project builds an autonomous person-following rover for use in a marina env
 - Waveshare UGV Rover (6WD chassis)
 - LDRobot D500 LiDAR
 - Waveshare Pan-Tilt Module
+- ST3215 serial bus servo for the pan-tilt mechanism
 
 ---
 
@@ -54,6 +55,26 @@ echo 'SUBSYSTEM=="usb", ATTRS{idVendor}=="03e7", MODE="0666"' | sudo tee /etc/ud
 sudo udevadm control --reload-rules
 sudo udevadm trigger
 ```
+
+#### Stop Waveshare's app from starting at boot (required once)
+
+The rover ships with Waveshare's own Pi software (`~/ugv_rpi`). Its web app, `~/ugv_rpi/app.py`, is started at every boot by a line in the `ws` user's crontab. It holds both the ESP32 serial port (`/dev/ttyAMA0`) and the camera (`/dev/video0`). The follower can't share the serial port with it: telemetry replies go missing and `ugv-run` can fail with "device reports readiness to read but returned no data" (see [pan_telemetry_serial_worker_crash.md](docs/bug_fixing/pan_telemetry_serial_worker_crash.md)).
+
+Disable it once. This survives reboots:
+
+```bash
+# Comment out the app.py @reboot line (the Jupyter line is left alone)
+crontab -l | sed 's|^\(@reboot .*ugv_rpi/app\.py.*\)$|# \1|' | crontab -
+crontab -l    # the app.py line should now start with '#'
+
+# Stop the copy that's already running. It ignores SIGTERM, so force it.
+pkill -9 -f ugv_rpi/app.py
+
+# Check: nothing should hold the serial port
+fuser -v /dev/ttyAMA0
+```
+
+After the next reboot, `fuser -v /dev/ttyAMA0` should still print nothing. To use Waveshare's web UI again later, start it by hand (`~/ugv_rpi/ugv-env/bin/python ~/ugv_rpi/app.py`) and stop it before running any `ugv-*` command, rather than re-enabling the crontab line.
 
 ---
 
@@ -216,6 +237,8 @@ ugv-calibrate-drive --replay calibration/ugv_drive/<timestamp>.csv --save
 ugv-run
 ```
 
+- `http://<pi-ip>:8080/stream` — To watch the video stream live.
+
 Optional config overrides:
 
 ```bash
@@ -231,50 +254,31 @@ ugv-run \
 
 ### Camera device in use (`/dev/video0`)
 
-Camera-based calibration commands now run an automatic preflight that checks whether
-the camera device is busy and attempts to release it. If this still fails, the holder
-process is usually started at boot by another service.
+`ugv-run` and the camera-based calibration commands run an automatic preflight that
+checks whether the camera device is busy and releases it with `fuser -k`.
 
-Use these checks:
+Two things hold the camera at boot:
+- **Waveshare's `app.py`.** Disable it as described in [Stop Waveshare's app from starting at boot](#stop-waveshares-app-from-starting-at-boot-required-once).
+- **pipewire and wireplumber** (the desktop audio/video services). They are expected. The preflight kills them each run and systemd restarts them, which is harmless.
 
 ```bash
-# Show process IDs holding the camera device
-lsof -t /dev/video0
+# Show what is holding the camera device
+fuser -v /dev/video0
 
-# Kill holders manually (only needed if automatic preflight cannot)
+# Kill holders manually (only needed if the automatic preflight can't)
 sudo fuser -k /dev/video0
 ```
 
-For a permanent fix, disable the process that auto-starts and takes ownership of
-the camera device.
-
 ### Serial port in use (`/dev/ttyAMA0`)
 
-Waveshare's `ugv_rpi/app.py` starts automatically on boot via crontab and holds the serial port. Any script that uses the UGV sub-controller (`ugv-check-battery`, `ugv-capture-calibration`, `ugv-run`, etc.) will fail with a "device reports readiness to read but returned no data" error until it's stopped.
-
-**One-time fix — kill the process for this session:**
+Symptom: any command that talks to the ESP32 (`ugv-check-battery`, `ugv-capture-calibration`, `ugv-run`, etc.) fails with "device reports readiness to read but returned no data", or pan telemetry replies time out.
 
 ```bash
-# Find out what is holding the process
-lsof -t /dev/ttyAMA0
-
-# Then kill it (PID 848 is a placeholder)
-sudo kill -9 848
+# Show what is holding the serial port (should print nothing)
+fuser -v /dev/ttyAMA0
 ```
 
-**Permanent fix — disable it from autostarting:**
-
-```bash
-crontab -e
-```
-
-Comment out the `app.py` line by adding a `#` at the start:
-
-```
-# @reboot XDG_RUNTIME_DIR=/run/user/1000 ~/ugv_rpi/ugv-env/bin/python ~/ugv_rpi/app.py >> ~/ugv.log 2>&1
-```
-
-Save and exit. The process will no longer start on boot. The Jupyter line in crontab can be left as-is or also commented out if you don't use it.
+If it shows `~/ugv_rpi/app.py`, the crontab step in [Stop Waveshare's app from starting at boot](#stop-waveshares-app-from-starting-at-boot-required-once) hasn't been done, or the app was started by hand. Run that step. If it shows another process, such as an earlier `ugv-*` command that didn't exit or a Jupyter kernel, stop that process.
 
 ---
 
@@ -294,4 +298,7 @@ ugv-check-lidar
 
 # Test motor control — drives forward 0.2 m over 1 s
 ugv-check-controller
+
+# Telemetry-only pan query test — isolates T=130 -> T=1001.pan behavior
+ugv-check-pan-telemetry-only
 ```

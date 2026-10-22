@@ -23,6 +23,43 @@ Short description of what was done and why.
 
 # Phase 3: Detection, Spatial Transforms & Following
 
+## Entry 8: Firmware Fixes, Live Pan Telemetry, and Taming the Pan Oscillation
+*Date: October 22, 2026*
+
+This one took a lot longer than planned. The pan-tilt camera kept oscillating around the target and never settled. Fixing it meant going all the way down into the rover's ESP32 firmware: the stock Waveshare firmware had two separate bugs that broke pan position feedback. I forked [`waveshareteam/ugv_base_general`](https://github.com/waveshareteam/ugv_base_general), patched it, and reflashed the drive controller. With the firmware fixed and the host-side control loop reworked around live telemetry, the pan oscillation is much smaller. 🎉
+
+**Firmware fixes (ESP32 drive controller):**
+- **Stuck pan readback:** `T=1001.pan` always reported about `-179.956°`. The cause was an empty `SCSerial::wFlushSCS()` in the SCServo library, which meant the half-duplex servo bus echo was read back as the servo's reply. I patched it to wait for TX to finish and then drain RX, and live pan position feedback now works (a 20° command reads back as 18.9°)
+- **~7 s telemetry gaps:** fresh pan replies only arrived in short bursts with a fixed ~7 s gap between them. Blocking I2C reads from the rover's faulty IMU in `updateIMUData()` were stalling the firmware's single-threaded `loop()`. That also delayed pan commands, drive commands and the heartbeat stop, so it was a control-latency problem as well as a telemetry one. I added a stall breaker to the IMU polling: if one IMU read takes longer than 250 ms, IMU polling is switched off until reboot. The loop can now stall at most once after boot. This doesn't repair the IMU, but the IMU was already returning no valid data. After reflashing the median gap between replies dropped from ~7.0 s to 0.051 s, with a max reply latency of 51.5 ms
+- The patched fork is at [`Yeah-Nah/ugv_base_general`](https://github.com/Yeah-Nah/ugv_base_general), and the README now says it must be flashed before the follower will work
+
+**Host-side control changes:**
+- Added `pan_telemetry.py`, a two-thread background poller that keeps pan telemetry separate from the vision loop, so slow inference no longer delays position queries. It polls at 20 Hz while tracking and 5 Hz when idle
+- The pan query in `ugv_controller.py` now flushes pending RX data before each query, so an old queued reply can't be taken as fresh feedback
+- The pan controller now prefers the fresh measured servo position, and falls back to a dead-reckoned estimate only when telemetry is missing. The old accumulated-command fallback is gone. It also has a velocity jump guard, freshness checks and a degraded mode for telemetry gaps; the estimate and degraded mode didn't trigger in the latest run
+- Changed the pan slew limit from degrees per cycle to degrees per second (60°/s), added `loop_period_s` for loop pacing, raised `tracking_gain_kp` from 0.25 to 0.9, and widened the pan command limits from ±45° to ±60°
+- `WaveshareCamera` now grabs frames on a background thread with timestamps. Frame age at grab dropped from about 0.3–0.5 s (inferred) to 0.12 s (logged)
+- Found that Waveshare's stock `app.py` starts at boot and holds both the UART and the camera. It crashed the telemetry worker, and was most likely behind the dropped pan replies in earlier runs. I documented how to disable it
+- Built diagnostic tools for this investigation: `check_pan_tilt_feedback.py`, `scan_servo_ids.py` and `check_pan_telemetry_only.py`. The last one can log every query result and every outbound command, for correlating host and firmware timing
+
+**Docs written along the way:** UART, servo bus and encoders primer; concurrency and telemetry polling primer; model export formats primer; firmware-host correlation experiment; how-tos for connecting the rover to Wi-Fi and SSH; and bug write-ups for the servo feedback, the 7 s gap, the serial worker crash and the vision latency issues
+
+**Key Achievements:**
+- Two firmware bugs found and fixed, and the drive controller reflashed with the patched fork ✅
+- Live pan telemetry is reliable: with the firmware fixed and `app.py` disabled, 0 of 873 `T=130` queries timed out (previously 45%), and every control cycle uses a fresh measured pan position
+- Pan oscillation is much smaller than before. The pan now follows a person across the frame in both directions, settles centred, and holds position for several seconds instead of swinging continuously
+- The remaining oscillation comes from vision latency, not telemetry. The control loop runs at about 2 Hz because of full-resolution inference and annotation, and the camera only delivers about 4 fps. That's next on the list
+
+Live tracking test: YOLO picks up the person and ByteTrack holds the ID while the pan follows. The motion blur shows why the camera's low frame rate is next on the list:
+
+<img src="other/images/Screenshot 2026-10-21 220640.png" alt="Pan tracking test with person detection" width="500">
+
+Bonus picture - me not at all impressed with the progress and contemplating why I choose such personal projects.
+
+<img src="other/images/Screenshot 2026-10-21 221211 copy.png" alt="Bonus picture" width="500">
+
+---
+
 ## Entry 7: Phase 3 Begins — Safety Foundation, LiDAR Geometry, and Pan Tracking
 *Date: April 27, 2026*
 
