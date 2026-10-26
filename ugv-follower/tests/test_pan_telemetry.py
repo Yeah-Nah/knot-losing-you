@@ -27,8 +27,8 @@ from ugv_follower.control.ugv_controller import UGVController
 
 _STALE_S = 0.10
 _EXPIRED_S = 0.50
-_INTERVAL_TRACKING = 0.02   # 50 Hz — fast enough to accumulate calls in tests
-_INTERVAL_IDLE = 0.10        # 10 Hz
+_INTERVAL_TRACKING = 0.02  # 50 Hz — fast enough to accumulate calls in tests
+_INTERVAL_IDLE = 0.10  # 10 Hz
 
 
 _QUERY_TIMEOUT = 0.05
@@ -59,7 +59,9 @@ def _fresh_snap(pan_deg: float = 0.0, seq: int = 1) -> PanTelemetrySnapshot:
     )
 
 
-def _aged_snap(age_s: float, pan_deg: float = 0.0, seq: int = 1) -> PanTelemetrySnapshot:
+def _aged_snap(
+    age_s: float, pan_deg: float = 0.0, seq: int = 1
+) -> PanTelemetrySnapshot:
     return PanTelemetrySnapshot(
         pan_deg=pan_deg,
         sample_time_monotonic=time.monotonic() - age_s,
@@ -283,8 +285,7 @@ class TestModeAwarePolling:
         assert t > 0, "No tracking calls recorded"
         assert i > 0, "No idle calls recorded"
         assert t >= i * 2, (
-            f"Expected tracking ({t}) to be at least 2× idle ({i}); "
-            f"ratio={t/i:.1f}"
+            f"Expected tracking ({t}) to be at least 2× idle ({i}); ratio={t / i:.1f}"
         )
 
     def test_mode_change_updates_cadence(self) -> None:
@@ -415,7 +416,9 @@ class TestSerialWorkerDecoupling:
 
         assert ugv.query_pan_deg.call_count >= 1
         for call in ugv.query_pan_deg.call_args_list:
-            timeout_arg = call.kwargs.get("timeout_s", call.args[0] if call.args else None)
+            timeout_arg = call.kwargs.get(
+                "timeout_s", call.args[0] if call.args else None
+            )
             assert timeout_arg == pytest.approx(custom_timeout)
 
     def test_serial_thread_is_daemon_and_named(self) -> None:

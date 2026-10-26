@@ -351,7 +351,10 @@ class PanController:
                 logger.info("Pan: exiting degraded mode — fresh telemetry restored.")
         else:
             self._stale_cycles += 1
-            if not self._degraded and self._stale_cycles >= self._stale_threshold_cycles:
+            if (
+                not self._degraded
+                and self._stale_cycles >= self._stale_threshold_cycles
+            ):
                 self._degraded = True
                 logger.warning(
                     "Pan: entering degraded mode ({} consecutive stale cycles).",
