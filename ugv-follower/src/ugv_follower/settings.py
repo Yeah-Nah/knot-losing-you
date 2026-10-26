@@ -327,9 +327,7 @@ class Settings:
     @property
     def pan_tracking_degraded_delta_scale(self) -> float:
         """Delta multiplier applied in degraded mode to reduce command aggressiveness."""
-        return float(
-            self._pan_tilt_servo_cfg.get("tracking_degraded_delta_scale", 0.5)
-        )
+        return float(self._pan_tilt_servo_cfg.get("tracking_degraded_delta_scale", 0.5))
 
     @property
     def pan_tilt_setpoint_deg(self) -> float:
@@ -353,23 +351,17 @@ class Settings:
     @property
     def pan_telemetry_stale_threshold_s(self) -> float:
         """Seconds after last valid reading before pan telemetry is classified as stale."""
-        return float(
-            self._pan_tilt_servo_cfg.get("telemetry_stale_threshold_s", 0.15)
-        )
+        return float(self._pan_tilt_servo_cfg.get("telemetry_stale_threshold_s", 0.15))
 
     @property
     def pan_telemetry_expired_threshold_s(self) -> float:
         """Seconds after last valid reading before pan telemetry is classified as expired."""
-        return float(
-            self._pan_tilt_servo_cfg.get("telemetry_expired_threshold_s", 1.0)
-        )
+        return float(self._pan_tilt_servo_cfg.get("telemetry_expired_threshold_s", 1.0))
 
     @property
     def pan_telemetry_query_timeout_s(self) -> float:
         """Serial read timeout for each pan angle query in seconds."""
-        return float(
-            self._pan_tilt_servo_cfg.get("telemetry_query_timeout_s", 0.1)
-        )
+        return float(self._pan_tilt_servo_cfg.get("telemetry_query_timeout_s", 0.1))
 
     # ------------------------------------------------------------------
     # Rover drive calibration properties

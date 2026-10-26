@@ -891,15 +891,13 @@ def _log_extended_summary(stats: SummaryStats) -> None:
         logger.info(f"Matched ratio (rho)           : {stats.matched_ratio:.1%}")
     if stats.median_inter_success_gap_s is not None:
         logger.info(
-            "Median inter-success gap (g~) : "
-            f"{stats.median_inter_success_gap_s:.3f}s"
+            f"Median inter-success gap (g~) : {stats.median_inter_success_gap_s:.3f}s"
         )
     if stats.unique_pan_count is not None:
         logger.info(f"Unique pan values (C_uniq)    : {stats.unique_pan_count}")
     if stats.late_reply_after_timeout_count:
         logger.info(
-            "Late replies caught in linger : "
-            f"{stats.late_reply_after_timeout_count}"
+            f"Late replies caught in linger : {stats.late_reply_after_timeout_count}"
         )
 
 

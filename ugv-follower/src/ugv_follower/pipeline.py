@@ -43,7 +43,9 @@ if TYPE_CHECKING:
 
 _DT_MIN_S: float = 0.005  # 5 ms floor — prevents near-zero commands on first tick
 _DT_MAX_S: float = 0.5  # 500 ms ceiling — prevents large commands after a loop stall
-_MAX_FRAME_AGE_S: float = 0.5  # older frames are dropped so pan holds instead of chasing stale error
+_MAX_FRAME_AGE_S: float = (
+    0.5  # older frames are dropped so pan holds instead of chasing stale error
+)
 
 
 class PipelineMode(StrEnum):

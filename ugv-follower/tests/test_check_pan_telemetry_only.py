@@ -296,7 +296,9 @@ def test_send_and_await_pan_flushes_before_write() -> None:
 
     _send_and_await_pan(ser, query_id=0, timeout_s=0.3, verbose_lines=False)
 
-    call_names = [call[0] for call in ser.mock_calls if call[0] in ("reset_input_buffer", "write")]
+    call_names = [
+        call[0] for call in ser.mock_calls if call[0] in ("reset_input_buffer", "write")
+    ]
     assert call_names.index("reset_input_buffer") < call_names.index("write")
 
 
@@ -401,7 +403,9 @@ def test_run_measurement_loop_does_not_correct_drift_when_queries_time_out(
 
 
 @patch("tools.check_pan_telemetry_only.run")
-def test_main_uses_documented_defaults(mock_run: MagicMock, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_main_uses_documented_defaults(
+    mock_run: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr(sys, "argv", ["ugv-check-pan-telemetry-only"])
 
     main()
@@ -546,7 +550,9 @@ def test_log_summary_default_mode_suppresses_extended_lines(
 
     _log_summary(stats)
 
-    logged_text = " ".join(str(call.args[0]) for call in mock_logger.info.call_args_list)
+    logged_text = " ".join(
+        str(call.args[0]) for call in mock_logger.info.call_args_list
+    )
     assert "rho" not in logged_text
     assert "g~" not in logged_text
     assert "C_uniq" not in logged_text
@@ -573,7 +579,9 @@ def test_log_summary_extended_mode_shows_new_lines(mock_logger: MagicMock) -> No
 
     _log_summary(stats, show_extended=True)
 
-    logged_text = " ".join(str(call.args[0]) for call in mock_logger.info.call_args_list)
+    logged_text = " ".join(
+        str(call.args[0]) for call in mock_logger.info.call_args_list
+    )
     assert "rho" in logged_text
     assert "g~" in logged_text
     assert "C_uniq" in logged_text
@@ -652,9 +660,7 @@ def test_send_and_await_pan_linger_disabled_by_default() -> None:
 
 def test_send_and_await_pan_token_match_success() -> None:
     ser = MagicMock()
-    ser.readline.side_effect = _readline_sequence(
-        [b'{"T":1001,"pan":1.0,"S":7}\n']
-    )
+    ser.readline.side_effect = _readline_sequence([b'{"T":1001,"pan":1.0,"S":7}\n'])
 
     result = _send_and_await_pan(
         ser, query_id=0, timeout_s=0.3, verbose_lines=False, seq_token=7
@@ -667,9 +673,7 @@ def test_send_and_await_pan_token_match_success() -> None:
 
 def test_send_and_await_pan_token_mismatch() -> None:
     ser = MagicMock()
-    ser.readline.side_effect = _readline_sequence(
-        [b'{"T":1001,"pan":1.0,"S":99}\n']
-    )
+    ser.readline.side_effect = _readline_sequence([b'{"T":1001,"pan":1.0,"S":99}\n'])
 
     result = _send_and_await_pan(
         ser, query_id=0, timeout_s=0.3, verbose_lines=False, seq_token=7

@@ -228,8 +228,7 @@ class PanTelemetryPoller:
             If the poller is already running.
         """
         if any(
-            t is not None and t.is_alive()
-            for t in (self._thread, self._serial_thread)
+            t is not None and t.is_alive() for t in (self._thread, self._serial_thread)
         ):
             raise RuntimeError("PanTelemetryPoller is already running.")
         self._stop_event.clear()
@@ -347,9 +346,7 @@ class PanTelemetryPoller:
                 with self._lock:
                     if snap.seq > self._snapshot.seq:
                         self._snapshot = snap
-                logger.debug(
-                    "Pan telemetry: fresh {:.2f}° seq={}.", pan_deg, snap.seq
-                )
+                logger.debug("Pan telemetry: fresh {:.2f}° seq={}.", pan_deg, snap.seq)
             else:
                 logger.debug("Pan telemetry: query timed out — snapshot unchanged.")
         logger.debug("PanTelemetryPoller serial worker exiting.")
