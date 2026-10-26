@@ -296,7 +296,7 @@ def probe(port: str, angle_deg: float, duration: float, init_module: bool) -> No
 
             # --- Summary ---
             if gimbal_bus_servo_errors:
-                ids = sorted({e.get("id") for e in gimbal_bus_servo_errors})
+                ids = sorted({e["id"] for e in gimbal_bus_servo_errors})
                 logger.error(
                     f"DIAGNOSIS: Gimbal FeedBack() failed {len(gimbal_bus_servo_errors)} time(s) "
                     f"across all phases for servo id(s) {ids}. "
@@ -312,7 +312,11 @@ def probe(port: str, angle_deg: float, duration: float, init_module: bool) -> No
                 )
                 if non_gimbal_bus_servo_errors:
                     other_ids = sorted(
-                        {e.get("id") for e in non_gimbal_bus_servo_errors}
+                        {
+                            e["id"]
+                            for e in non_gimbal_bus_servo_errors
+                            if isinstance(e.get("id"), int)
+                        }
                     )
                     logger.info(
                         "Observed non-gimbal T=1005 packets for id(s) "

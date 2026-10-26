@@ -102,6 +102,9 @@ def scan(port: str, duration: float, init_module: bool) -> None:
         )
         return
 
+    failure_counts: dict[int, int] = defaultdict(int)  # id → T=1005 count
+    telemetry_samples: list[dict[str, Any]] = []  # T=1001 payloads
+
     with ser_conn as ser:
         try:
             time.sleep(0.1)
@@ -126,8 +129,6 @@ def scan(port: str, duration: float, init_module: bool) -> None:
             # --- Listen window ---
             # Periodically fire T=130 to trigger fresh gimbal feedback reads
             # between passive listen bursts.
-            failure_counts: dict[int, int] = defaultdict(int)  # id → T=1005 count
-            telemetry_samples: list[dict[str, Any]] = []  # T=1001 payloads
             next_poll = time.monotonic()
             deadline = time.monotonic() + duration
             total_lines = 0
