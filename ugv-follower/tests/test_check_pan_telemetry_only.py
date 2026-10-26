@@ -1135,3 +1135,128 @@ def test_run_default_flags_preserve_write_sequence(
         call(b'{"T":130}\n'),
         call(b'{"T":130}\n'),
     ]
+
+
+# ---------------------------------------------------------------------------
+# Non-object JSON and receive-timestamp deadlines
+# ---------------------------------------------------------------------------
+
+
+def test_send_and_await_pan_skips_non_object_json() -> None:
+    """JSON lists, scalars, and null count as non-telemetry, not a crash."""
+    ser = MagicMock()
+    ser.readline.side_effect = _readline_sequence(
+        [b"[]\n", b"null\n", b"42\n", b'{"T":1001,"pan":2.0}\n']
+    )
+
+    result = _send_and_await_pan(ser, query_id=0, timeout_s=0.3, verbose_lines=False)
+
+    assert result.success is True
+    assert result.pan_deg == pytest.approx(2.0)
+    assert result.lines_read == 4
+    assert result.non_telemetry_lines == 3
+
+
+def _clocked_readline(
+    clock: _FakeClock, steps: list[tuple[float, bytes]]
+) -> Callable[[], bytes]:
+    """Return a readline that advances *clock* by each step's delay, then
+    yields its line; empty bytes once *steps* are exhausted."""
+    remaining = list(steps)
+
+    def _readline() -> bytes:
+        if not remaining:
+            clock.advance(0.01)
+            return b""
+        delay, line = remaining.pop(0)
+        clock.advance(delay)
+        return line
+
+    return _readline
+
+
+def test_send_and_await_pan_linger_skips_non_object_json(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The linger reader also treats non-object JSON as non-telemetry."""
+    import tools.check_pan_telemetry_only as module
+
+    clock = _FakeClock()
+    monkeypatch.setattr(module.time, "monotonic", clock.monotonic)
+    ser = MagicMock()
+    ser.readline.side_effect = _clocked_readline(
+        clock, [(0.02, b"[]\n"), (0.0, b'{"T":1001,"pan":9.0}\n')]
+    )
+
+    result = _send_and_await_pan(
+        ser, query_id=0, timeout_s=0.01, verbose_lines=False, linger_s=0.2
+    )
+
+    assert result.success is False
+    assert result.linger_late_reply is True
+    assert result.non_telemetry_lines == 1
+
+
+def test_send_and_await_pan_reply_received_after_deadline_is_not_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A read started inside the window but returning after it is not on time."""
+    import tools.check_pan_telemetry_only as module
+
+    clock = _FakeClock()
+    monkeypatch.setattr(module.time, "monotonic", clock.monotonic)
+    ser = MagicMock()
+    ser.readline.side_effect = _clocked_readline(
+        clock, [(0.04, b'{"T":1001,"pan":9.0}\n')]
+    )
+
+    result = _send_and_await_pan(ser, query_id=0, timeout_s=0.01, verbose_lines=False)
+
+    assert result.success is False
+    assert result.pan_deg is None
+    assert result.lines_read == 0
+    assert result.linger_late_reply is False
+
+
+def test_send_and_await_pan_reply_crossing_deadline_counts_as_late(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A reply consumed after the deadline but inside the linger window is late."""
+    import tools.check_pan_telemetry_only as module
+
+    clock = _FakeClock()
+    monkeypatch.setattr(module.time, "monotonic", clock.monotonic)
+    ser = MagicMock()
+    ser.readline.side_effect = _clocked_readline(
+        clock, [(0.04, b'{"T":1001,"pan":9.0}\n')]
+    )
+
+    result = _send_and_await_pan(
+        ser, query_id=0, timeout_s=0.01, verbose_lines=False, linger_s=0.05
+    )
+
+    assert result.success is False
+    assert result.linger_late_reply is True
+    assert result.lines_read == 1
+
+
+def test_send_and_await_pan_reply_after_linger_deadline_is_excluded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A read that returns after the linger window does not count as late."""
+    import tools.check_pan_telemetry_only as module
+
+    clock = _FakeClock()
+    monkeypatch.setattr(module.time, "monotonic", clock.monotonic)
+    ser = MagicMock()
+    ser.readline.side_effect = _clocked_readline(
+        clock, [(0.02, b""), (0.1, b'{"T":1001,"pan":9.0}\n')]
+    )
+
+    result = _send_and_await_pan(
+        ser, query_id=0, timeout_s=0.01, verbose_lines=False, linger_s=0.05
+    )
+
+    assert result.success is False
+    assert result.linger_late_reply is False
+    assert result.lines_read == 0

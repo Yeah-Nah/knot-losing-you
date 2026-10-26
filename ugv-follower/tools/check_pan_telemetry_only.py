@@ -220,13 +220,14 @@ class SummaryStats:
     late_reply_after_timeout_count: int = 0
 
 
-def _extract_pan(data: dict[str, Any]) -> float | None:
+def _extract_pan(data: Any) -> float | None:
     """Return pan in degrees only for telemetry payloads with T=1001.
 
     Parameters
     ----------
-    data : dict[str, Any]
-        Parsed JSON payload from a single serial line.
+    data : Any
+        Parsed JSON value from a single serial line; non-objects (lists,
+        scalars, ``None``) are treated as non-telemetry.
 
     Returns
     -------
@@ -234,7 +235,7 @@ def _extract_pan(data: dict[str, Any]) -> float | None:
         The numeric ``pan`` value if ``T == 1001`` and ``pan`` is numeric,
         otherwise ``None``.
     """
-    if data.get("T") != _PAN_TELEMETRY_T:
+    if not isinstance(data, dict) or data.get("T") != _PAN_TELEMETRY_T:
         return None
     pan = data.get("pan")
     if isinstance(pan, (int, float)):
@@ -296,12 +297,15 @@ def _linger_for_late_reply(
     linger_deadline: float,
     retain_raw_lines: bool,
     raw_lines: list[tuple[float, str, bool]],
+    pending_line: tuple[str, float] | None = None,
 ) -> tuple[bool, int, int]:
     """Keep reading past the nominal timeout, watching for a late pan reply.
 
     This never influences the caller's ``success``/``timeout``
     classification — it only reports whether a valid reply arrived in this
     extra window, for offline analysis of true-no-reply vs. late-reply.
+    Lines are classified by their receive timestamp, so a read that returns
+    after *linger_deadline* is excluded.
 
     Parameters
     ----------
@@ -314,6 +318,9 @@ def _linger_for_late_reply(
     raw_lines : list[tuple[float, str, bool]]
         Mutable accumulator shared with the caller's nominal-window
         capture, appended to in place when *retain_raw_lines* is set.
+    pending_line : tuple[str, float] | None, default None
+        A ``(raw_text, recv_ts)`` line already consumed by the caller after
+        the nominal deadline; classified before any further reads.
 
     Returns
     -------
@@ -323,11 +330,14 @@ def _linger_for_late_reply(
     late_reply_seen = False
     lines_read = 0
     non_telemetry_lines = 0
-    while time.monotonic() < linger_deadline:
-        line = _read_line_with_ts(ser)
+    while pending_line is not None or time.monotonic() < linger_deadline:
+        line = pending_line if pending_line is not None else _read_line_with_ts(ser)
+        pending_line = None
         if line is None:
             continue
         raw, recv_ts = line
+        if recv_ts > linger_deadline:
+            break
         lines_read += 1
         try:
             data = json.loads(raw)
@@ -416,11 +426,17 @@ def _send_and_await_pan(
     lines_read = 0
     non_telemetry_lines = 0
     raw_lines: list[tuple[float, str, bool]] = []
+    # A blocking readline() can return after the deadline; such a line is
+    # late, not on-time, and is handed to the linger window (or dropped).
+    late_line: tuple[str, float] | None = None
     while time.monotonic() < deadline:
         line = _read_line_with_ts(ser)
         if line is None:
             continue
         raw, recv_ts = line
+        if recv_ts > deadline:
+            late_line = line
+            break
         lines_read += 1
         try:
             data = json.loads(raw)
@@ -464,7 +480,7 @@ def _send_and_await_pan(
     linger_late_reply = False
     if linger_s > 0:
         linger_late_reply, extra_lines, extra_non_telemetry = _linger_for_late_reply(
-            ser, deadline + linger_s, retain_raw_lines, raw_lines
+            ser, deadline + linger_s, retain_raw_lines, raw_lines, late_line
         )
         lines_read += extra_lines
         non_telemetry_lines += extra_non_telemetry

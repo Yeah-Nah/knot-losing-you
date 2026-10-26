@@ -12,7 +12,8 @@ Test groups
 3  _capture_once() — publishes timestamped CameraFrame snapshots; keeps the
                      previous frame on read failure (no thread).
 4  get_frame()     — grabber thread delivers the newest frame; None while reads fail.
-5  stop()          — joins the grabber thread and releases the capture device.
+5  stop()          — joins the grabber thread and releases the capture device;
+                     keeps ownership of a grabber that outlives the join timeout.
 
 Running
 -------
@@ -27,6 +28,7 @@ No hardware required.  cv2.VideoCapture and camera_preflight are mocked.
 
 from __future__ import annotations
 
+import threading
 import time
 from unittest.mock import MagicMock, patch
 
@@ -345,3 +347,48 @@ def test_stop_before_start_is_safe() -> None:
     """stop() without a prior start() does not raise."""
     cam = _make_camera()
     cam.stop()  # must not raise
+
+
+@patch("ugv_follower.perception.waveshare_camera._THREAD_JOIN_TIMEOUT_S", 0.05)
+@patch("ugv_follower.perception.waveshare_camera.ensure_camera_device_available")
+@patch("ugv_follower.perception.waveshare_camera.cv2.VideoCapture")
+def test_stop_timeout_keeps_grabber_until_it_exits(
+    mock_capture_cls: MagicMock,
+    mock_preflight: MagicMock,
+) -> None:
+    """A grabber blocked in read() past the join timeout keeps ownership:
+    no release, restart rejected, no late publish; a later stop() releases."""
+    read_entered = threading.Event()
+    unblock = threading.Event()
+    mock_cap = MagicMock()
+    mock_cap.isOpened.return_value = True
+
+    def _blocked_read() -> tuple[bool, np.ndarray]:
+        read_entered.set()
+        unblock.wait()
+        return True, np.zeros((_HEIGHT, _WIDTH, 3), dtype=np.uint8)
+
+    mock_cap.read.side_effect = _blocked_read
+    mock_capture_cls.return_value = mock_cap
+
+    cam = _make_camera()
+    cam.start()
+    assert read_entered.wait(1.0)
+    thread = cam._thread
+    try:
+        cam.stop()  # times out with read() still blocked
+
+        mock_cap.release.assert_not_called()
+        assert cam._thread is thread
+        with pytest.raises(RuntimeError, match="already running"):
+            cam.start()
+    finally:
+        unblock.set()
+    assert thread is not None
+    thread.join(1.0)
+
+    assert not thread.is_alive()
+    assert cam.get_frame() is None  # late read was not published
+    cam.stop()
+    mock_cap.release.assert_called_once()
+    assert cam._thread is None

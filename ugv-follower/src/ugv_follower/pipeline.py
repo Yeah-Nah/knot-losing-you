@@ -43,6 +43,7 @@ if TYPE_CHECKING:
 
 _DT_MIN_S: float = 0.005  # 5 ms floor — prevents near-zero commands on first tick
 _DT_MAX_S: float = 0.5  # 500 ms ceiling — prevents large commands after a loop stall
+_MAX_FRAME_AGE_S: float = 0.5  # older frames are dropped so pan holds instead of chasing stale error
 
 
 class PipelineMode(StrEnum):
@@ -66,6 +67,7 @@ class Pipeline:
         self._mode = PipelineMode.AUTONOMOUS
         self._mode_transition_stop_pending = False
         self._estop_active = False
+        self._frame_stale = False
         self._loop_period_s = settings.loop_period_s
         w, h = settings.waveshare_camera_resolution
         self._camera = WaveshareCamera(
@@ -292,16 +294,27 @@ class Pipeline:
         -------
         NDArray[np.uint8] | None
             Latest BGR image from the grabber thread, or ``None`` if no frame
-            has been captured yet.
+            has been captured yet or the newest frame is older than
+            ``_MAX_FRAME_AGE_S`` (so the no-detection path holds pan).
         """
         camera_frame = self._camera.get_frame()
         if camera_frame is None:
             return None
-        logger.debug(
-            "camera frame seq={} age={:.3f}s",
-            camera_frame.seq,
-            camera_frame.age_s,
-        )
+        age_s = camera_frame.age_s
+        logger.debug("camera frame seq={} age={:.3f}s", camera_frame.seq, age_s)
+        if age_s > _MAX_FRAME_AGE_S:
+            if not self._frame_stale:
+                logger.warning(
+                    "Camera frame seq={} is {:.3f}s old (> {} s); dropping stale frames.",
+                    camera_frame.seq,
+                    age_s,
+                    _MAX_FRAME_AGE_S,
+                )
+                self._frame_stale = True
+            return None
+        if self._frame_stale:
+            logger.info("Fresh camera frames resumed.")
+            self._frame_stale = False
         return camera_frame.image
 
     def _run_inference(self, frame: NDArray[np.uint8] | None) -> Any | None:

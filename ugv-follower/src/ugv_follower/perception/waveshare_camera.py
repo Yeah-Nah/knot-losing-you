@@ -170,14 +170,17 @@ class WaveshareCamera:
         if self._thread is not None:
             self._thread.join(timeout=_THREAD_JOIN_TIMEOUT_S)
             if self._thread.is_alive():
-                # Releasing during an in-flight read() can crash the backend;
-                # leave the device to be closed at process exit instead.
+                # Releasing during an in-flight read() can crash the backend.
+                # Keep the thread and capture handles so start() still sees a
+                # live grabber and a later stop() can release once it exits.
                 logger.warning(
                     "WaveshareCamera grabber did not exit within {} s; "
                     "skipping capture release.",
                     _THREAD_JOIN_TIMEOUT_S,
                 )
-                self._cap = None
+                with self._lock:
+                    self._latest = None
+                return
             self._thread = None
         if self._cap is not None:
             self._cap.release()
@@ -248,6 +251,9 @@ class WaveshareCamera:
         if self._read_failing:
             logger.info("WaveshareCamera.read() recovered.")
             self._read_failing = False
+        if self._stop_event.is_set():
+            # stop() may already have cleared _latest; don't republish.
+            return False
         with self._lock:
             self._seq += 1
             self._latest = CameraFrame(
